@@ -96,6 +96,10 @@ Quy tắc viết bài (khung bài, `<Lenh>`, 14 tiêu chí dễ tiếp thu) nằ
 - Một số lệnh mới viết theo cú pháp công cụ, chưa chạy lại trên lab thật để đối chiếu từng dòng output.
 - Quy định thi OSCP đổi thường xuyên: vài tháng một lần đọc lại hướng dẫn thi của OffSec và sửa bài 4.2.
 
+## Bảo trì
+
+Kho lưu trữ được duy trì bởi [@nguyentri-it](https://github.com/nguyentri-it). Xem [CONTRIBUTING.md](CONTRIBUTING.md) nếu bạn muốn đóng góp hoặc sửa bài.
+
 ## Giấy phép
 
 Xem [LICENSE](LICENSE). Đây là tài liệu học tập phi lợi nhuận. OSCP là chứng chỉ của OffSec; dự án này không liên kết với OffSec.
