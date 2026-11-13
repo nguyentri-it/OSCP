@@ -1,0 +1,276 @@
+---
+title: "Quản lý lỗ hổng và vá khẩn cấp"
+code: "7.1"
+level: 7
+summary: "CVE ra liên tục, không bao giờ vá hết. Cách xếp ưu tiên theo rủi ro thật, dựng quy trình vá khẩn cấp, và làm gì khi lỗ hổng đang bị khai thác mà chưa có bản vá."
+duration: "80 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu vòng đời quản lý lỗ hổng và vì sao không thể vá hết"
+  - "Xếp ưu tiên theo rủi ro thật (KEV, EPSS, phơi nhiễm, trọng yếu) thay vì chỉ theo điểm CVSS"
+  - "Dựng được quy trình vá khẩn cấp và vòng triển khai theo đợt"
+  - "Biết các biện pháp giảm thiểu khi chưa có bản vá: vá ảo, biện pháp bù, cô lập"
+  - "Tìm bề mặt tấn công bên ngoài trước kẻ tấn công và xử lý thiết bị biên như một hạng mục riêng"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import PatchTriage from '../../components/sim/PatchTriage.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một bệnh viện không thể chữa mọi bệnh nhân cùng một lúc. Phòng cấp cứu phải **phân loại**: ai nguy kịch vào trước, ai chờ được thì chờ. Không phân loại thì người nặng nhất có khi chết trong lúc bác sĩ đang băng một vết xước.
+
+Lỗ hổng bảo mật cũng vậy. Mỗi tuần có hàng trăm CVE mới (mỗi CVE là một mã số công khai cho một lỗ hổng đã được biết đến, bài 2.5); một ngân hàng cỡ vừa có thể tồn đọng hàng chục nghìn lỗ hổng cùng lúc.
+
+Vá hết là bất khả thi. Việc của đội phòng thủ không phải vá tất cả, mà là **luôn vá đúng cái nguy hiểm nhất trước**, và có sẵn một đường đi nhanh cho trường hợp khẩn.
+
+<Callout type="note" label="Cấp này khác các cấp trước">
+Cấp 7 là phần phòng ngừa cho đội phòng thủ (blue team), không thuộc đề thi OSCP: đóng cửa cho chắc trước, rồi mới lắp camera giám sát. Phát hiện, phản ứng và phục hồi nằm ở Cấp 8. Nó dùng chính hiểu biết tấn công bạn đã học để quyết định cái gì đáng lo và cái gì không.
+</Callout>
+
+## Kiến thức chính
+
+### Vòng đời quản lý lỗ hổng
+
+Đây là một vòng lặp không bao giờ dừng:
+
+1. **Kiểm kê tài sản.** Không biết mình có gì thì không bảo vệ được. Máy chủ, ứng dụng, thư viện, thiết bị mạng, dịch vụ đám mây.
+2. **Tìm lỗ hổng.** Dùng máy quét lỗ hổng (ví dụ Nessus, OpenVAS), kiểm tra cấu hình, theo dõi bản tin CVE của nhà cung cấp, đọc kết quả pentest.
+3. **Xếp ưu tiên.** Phần khó nhất và quan trọng nhất, nói kỹ bên dưới.
+4. **Khắc phục.** Vá, đổi cấu hình, hoặc chấp nhận rủi ro có lý do.
+5. **Xác minh.** Quét lại để chắc lỗ hổng đã đóng, bản vá không làm hỏng dịch vụ.
+6. **Báo cáo và đo.** Theo dõi số lỗ hổng tồn đọng và thời gian xử lý trung bình theo mức độ.
+
+<ConceptMap
+  client:visible
+  title="Quy trình Phân loại và Vá Lỗ hổng theo Rủi ro thực tế"
+  width={740}
+  height={300}
+  zones={[
+    { label: "Khám phá & Kiểm kê", x: 10, y: 10, w: 200, h: 270 },
+    { label: "Đánh giá Rủi ro Đa chiều", x: 225, y: 10, w: 240, h: 270 },
+    { label: "Phân luồng Vá & Bù đắp", x: 520, y: 10, w: 210, h: 270 },
+  ]}
+  nodes={[
+    { id: 'easm', label: 'Quản lý tài sản (EASM)', sub: 'IP, Domain, Cloud, VPN', x: 110, y: 70, tone: 'accent', detail: 'Tự động rà quét các thiết bị biên, tên miền con lộ ra ngoài Internet trước kẻ xấu.' },
+    { id: 'scan', label: 'Quét lỗ hổng tự động', sub: 'Nessus / CVE Feeds', x: 110, y: 180, detail: 'Thu thập danh sách CVE thô hàng tuần từ các máy chủ và dịch vụ.' },
+    { id: 'cvss', label: 'Điểm CVSS v3.1', sub: 'Mức độ nghiêm trọng lý thuyết', x: 345, y: 70, detail: 'Đo lường tác động kỹ thuật cơ bản (0.0 đến 10.0).' },
+    { id: 'kev', label: 'CISA KEV + EPSS', sub: 'Thực tế đang bị khai thác', x: 345, y: 180, tone: 'warn', detail: 'Bộ lọc sống còn: Lỗ hổng đã có mã khai thác hoạt động ngoài đời hay chưa?' },
+    { id: 'emerg', label: 'Vá khẩn cấp (24h - 48h)', sub: 'KEV + Internet-Facing', x: 625, y: 70, tone: 'bad', detail: 'Dành cho các lỗi nghiêm trọng đang bị khai thác trên thiết bị biên (VPN, Firewall).' },
+    { id: 'wave', label: 'Vá theo đợt / Vá ảo', sub: 'WAF / Patch Wave / Test', x: 625, y: 180, tone: 'good', detail: 'Áp dụng luật WAF tạm thời nếu chưa có bản vá chính thức, kiểm thử trên môi trường Staging.' },
+  ]}
+  edges={[
+    { from: 'easm', to: 'scan' },
+    { from: 'scan', to: 'cvss' },
+    { from: 'cvss', to: 'kev' },
+    { from: 'kev', to: 'emerg', label: 'KEV=Yes' },
+    { from: 'kev', to: 'wave', label: 'KEV=No' },
+  ]}
+/>
+
+### Tìm những gì lộ ra Internet trước khi kẻ tấn công tìm thấy
+
+Trinh sát (dò xem mục tiêu có những gì) là việc AI làm rất giỏi: quét toàn bộ dải IP, gom các tên miền con từ log Certificate Transparency (nơi ghi lại mọi chứng chỉ HTTPS được cấp, bài 2.1), đối chiếu phiên bản phần mềm với danh sách CVE, chạy liên tục mà gần như miễn phí.
+
+Thứ nó tìm ra đầu tiên thường là thứ bạn đã quên: máy chủ thử nghiệm còn bật, tên miền con trỏ tới dịch vụ đã xoá, giao diện quản trị lỡ mở ra Internet.
+
+Cách đáp lại là làm đúng việc đó trước, và làm liên tục. Người ta gọi việc này là **quản lý bề mặt tấn công bên ngoài** (EASM: tức quản lý mọi thứ của bạn đang lộ ra Internet). Nguyên tắc cốt lõi: so cái tìm thấy ngoài thực tế với danh mục tài sản; cái gì có ngoài thực tế mà không có trong danh mục là một phát hiện.
+
+**Đối chiếu tên miền con thật với danh mục tài sản (chỉ làm với tên miền của chính đơn vị)**
+
+<Lenh noi="Terminal của đội phòng thủ, chỉ truy vấn tên miền thuộc quyền quản lý của đơn vị" muc="Tìm những tên miền con từng được cấp chứng chỉ HTTPS nhưng chưa có trong danh mục tài sản nội bộ (tài sản bị bỏ quên)">
+
+<Terminal title="Đối chiếu tên miền con từ crt.sh với danh mục tài sản">
+
+```text
+# 1. Lấy danh sách tên miền con từng được cấp chứng chỉ HTTPS (chỉ tra tên miền của chính mình)
+curl -s "https://crt.sh/?q=%25.saomai.example&output=json" | jq -r '.[].name_value' | sort -u > tim-thay.txt
+
+# 2. Dòng nào có ngoài Internet mà không có trong danh mục tài sản của mình?
+sort -u danh-muc-tai-san.txt > danh-muc.txt
+comm -23 tim-thay.txt danh-muc.txt
+# Kết quả mẫu:
+#   thu-nghiem-api.saomai.example
+#   vpn-cu.saomai.example
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `curl -s "https://crt.sh/?q=%25.saomai.example&output=json"`: truy vấn sổ cái công khai Certificate Transparency (`crt.sh`) để lấy mọi chứng chỉ từng cấp cho các tên miền con của `saomai.example` (bài 2.1).
+- `jq -r '.[].name_value' | sort -u > tim-thay.txt`: rút trường tên miền từ kết quả JSON, sắp xếp và lọc trùng rồi lưu vào `tim-thay.txt`.
+- `comm -23 tim-thay.txt danh-muc.txt`: so sánh hai danh sách đã sắp xếp, chỉ in ra những dòng **có trong `tim-thay.txt` nhưng không có trong `danh-muc.txt`**.
+
+</div>
+
+<div slot="doc">
+
+- `thu-nghiem-api.saomai.example` và `vpn-cu.saomai.example`: những tên miền con đang tồn tại ngoài thực tế nhưng đội vận hành đã quên đưa vào danh mục quản lý — đây chính là các "shadow IT" mà kẻ tấn công hay nhắm vào nhất.
+
+</div>
+
+</Lenh>
+
+Mỗi dòng in ra phải được xử lý: hoặc đưa vào danh mục và vào lịch quét lỗ hổng, hoặc tắt đi. Làm tương tự với dải IP công khai của đơn vị (quét cổng như bài 2.2, chỉ trên dải mình sở hữu) và với tài khoản đám mây (bài 2.9).
+
+### Thiết bị biên: một hạng mục riêng
+
+VPN, tường lửa, cổng truy cập từ xa, thiết bị cân bằng tải (chia đều lượng truy cập cho nhiều máy chủ): chúng nằm sát Internet, đứng trước mọi thứ khác, thường không cài được EDR (phần mềm bảo vệ trên máy), và nằm trong nhóm thiết bị xuất hiện nhiều nhất trong danh mục KEV (giải thích ngay bên dưới). Vì vậy chúng cần quy tắc riêng:
+
+- **Hạn xử lý riêng tính bằng giờ**, không gộp chung với máy chủ.
+- **Không để giao diện quản trị truy cập được từ Internet.**
+- **Đẩy log của thiết bị về SIEM** (hệ thống gom log của cả công ty để phân tích, bài 8.1). Đây thường là nơi duy nhất thấy được dấu hiệu bị khai thác.
+- **Vá xong chưa chắc đã sạch.** Kẻ tấn công có thể đã vào từ trước khi có bản vá. Sau khi vá: chạy công cụ kiểm tra xem thiết bị có bị sửa đổi không (nếu nhà cung cấp có phát hành), xem lại log của khoảng thời gian trước khi vá, và đổi mật khẩu, khoá lưu trên thiết bị nếu nghi ngờ.
+- **Có sẵn phương án tạm ngắt** thiết bị, hoặc chuyển sang thiết bị dự phòng.
+
+### Vì sao "xếp theo điểm CVSS" là chưa đủ
+
+Điểm **CVSS** (bài 2.5) cho biết *lỗi này nghiêm trọng đến đâu nếu bị khai thác*. Nó không cho biết *lỗi này có thật sự dễ bị khai thác trong môi trường của bạn không*. Ví dụ: lỗ hổng 9.8 trên một máy in nằm sâu trong mạng nội bộ, không ai từ ngoài với tới được, ít nguy hiểm hơn một lỗ hổng 6.5 trên cổng web công khai mà mã khai thác đã lan truyền khắp nơi.
+
+Xếp ưu tiên tốt cần nhìn thêm bốn câu hỏi:
+
+- **Đang bị khai thác thật chưa?** Danh mục **KEV** (Known Exploited Vulnerabilities) của CISA liệt kê các CVE *đã được quan sát thấy bị khai thác ngoài thực tế*. Một CVE nằm trong KEV phải lên đầu hàng đợi, bất kể điểm CVSS.
+- **Khả năng sắp bị khai thác.** Điểm **EPSS** là một con số ước lượng xác suất một CVE bị khai thác trong 30 ngày tới. Nó giúp phân biệt "có lỗ hổng" với "lỗ hổng sắp bị dùng".
+- **Mức phơi nhiễm** (có lộ ra ngoài không). Truy cập được từ Internet nguy hiểm hơn nhiều so với chỉ truy cập được từ bên trong.
+- **Mức trọng yếu của tài sản.** Lỗ hổng trên hệ thống thanh toán lõi khác với lỗ hổng trên máy in.
+
+Tự so hai cách xếp:
+
+<PatchTriage client:visible />
+
+Để ý: chuyển từ "xếp theo CVSS" sang "xếp theo rủi ro thật", máy in điểm 8.8 rơi xuống cuối, còn web server công khai đã có mã khai thác (điểm chỉ 6.5) vọt lên gần đầu. Đó là khác biệt giữa làm việc chăm chỉ và làm việc đúng chỗ.
+
+### Đặt mục tiêu thời gian theo mức độ
+
+Mỗi mức rủi ro nên có một hạn xử lý (gọi là SLA, tức thời hạn cam kết). Con số cụ thể tuỳ tổ chức và quy định, nhưng ý tưởng là có cam kết rõ ràng:
+
+| Mức | Ví dụ hạn xử lý | Ghi chú |
+|---|---|---|
+| Nghiêm trọng, đang bị khai thác | Giờ tới ngày | Kích hoạt quy trình khẩn, không chờ cửa sổ bảo trì |
+| Nghiêm trọng, truy cập được từ ngoài | Vài ngày | |
+| Cao | Vài tuần | |
+| Trung bình / thấp | Theo đợt định kỳ | Gộp vào lịch vá thường kỳ |
+
+Nếu quá hạn, phải có người quyết định chấp nhận rủi ro một cách có ghi chép, không để trôi im lặng.
+
+AI cũng làm ngắn đi khoảng thời gian từ lúc CVE được công bố tới lúc có mã khai thác, vì việc đọc bản vá rồi viết ra mã khai thác đã được tự động hoá một phần. Với tài sản truy cập được từ Internet, đừng giả định còn vài tuần: hãy giả định là vài ngày, có khi vài giờ.
+
+## Khi chưa có bản vá
+
+Đây là tình huống khó nhất: lỗ hổng đang bị khai thác (hoặc là 0-day, tức lỗ hổng mới lộ mà nhà cung cấp chưa kịp có cách sửa), nhưng nhà cung cấp **chưa phát hành bản vá**. Chưa vá được không có nghĩa là bó tay. Trong lúc chờ, bạn làm cho lỗ hổng **khó bị khai thác hơn** bằng các lớp sau:
+
+- **Vá ảo (virtual patching).** Không sửa phần mềm lỗi, mà đặt một lớp chắn phía trước để chặn đúng kiểu tấn công vào lỗi đó: luật trên **WAF** (tường lửa chuyên cho ứng dụng web) với lỗ hổng web, hoặc chữ ký trên **IPS** (thiết bị nhận ra và chặn tấn công trên đường mạng) với lỗ hổng mạng. Đây là cách mua thời gian phổ biến nhất.
+- **Thu hẹp chỗ bị tấn công.** Tắt tính năng hoặc đường dẫn có lỗi nếu không thật cần; gỡ những thành phần không dùng.
+- **Siết truy cập.** Giới hạn nguồn IP được phép kết nối, thêm một lớp xác thực phía trước, chặn luồng ra bất thường (nhiều lỗ hổng khiến máy chủ tự gọi ra ngoài để tải mã).
+- **Cô lập.** Đặt hệ thống bị ảnh hưởng vào một vùng mạng riêng (bài 3.3), để lỡ bị chiếm thì kẻ tấn công khó lan sang chỗ khác.
+- **Tăng giám sát.** Thêm luật cảnh báo riêng cho dấu hiệu khai thác lỗ hổng đó (phối hợp với SOC, tức đội trực giám sát an ninh, bài 8.1), để có ai thử là biết ngay.
+- **Phương án cuối: tạm ngắt.** Nếu rủi ro quá lớn và chưa có cách giảm, tạm dừng dịch vụ có thể là lựa chọn đúng. Một cổng ngừng vài giờ còn hơn mất dữ liệu khách hàng.
+
+Áp dụng khuyến cáo chính thức của nhà cung cấp, và coi các biện pháp này là **tạm thời**: vẫn phải vá thật ngay khi có bản vá.
+
+Tự đi qua quyết định:
+
+<DecisionTree
+  client:visible
+  title="Một CVE nghiêm trọng vừa công bố, ảnh hưởng hệ thống của bạn"
+  start="exposed"
+  nodes={{
+    exposed: { q: 'Hệ thống bị ảnh hưởng có truy cập được từ Internet hoặc là tài sản trọng yếu không?', options: [{ label: 'Có', next: 'exploited' }, { label: 'Không, chỉ nội bộ, không trọng yếu', next: 'routine' }] },
+    routine: { result: 'Đưa vào đợt vá định kỳ theo SLA của mức tương ứng. Vẫn ghi nhận và theo dõi, nhưng chưa cần quy trình khẩn.', tone: 'good' },
+    exploited: { q: 'Đã có bản vá từ nhà cung cấp chưa?', options: [{ label: 'Có bản vá', next: 'emergency' }, { label: 'Chưa có bản vá', next: 'mitigate' }] },
+    emergency: { q: 'Vá được ngay không, hay cần ngừng dịch vụ?', options: [{ label: 'Vá được ngay', next: 'patchNow' }, { label: 'Cần ngừng dịch vụ', next: 'window' }] },
+    patchNow: { result: 'Kích hoạt quy trình vá khẩn: kiểm thử nhanh trên một nhóm nhỏ rồi triển khai gấp. Giám sát chặt sau khi vá.', tone: 'good' },
+    window: { result: 'Xin cửa sổ bảo trì khẩn. Trong lúc chờ, dựng biện pháp bù (vá ảo, siết truy cập, tăng giám sát) để giảm rủi ro.', tone: 'warn' },
+    mitigate: { result: 'Chưa có bản vá: dựng ngay các lớp giảm thiểu (vá ảo trên WAF/IPS, giảm bề mặt, siết truy cập, cô lập, tăng giám sát). Theo dõi sát bản tin nhà cung cấp và vá thật ngay khi có.', tone: 'bad' },
+  }}
+/>
+
+## Dựng quy trình vá khẩn cấp
+
+Lúc có sự cố không phải lúc đi hỏi "ai được phép duyệt ngừng dịch vụ". Những thứ đó phải chuẩn bị trước, giống bài 8.7.
+
+### Vá theo từng vòng nhỏ rồi mở rộng (patch ring)
+
+Vá thẳng lên toàn bộ hệ thống là liều: một bản vá hỏng có thể gây gián đoạn còn rộng hơn chính lỗ hổng. Cách an toàn là triển khai theo vòng mở rộng dần:
+
+1. **Vòng lab:** máy thử, không ảnh hưởng ai. Kiểm tra bản vá chạy được.
+2. **Vòng thí điểm:** một nhóm nhỏ máy thật, ít rủi ro, theo dõi sát.
+3. **Vòng rộng:** phần còn lại, chia nhiều đợt.
+
+Luôn chuẩn bị **đường lùi** (gỡ bản vá hoặc khôi phục lại ảnh chụp trạng thái máy, gọi là snapshot) phòng khi bản vá gây sự cố. Với lỗ hổng đang bị khai thác, các vòng này bị nén lại rất nhanh, nhưng vẫn nên giữ để không tự gây gián đoạn diện rộng.
+
+### Các vai và việc chuẩn bị trước
+
+<Checklist
+  client:visible
+  title="Sẵn sàng cho một đợt vá khẩn cấp"
+  storageKey="emergency-patch-prep"
+  items={[
+    { label: 'Danh mục tài sản cập nhật, biết hệ thống nào chạy phần mềm/thư viện gì', hint: 'Không có danh mục thì không biết CVE mới ảnh hưởng máy nào' },
+    { label: 'Theo dõi nguồn cảnh báo: bản tin nhà cung cấp, danh mục KEV, trung tâm ứng cứu quốc gia' },
+    { label: 'Quy tắc xếp ưu tiên thống nhất (KEV, EPSS, phơi nhiễm, trọng yếu), không chỉ CVSS' },
+    { label: 'Quy trình duyệt khẩn: ai được phép phê duyệt cửa sổ bảo trì ngoài giờ, liên lạc thế nào' },
+    { label: 'Vòng triển khai và đường lùi cho mỗi loại hệ thống' },
+    { label: 'Khả năng vá ảo sẵn sàng: WAF, IPS đặt được luật tạm trong thời gian ngắn' },
+    { label: 'Kênh phối hợp với SOC để thêm giám sát quanh lỗ hổng đang xử lý', hint: 'Bài 8.1' },
+    { label: 'Mẫu thông báo nội bộ và cho khách hàng, biết ai chịu trách nhiệm liên lạc' },
+    { label: 'Diễn tập quy trình này ít nhất mỗi năm một lần', hint: 'Bài 8.7' },
+    { label: 'Quét bề mặt bên ngoài định kỳ và đối chiếu với danh mục tài sản', hint: 'Tên miền con, dải IP, tài khoản đám mây' },
+    { label: 'Thiết bị biên có hạn xử lý riêng, log về SIEM và bước kiểm tra toàn vẹn sau khi vá' },
+  ]}
+/>
+
+### Quản lý thư viện bên thứ ba
+
+Rất nhiều CVE nghiêm trọng nằm trong các **thư viện** mà phần mềm của bạn dùng lại, không phải trong mã bạn tự viết (Log4Shell là ví dụ kinh điển). Để vá kịp loại này, cần biết mình đang dùng thư viện gì:
+
+- **SBOM** (Software Bill of Materials): bản kê các thành phần cấu tạo nên một phần mềm, giống bảng thành phần in trên vỏ hộp thực phẩm. Có nó thì khi một CVE thư viện nổ ra, bạn tra trong vài phút biết hệ thống nào bị ảnh hưởng.
+- **Quét thư viện phụ thuộc** (SCA) ngay trong quy trình viết phần mềm, để bắt thư viện có lỗi trước khi phần mềm chạy thật.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Toàn bộ bài này là kim chỉ nam thực tế cho đội phòng thủ khi đối mặt với hàng nghìn CVE mỗi năm. Vì <strong>không một tổ chức nào có thể vá hết mọi lỗ hổng cùng lúc</strong>, bí quyết nằm ở việc xếp ưu tiên theo rủi ro thật: một lỗ hổng đã nằm trong danh mục đang bị khai thác (KEV) hoặc nằm trên hệ thống phơi nhiễm trực tiếp ra Internet luôn phải được xử lý trước một lỗ hổng điểm CVSS cao nhưng nằm kín trong mạng nội bộ.
+
+Ngay cả khi <strong>nhà cung cấp chưa kịp ra bản vá</strong>, bạn vẫn chủ động mua được thời gian quý giá bằng cách bật luật vá ảo trên WAF/IPS, thu hẹp quyền truy cập, cô lập vùng mạng và đẩy mức giám sát tại SOC lên cao nhất.
+
+Để không bị động khi có biến, toàn bộ quy trình vá khẩn cấp — từ danh mục tài sản, danh mục thư viện phần mềm (SBOM), quyền phê duyệt ngoài giờ cho tới vòng triển khai thử nghiệm và đường lùi — phải được chuẩn bị và diễn tập từ lúc bình yên.
+
+Đặc biệt, hãy <strong>chủ động rà quét bề mặt bên ngoài của chính mình trước kẻ tấn công</strong> và dành chế độ giám sát khắt khe nhất cho các thiết bị biên (VPN, tường lửa), luôn kiểm tra tính toàn vẹn sau khi vá vì kẻ xấu rất có thể đã chui vào trước lúc bản vá được cài.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Chỉ sắp xếp lịch vá máy móc theo điểm CVSS từ cao xuống thấp.** Cách làm này khiến đội vận hành kiệt sức đi vá những máy nội bộ ít rủi ro (CVSS 9.0), trong khi một cổng web công khai có lỗ hổng CVSS 6.5 đang bị khai thác đại trà ngoài Internet lại bị xếp chờ tới tháng sau.
+- **Buông xuôi chờ đợi khi nghe tin "lỗ hổng 0-day chưa có bản vá chính thức".** Chưa có bản vá không có nghĩa là ngồi yên chịu trận; việc đặt ngay một luật chặn tạm thời trên WAF (vá ảo), giới hạn IP nguồn hoặc tắt tính năng phụ đã đủ chặn đứng phần lớn các đợt quét tự động.
+- **Hoảng loạn đẩy bản vá khẩn cấp lên toàn bộ máy chủ sản xuất cùng một lúc mà không qua vòng thử nghiệm.** Một bản vá lỗi tương thích làm sập hệ thống thanh toán vào giờ cao điểm gây thiệt hại trực tiếp không kém gì một cuộc tấn công; luôn phải đi qua vòng lab, vòng thí điểm và giữ sẵn snapshot để lùi lại khi cần.
+- **Không duy trì danh mục tài sản và SBOM cập nhật.** Khi có cảnh báo khẩn cấp kiểu Log4Shell nổ ra, việc mất cả tuần lễ chỉ để đi hỏi từng phòng ban "máy nào của mình có chạy thư viện này không" sẽ nướng sạch khoảng thời gian vàng trước khi kẻ tấn công quét tới.
+- **Xem các biện pháp bù tạm thời (như luật chặn trên WAF) là giải pháp vĩnh viễn rồi quên luôn việc vá thật.** Luật WAF có thể bị lách qua hoặc vô tình bị tắt trong những lần cấu hình sau; biện pháp bù chỉ dùng để mua thời gian, và lỗ hổng gốc vẫn bắt buộc phải được cập nhật bản vá chính thức.
+- **Cài xong bản vá lên thiết bị VPN biên là thở phào đóng hồ sơ sự cố.** Với các thiết bị biên nằm trong danh mục KEV, kẻ tấn công thường đã khai thác và cài sẵn cửa hậu hoặc đánh cắp khóa phiên từ nhiều ngày trước khi bạn vá; vá xong bắt buộc phải kiểm tra tính toàn vẹn, rà lại log quá khứ và xoay vòng thông tin xác thực.
+- **Chỉ chạy máy quét lỗ hổng trên danh sách IP có sẵn trong file Excel quản lý.** Kẻ tấn công không đọc file Excel của bạn — chúng quét toàn bộ dải mạng và sổ cái chứng chỉ để đánh đúng vào những máy chủ thử nghiệm bị bỏ quên ngoài danh mục.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao không nên xếp ưu tiên vá chỉ dựa trên điểm CVSS?', options: ['Vì CVSS luôn sai', 'Vì CVSS đo mức nghiêm trọng của lỗi, không đo khả năng nó bị khai thác trong môi trường của bạn', 'Vì CVSS chỉ dùng cho web'], answer: 1, explain: 'Cần thêm KEV (đang bị khai thác thật), EPSS, mức phơi nhiễm và mức trọng yếu của tài sản.' },
+    { q: 'Danh mục KEV cho biết điều gì?', options: ['Các CVE có điểm cao nhất', 'Các CVE đã được quan sát thấy bị khai thác ngoài thực tế', 'Các CVE chưa có bản vá'], answer: 1, explain: 'KEV liệt kê lỗ hổng đang bị khai thác thật, nên phải được ưu tiên bất kể điểm CVSS.' },
+    { q: 'Lỗ hổng đang bị khai thác nhưng nhà cung cấp chưa có bản vá. Việc nên làm NGAY là gì?', options: ['Chờ bản vá, không làm gì khác', 'Dựng biện pháp giảm thiểu tạm: vá ảo trên WAF/IPS, siết truy cập, cô lập, tăng giám sát', 'Xoá toàn bộ hệ thống'], answer: 1, explain: 'Không vá được thì giảm khả năng bị khai thác trong lúc chờ; vẫn phải vá thật ngay khi có bản vá.' },
+    { q: 'Vì sao nên triển khai bản vá theo vòng (lab → thí điểm → rộng) thay vì vá thẳng toàn bộ?', options: ['Để tiết kiệm điện', 'Vì một bản vá hỏng có thể gây gián đoạn rộng hơn cả lỗ hổng; triển khai theo vòng giúp phát hiện sớm và có đường lùi', 'Vì nhà cung cấp bắt buộc'], answer: 1, explain: 'Kiểm thử theo vòng và chuẩn bị đường lùi tránh việc chính bản vá gây sự cố diện rộng.' },
+    { q: 'Vừa vá xong một lỗ hổng VPN đã bị khai thác hàng loạt trước khi có bản vá. Việc nên làm tiếp là gì?', options: ['Không cần làm gì thêm', 'Kiểm tra toàn vẹn thiết bị, xem lại log trước khi vá, đổi thông tin xác thực nếu nghi ngờ', 'Tắt log để tiết kiệm dung lượng'], answer: 1, explain: 'Bản vá đóng cửa nhưng không đuổi được kẻ đã vào từ trước. Thiết bị biên thường không có EDR, nên log và công cụ kiểm tra toàn vẹn là nguồn tin chính.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Quản lý lỗ hổng là một vòng lặp liên tục từ kiểm kê tài sản, phát hiện, xếp ưu tiên, khắc phục, xác minh cho tới đo lường hiệu quả xử lý.
+- Hãy xếp thứ tự ưu tiên dựa trên rủi ro thực tế trong môi trường của bạn (danh mục KEV, chỉ số EPSS, mức phơi nhiễm ra Internet và độ trọng yếu của tài sản) thay vì chỉ nhìn vào con số CVSS đơn lẻ.
+- Khi lỗ hổng chưa có bản vá chính thức, hãy lập tức triển khai các lớp giảm thiểu tạm thời (vá ảo trên WAF/IPS, thu hẹp bề mặt, siết quyền truy cập, cô lập mạng và tăng cường giám sát), sau đó vá thật ngay khi bản cập nhật phát hành.
+- Chuẩn bị sẵn quy trình vá khẩn cấp, triển khai theo từng vòng mở rộng có đường lùi, duy trì danh mục SBOM, rà quét bề mặt bên ngoài định kỳ và luôn kiểm tra dấu vết xâm nhập trên các thiết bị biên ngay cả sau khi đã cập nhật.

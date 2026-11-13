@@ -1,0 +1,239 @@
+---
+title: "Danh tính sau MFA: bảo vệ phiên đăng nhập"
+code: "7.3"
+level: 7
+summary: "MFA chặn được mật khẩu bị lộ, nên kẻ tấn công chuyển sang thứ có được sau MFA: phiên đăng nhập, quyền đã cấp cho ứng dụng, và sự mệt mỏi của người dùng. Bài này đi qua các lớp chặn: MFA chống lừa đảo, Conditional Access, ràng buộc phiên với thiết bị, phiên ngắn, và phát hiện phiên bị dùng lại."
+duration: "90 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu vì sao sau khi qua MFA, session token trở thành thứ giá trị nhất"
+  - "Nhận ra bốn nhóm đường vòng qua MFA ở mức cơ chế, đủ để thiết kế lớp chặn"
+  - "Thiết kế chính sách: MFA chống lừa đảo, Conditional Access, ràng buộc phiên với thiết bị, phiên ngắn và Continuous Access Evaluation"
+  - "Viết tín hiệu phát hiện phiên bị dùng lại và cấp quyền ứng dụng bất thường; biết ứng phó đúng thứ tự"
+  - "Bảo vệ trang đăng nhập internet banking trước credential stuffing"
+---
+import Callout from '../../components/ui/Callout.astro';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Vào công viên nước, cổng soát vé kiểm tra rất kỹ: vé, giấy tờ, đối chiếu khuôn mặt. Qua cổng, bạn được đeo một chiếc vòng tay. Từ đó trở đi, nhân viên ở từng khu trò chơi chỉ nhìn vòng tay. Ai tháo được vòng tay của bạn, đeo vào tay mình, là đi khắp nơi mà không bao giờ phải qua cổng soát vé.
+
+MFA (xác thực nhiều lớp: mật khẩu cộng thêm một mã hoặc một thiết bị) là cổng soát vé. **Session token** (mã phiên: chuỗi ký tự trình duyệt giữ sau khi đăng nhập xong) là chiếc vòng tay. Khi cổng đã chắc chắn, kẻ gian thôi phá cổng và chuyển sang lấy vòng tay.
+
+## Kiến thức chính
+
+### Sau khi đăng nhập, cái gì chứng minh "đây là bạn"?
+
+Đăng nhập xong (mật khẩu + MFA), hệ thống cấp cho trình duyệt hoặc ứng dụng một **session token**. Mọi request sau đó chỉ cần token này, không ai hỏi lại mật khẩu hay MFA nữa.
+
+| Loại mã | Sống bao lâu | Dùng để |
+|---|---|---|
+| Cookie phiên của ứng dụng web | Tuỳ ứng dụng; "ghi nhớ đăng nhập" có thể kéo dài nhiều tuần | Mọi thao tác trên trang web |
+| Access token (dịch vụ đám mây, API) | Ngắn, thường khoảng một giờ | Gọi API, đọc email, file |
+| Refresh token | Dài, nhiều ngày tới nhiều tuần | Xin access token mới mà không phải đăng nhập lại |
+
+Session token không phải mật khẩu, nhưng trong thời hạn của nó, **ai cầm nó thì người đó là bạn**. Vì vậy:
+
+- Đổi mật khẩu **không** tự động làm mất hiệu lực session token đã bị lấy, trừ khi hệ thống được cấu hình thu hồi phiên.
+- MFA bảo vệ cửa vào, không bảo vệ những gì đã được cấp sau cửa.
+
+### Bốn nhóm đường vòng qua MFA
+
+Mô tả dưới đây chỉ nói cách chúng hoạt động, vừa đủ để hiểu vì sao từng lớp chặn có tác dụng. Có bốn nhóm; nhóm "đánh cắp phiên" có hai kiểu (mã độc trên máy người dùng, và trang trung gian) nên chiếm hai dòng đầu của bảng.
+
+| Đường vòng | Cơ chế | Vì sao MFA thường không chặn | Lớp chặn chính |
+|---|---|---|---|
+| **Đánh cắp phiên** từ máy người dùng (dùng mã độc chuyên ăn cắp thông tin, gọi là *infostealer*) | Mã độc đọc cookie và token mà trình duyệt đã lưu, gửi ra ngoài | MFA đã xong từ trước, mã độc lấy thứ có sau MFA | Thiết bị được quản lý có EDR; ràng buộc phiên với thiết bị; phiên ngắn; phát hiện dùng lại |
+| **Proxy AiTM** (*adversary-in-the-middle*, kẻ tấn công đứng giữa) | Trang giả không chép lại giao diện mà đóng vai "người chuyển thư": chuyển nguyên vẹn mọi thứ giữa người dùng và trang thật, rồi giữ lại cookie phiên mà trang thật cấp | Mã OTP và thông báo đẩy được chuyển tiếp ngay, vẫn còn hiệu lực | MFA chống lừa đảo (FIDO2, passkey); Conditional Access chỉ cho thiết bị được quản lý |
+| **MFA fatigue** (làm nạn nhân mệt mỏi) | Có mật khẩu rồi, kẻ gian bấm đăng nhập liên tục để điện thoại nạn nhân nhận hàng chục yêu cầu "Duyệt?", thường kèm cuộc gọi giả làm IT | Người dùng mệt hoặc bị lừa, bấm Duyệt | Khớp số (*number matching*) kèm ngữ cảnh; giới hạn số lần đẩy; nút "Không phải tôi"; tốt nhất là FIDO2 |
+| **Lừa nhập mã thiết bị** (*device code phishing*) | Luồng đăng nhập dành cho thiết bị không có bàn phím (TV, máy chiếu): thiết bị hiện một mã, người dùng nhập mã trên trang đăng nhập **thật**. Kẻ gian tự khởi tạo luồng rồi gửi mã cho nạn nhân với lý do nghe hợp lý | Nạn nhân đăng nhập trên đúng tên miền thật, qua MFA thật; token về tay thiết bị của kẻ gian | Conditional Access chặn luồng mã thiết bị với người không cần dùng; dặn nhân viên không nhập mã do người khác gửi |
+| **Lừa cấp quyền cho ứng dụng** (*OAuth consent phishing*) | Một ứng dụng mang tên đáng tin xin quyền "đọc email và file của bạn"; người dùng bấm Đồng ý trên màn hình thật của nhà cung cấp | Không cần mật khẩu hay MFA của nạn nhân; quyền còn đó kể cả khi đổi mật khẩu | Chỉ cho người dùng tự đồng ý với ứng dụng đã xác minh và quyền rủi ro thấp; việc còn lại phải qua quản trị viên duyệt; rà và thu hồi quyền định kỳ |
+
+Hai sự kiện công khai để nhớ: năm 2022, Uber công bố kẻ tấn công vào được nhờ MFA fatigue tới một nhân viên rồi nhắn tin giả làm bộ phận IT; đầu năm 2025, Microsoft công bố một chiến dịch quy mô lớn dùng đúng cách lừa nhập mã thiết bị, mồi bằng lời mời họp trực tuyến.
+
+### Lớp 1: chọn MFA theo khả năng chống lừa đảo
+
+| Loại MFA | Chống mật khẩu bị lộ | Chống trang giả thường | Chống proxy AiTM | Chống MFA fatigue |
+|---|---|---|---|---|
+| Mã qua SMS, cuộc gọi | Có | Không | Không | Không áp dụng (lại thêm rủi ro chiếm SIM) |
+| Mã OTP từ ứng dụng | Có | Không | Không | Không áp dụng |
+| Thông báo đẩy đơn giản | Có | Một phần | Không | Không |
+| Đẩy có khớp số và ngữ cảnh | Có | Một phần | Không | Phần lớn có |
+| **FIDO2, passkey, Windows Hello for Business** | Có | Có | Có | Có (không có gì để bấm duyệt) |
+
+Vì sao FIDO2 chống được proxy AiTM? Khi đăng ký, khoá bảo mật tạo một cặp khoá **gắn với đúng tên miền** của trang (ví dụ `saomai.example`). Lúc đăng nhập, trình duyệt chỉ cho khoá ký cho tên miền mà trình duyệt đang thực sự mở.
+
+Ở tên miền của proxy (`saomai-xacthuc.example`), khoá không có gì để ký; người dùng cũng không có mã nào để đọc lên hay gõ nhầm chỗ. Lớp chặn nằm trong máy, không nằm ở sự cảnh giác của con người.
+
+Nhưng FIDO2 bảo vệ **lúc đăng nhập**. Nếu máy người dùng đã nhiễm mã độc đánh cắp thông tin, cookie phiên lấy được **sau** khi đăng nhập vẫn dùng được. Đó là việc của các lớp tiếp theo.
+
+### Lớp 2: Conditional Access
+
+**Conditional Access** (truy cập có điều kiện): mỗi lần đăng nhập hoặc xin token, hệ thống quản lý danh tính xét hoàn cảnh (ai, thiết bị nào, có được quản lý và đạt chuẩn không, từ đâu, vào ứng dụng nào, mức rủi ro) rồi quyết định: cho vào, đòi xác thực mạnh hơn, hay chặn. Một bộ chính sách khởi đầu cho ngân hàng:
+
+| Chính sách | Áp cho | Chặn được |
+|---|---|---|
+| Email, file, hệ thống nội bộ chỉ mở từ thiết bị **được quản lý và đạt chuẩn** | Mọi nhân viên | Đăng nhập mới từ máy của kẻ gian, kể cả khi có đủ mật khẩu và mã |
+| Bắt buộc MFA chống lừa đảo | Quản trị viên, người duyệt thanh toán, bộ phận hỗ trợ | Proxy AiTM và MFA fatigue với nhóm quyền cao |
+| Chặn luồng mã thiết bị, chỉ mở ngoại lệ cho thiết bị phòng họp đã đăng ký | Mọi tài khoản | Lừa nhập mã thiết bị |
+| Chặn legacy authentication (IMAP, POP, SMTP dùng mật khẩu trơn) | Mọi tài khoản | Cửa sau không có MFA |
+| Đăng nhập rủi ro cao → xác thực lại bằng FIDO2 hoặc chặn | Mọi tài khoản | Đăng nhập bất thường về vị trí, thiết bị |
+| Chỉ ứng dụng đã duyệt mới được xin quyền đọc dữ liệu | Toàn tổ chức | Lừa cấp quyền ứng dụng |
+
+### Lớp 3: ràng buộc phiên với thiết bị
+
+Ý tưởng: buộc session token vào một chiếc khoá riêng (*private key*) nằm trong chip bảo mật của thiết bị (gọi là TPM trên máy tính, hoặc vùng bảo mật trên điện thoại) và không thể chép ra ngoài. Mỗi lần dùng token, thiết bị phải chứng minh nó đang giữ chiếc khoá đó. Nếu token bị chép sang máy khác thì thành vô dụng, vì máy kia không có khoá.
+
+- Trên Windows tham gia Microsoft Entra, phiên đăng nhập chính của thiết bị đã gắn với TPM; Conditional Access có thêm tính năng bảo vệ token cho một số ứng dụng.
+- Với trình duyệt, Google đã đề xuất chuẩn **Device Bound Session Credentials** để gắn cookie phiên với khoá trong thiết bị và đang đưa vào Chrome. Kiểm tra tình trạng hỗ trợ hiện hành trước khi dựa vào nó.
+- Với ứng dụng **ngân hàng tự viết** (internet banking, mobile banking), làm được ngay: khi khách đăng ký thiết bị, ứng dụng sinh một cặp khoá trong vùng bảo mật của điện thoại; mọi thao tác quan trọng được ký bằng khoá đó; máy chủ từ chối phiên không kèm chữ ký hợp lệ. Đổi sang thiết bị mới phải qua bước xác minh riêng (sinh trắc, bài 6.2), và nên kèm thời gian chờ cùng thông báo qua kênh cũ.
+
+### Lớp 4: phiên ngắn, thu hồi tức thì, hỏi lại khi làm việc nhạy cảm
+
+- **Phiên ngắn:** access token ngắn; refresh token có hạn và bị thu hồi khi có rủi ro. Tắt "ghi nhớ đăng nhập" dài hạn cho hệ thống nhạy cảm.
+- **Continuous Access Evaluation** (CAE, đánh giá truy cập liên tục): ứng dụng được báo gần như ngay lập tức khi tài khoản bị khoá, mật khẩu bị đổi, hoặc địa chỉ IP ra khỏi vùng cho phép, và từ chối token luôn thay vì chờ nó tự hết hạn.
+- **Xác thực lại cho thao tác nhạy cảm** (*step-up*): xem số dư thì không cần, nhưng thêm người thụ hưởng mới, đổi email hoặc số điện thoại, đăng ký thêm phương thức MFA, tạo quy tắc chuyển tiếp email, cấp quyền cho ứng dụng mới thì phải xác thực lại bằng yếu tố mạnh. Phiên bị đánh cắp vẫn không làm được những việc gây hại lớn nhất.
+
+So sánh cùng một email lừa đảo, hai thiết kế:
+
+<SequenceDiagram
+  client:visible
+  title="Nhân viên bấm vào link đăng nhập giả trong email"
+  actors={['Nhân viên', 'Trang trung gian', 'Trang thật', 'SOC']}
+  scenarios={[
+    {
+      name: 'MFA bằng mã OTP',
+      steps: [
+        { from: 0, to: 1, label: 'mở link, thấy trang quen', note: 'Tên miền na ná. Trang trông y hệt trang thật, vì nó đang lấy nội dung trực tiếp từ trang thật.', tone: 'bad' },
+        { from: 1, to: 2, label: 'chuyển mật khẩu, mã OTP', note: 'Nhân viên nhập mật khẩu rồi mã OTP. Trang trung gian chuyển nguyên vẹn sang trang thật trong vài giây, mã vẫn còn hiệu lực.', tone: 'bad' },
+        { from: 2, to: 1, label: 'cấp cookie phiên', note: 'Trang thật thấy mật khẩu đúng, mã đúng, nên cấp phiên. Trang trung gian giữ lại một bản.', tone: 'bad' },
+        { from: 1, to: 1, label: 'phiên ở máy lạ', note: 'Phiên được dùng từ một máy khác: đã đăng nhập, không cần mật khẩu hay MFA nữa. Việc đầu tiên thường là tạo quy tắc chuyển tiếp email.', tone: 'bad' },
+      ],
+    },
+    {
+      name: 'FIDO2 và chỉ thiết bị được quản lý',
+      steps: [
+        { from: 0, to: 1, label: 'mở link, thấy trang quen', note: 'Cùng email, cùng trang trung gian.' },
+        { from: 1, to: 0, label: 'yêu cầu khoá bảo mật', note: 'Trình duyệt chỉ cho khoá ký cho đúng tên miền đã đăng ký. Ở tên miền trung gian, khoá không có gì để ký: đăng nhập không hoàn tất được.', tone: 'good' },
+        { from: 1, to: 2, label: 'thử đăng nhập từ máy lạ', note: 'Kể cả có mật khẩu, yêu cầu đến từ máy không được quản lý: Conditional Access từ chối và ghi một sự kiện rủi ro.', tone: 'good' },
+        { from: 2, to: 3, label: 'sự kiện đăng nhập rủi ro', note: 'SOC thấy mật khẩu đúng nhưng bị chặn vì thiết bị: mật khẩu đã lộ. Đổi mật khẩu, tìm những người khác nhận cùng email.', tone: 'good' },
+      ],
+    },
+  ]}
+/>
+
+### Phát hiện phiên bị dùng lại
+
+Phòng ngừa không bao giờ kín hoàn toàn, nên vẫn cần phát hiện. Các tín hiệu đáng tin nhất:
+
+1. **Cùng một phiên, hai nơi.** Một session token (hoặc mã định danh token) xuất hiện từ hai quốc gia hay hai nhà mạng khác nhau trong thời gian ngắn. Nhìn ở mức **phiên** chính xác hơn nhiều so với cách cũ là *impossible travel* (báo động khi một tài khoản đăng nhập từ hai nơi quá xa nhau trong thời gian quá ngắn). Lý do: một người có thể bật VPN nên hiện ở hai nước, nhưng một phiên thì không tự nhảy sang máy khác được.
+2. **Phiên đổi dấu vân tay giữa chừng:** đang là trình duyệt này trên hệ điều hành này, bỗng thành trình duyệt khác.
+3. **Việc làm ngay sau đăng nhập:** tạo quy tắc hộp thư (chuyển tiếp ra ngoài, tự xoá thư có chữ "hoá đơn"), đăng ký thêm phương thức MFA, cấp quyền cho ứng dụng mới, tải hàng loạt file. Đây là chuỗi kinh điển sau proxy AiTM.
+4. **Cấp quyền ứng dụng bất thường:** ứng dụng mới, nhà phát hành chưa xác minh, xin quyền đọc toàn bộ email hoặc file kèm quyền truy cập ngoại tuyến; nhiều người cùng cấp cho một ứng dụng trong thời gian ngắn.
+5. **Luồng mã thiết bị** được dùng bởi một tài khoản chưa từng dùng, hoặc ngoài phòng họp.
+
+**Truy vấn mẫu: tìm cùng một phiên xuất hiện từ nhiều quốc gia** (viết bằng ngôn ngữ truy vấn KQL; tên bảng và tên cột sẽ khác tuỳ hệ thống của bạn)
+
+```text
+PhienDangNhap
+| where TimeGenerated > ago(1d)
+| summarize SoQuocGia = dcount(QuocGia), QuocGia = make_set(QuocGia), IP = make_set(IP)
+    by MaPhien, NguoiDung
+| where SoQuocGia > 1
+
+MaPhien     NguoiDung     SoQuocGia  QuocGia        IP
+8f3a…c1     lan.nguyen    2          ["VN","NL"]    ["113.161.x.x","185.220.x.x"]
+```
+
+Một phiên của `lan.nguyen` mở ở Việt Nam, rồi dùng tiếp từ một IP ở nước khác: ứng phó ngay, không chờ người dùng xác nhận.
+
+### Ứng phó đúng thứ tự
+
+Khi nghi một phiên bị đánh cắp, **đổi mật khẩu là chưa đủ**. Thứ tự hợp lý:
+
+1. **Thu hồi mọi phiên và refresh token** của tài khoản (trên hệ thống danh tính và trên từng ứng dụng quan trọng).
+2. **Rà phương thức MFA:** xoá phương thức lạ mới được đăng ký.
+3. **Rà những gì kẻ gian đã tạo:** quy tắc hộp thư, quyền cấp cho ứng dụng, chia sẻ file ra ngoài. Xoá và thu hồi.
+4. **Đổi mật khẩu**, ưu tiên chuyển tài khoản sang FIDO2.
+5. **Kiểm tra máy của người dùng** tìm mã độc đánh cắp thông tin; nếu có, coi mọi mật khẩu và phiên lưu trên máy đó đều đã lộ.
+6. **Tìm người khác** nhận cùng email, cùng ứng dụng lạ, cùng IP.
+
+Lỗi hay gặp là làm bước 4 (đổi mật khẩu) trước bước 1: mật khẩu đã mới, nhưng kẻ gian vẫn đang ngồi trong phiên cũ.
+
+### Credential stuffing trên internet banking
+
+Đây là mặt khách hàng của cùng câu chuyện. Kẻ gian lấy danh sách email và mật khẩu bị lộ từ các vụ rò rỉ **ở nơi khác**, dùng bot thử hàng loạt vào trang đăng nhập của ngân hàng, đặt cược vào thói quen dùng lại mật khẩu (*credential stuffing*).
+
+Cần phân biệt với password spraying (thử một mật khẩu phổ biến trên nhiều tài khoản, bài 2.6) và dò mật khẩu (thử nhiều mật khẩu trên một tài khoản). Ở credential stuffing, mỗi tài khoản chỉ bị thử đúng một cặp, và cặp đó đã đúng ở một trang khác.
+
+**Dấu hiệu:** tỉ lệ đăng nhập thất bại **toàn hệ thống** tăng vọt; nhiều tên đăng nhập không tồn tại; IP rất phân tán (thường là proxy dân cư), mỗi IP chỉ vài request nên luật theo IP không kêu; dấu vân tay trình duyệt lặp lại trên hàng nghìn IP; thao tác không có dấu hiệu người thật.
+
+**Lớp chặn:**
+
+- **Giới hạn và phát hiện bot theo nhiều chiều** (IP, tài khoản, dấu vân tay thiết bị, nhà mạng), không chỉ theo IP. Thêm thử thách (như CAPTCHA) khi rủi ro cao, và phân tích cách thao tác của người dùng (bài 6.2).
+- **Theo dõi tỉ lệ thất bại toàn cục** so với mức nền, vì luật theo từng IP bị né.
+- **Thiết bị mới thì xác thực thêm:** đăng nhập đúng mật khẩu từ thiết bị chưa đăng ký vẫn chưa làm được gì (ràng buộc thiết bị ở Lớp 3).
+- **Trả lời đồng nhất** "sai tên đăng nhập hoặc mật khẩu" để không lộ tài khoản nào tồn tại.
+- **Chặn mật khẩu đã lộ** khi khách đặt hoặc đổi mật khẩu, so với danh sách mật khẩu đã xuất hiện trong các vụ rò rỉ (đúng khuyến nghị của NIST, một cơ quan chuẩn của Mỹ, trong tài liệu SP 800-63B).
+- **Khi có tài khoản đăng nhập thành công trong đợt tấn công:** khoá thao tác nhạy cảm, buộc đổi mật khẩu, báo khách hàng qua kênh đã đăng ký.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Bảo vệ danh tính hiện đại không kết thúc ở khoảnh khắc người dùng gõ xong mã MFA. Bước đi nền tảng nhất là triển khai <strong>FIDO2/passkey cho nhóm quyền cao</strong> (quản trị viên, người duyệt thanh toán, help desk) rồi mở rộng dần ra toàn đơn vị, vì đây là cơ chế duy nhất chặn đứng cả proxy trung gian (AiTM) lẫn MFA fatigue mà không phụ thuộc vào sự tinh mắt của nhân viên.
+
+Lớp kế tiếp là <strong>Conditional Access</strong>: bắt buộc mọi truy cập vào hệ thống nội bộ phải xuất phát từ thiết bị được quản lý và đạt chuẩn, khóa luồng nhập mã thiết bị (device code flow), tắt hẳn các giao thức đăng nhập cũ và cấm người dùng tự cấp quyền OAuth cho ứng dụng chưa xác minh.
+
+Để chiếc "vòng tay" session token không bị mang sang máy khác dùng lại, hãy bật <strong>ràng buộc phiên với phần cứng thiết bị (TPM)</strong>, rút ngắn thời hạn phiên kèm đánh giá truy cập liên tục (CAE) và bắt buộc xác thực lại (step-up) trước các thao tác nhạy cảm. Về phía SOC, hãy giám sát ở <strong>mức mã phiên</strong> (cùng một `SessionId` xuất hiện ở hai mạng khác nhau, hoặc vừa đăng nhập đã tạo quy tắc chuyển tiếp hộp thư) và nhớ quy tắc vàng khi ứng cứu: <strong>thu hồi toàn bộ phiên và refresh token trước, đổi mật khẩu sau</strong>.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Rà soát bảo vệ danh tính sau MFA"
+  storageKey="identity-post-mfa"
+  items={[
+    { label: 'Quản trị viên, người duyệt thanh toán, bộ phận hỗ trợ dùng FIDO2 hoặc passkey', hint: 'Mở rộng dần cho toàn bộ nhân viên' },
+    { label: 'Thông báo đẩy (nếu còn dùng) bật khớp số và hiển thị ứng dụng, vị trí' },
+    { label: 'Hệ thống nội bộ chỉ mở từ thiết bị được quản lý và đạt chuẩn' },
+    { label: 'Luồng mã thiết bị bị chặn, trừ ngoại lệ đã đăng ký' },
+    { label: 'Legacy authentication không có MFA đã bị chặn' },
+    { label: 'Người dùng không tự đồng ý cấp quyền cho ứng dụng chưa xác minh; có quy trình quản trị duyệt' },
+    { label: 'Đã rà và thu hồi quyền của ứng dụng không còn dùng trong 6 tháng qua' },
+    { label: 'Thao tác nhạy cảm (đổi MFA, quy tắc hộp thư, người thụ hưởng mới) đòi xác thực lại' },
+    { label: 'Có cảnh báo: cùng phiên từ hai quốc gia; quy tắc hộp thư chuyển ra ngoài; phương thức MFA mới' },
+    { label: 'Playbook ứng phó ghi rõ: thu hồi phiên trước, đổi mật khẩu sau' },
+    { label: 'Internet banking: phát hiện bot nhiều chiều, theo dõi tỉ lệ thất bại toàn cục, chặn mật khẩu đã lộ' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Đinh ninh rằng "tài khoản đã bật MFA bằng OTP là không thể bị chiếm".** Trước một trang proxy trung gian (AiTM) hoặc mã độc ăn cắp thông tin (*infostealer*) nằm sẵn trên máy, mã OTP vẫn hợp lệ và thứ kẻ tấn công lấy đi là chiếc cookie phiên được cấp ngay sau bước MFA.
+- **Khi phát hiện tài khoản bị xâm nhập, chỉ bấm đổi mật khẩu rồi đóng phiếu xử lý.** Nếu không thu hồi toàn bộ session token, refresh token và xóa các quyền ứng dụng OAuth hay phương thức MFA phụ mà kẻ gian vừa cài thêm, chúng vẫn ung dung ngồi lại trong hộp thư của nạn nhân.
+- **Trang bị khóa FIDO2 đắt tiền nhưng vẫn để nguyên phương thức dự phòng bằng SMS hoặc OTP cho cùng tài khoản đó.** Trên màn hình đăng nhập, kẻ tấn công chỉ cần bấm "Thử cách xác thực khác" để ép cuộc đăng nhập quay về con đường yếu nhất mà bạn chưa khóa.
+- **Để luồng đăng nhập bằng mã thiết bị (device code flow) mở mặc định cho toàn bộ nhân viên.** Hầu hết nhân viên văn phòng không bao giờ cần đăng nhập tài khoản công ty lên Smart TV; để mở tính năng này chỉ tạo cơ hội cho kẻ gian gửi mã lừa người dùng đăng nhập hộ trên trang thật.
+- **Cấu hình cảnh báo "di chuyển bất khả thi" (impossible travel) chỉ dựa trên tên tài khoản.** Nhân viên bật/tắt VPN sẽ làm SOC ngập trong báo động giả; truy vấn cùng một mã phiên (`SessionId`) xuất hiện từ hai nhà mạng/quốc gia khác nhau mới bắt đúng hành vi đánh cắp cookie.
+- **Chống credential stuffing trên trang ngân hàng chỉ bằng cách chặn IP sau 5 lần sai.** Các mạng botnet hiện đại xoay vòng qua hàng chục nghìn IP proxy dân cư, mỗi IP chỉ thử một hai tài khoản nên vượt qua luật chặn theo IP đơn lẻ rất dễ dàng.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao proxy AiTM vượt qua được MFA bằng mã OTP?', options: ['Vì nó bẻ được thuật toán OTP', 'Vì nó chuyển tiếp mật khẩu và mã OTP sang trang thật ngay lập tức, rồi giữ lại cookie phiên trang thật cấp', 'Vì OTP không được dùng trên web'], answer: 1, explain: 'Mã vẫn còn hiệu lực khi được chuyển tiếp. Thứ kẻ gian cần là cookie phiên có sau MFA.' },
+    { q: 'Điều gì khiến FIDO2/passkey chống được trang trung gian?', options: ['Mã dài hơn OTP', 'Khoá chỉ ký cho đúng tên miền đã đăng ký mà trình duyệt đang mở, nên ở tên miền giả không có gì để ký', 'Nó gửi mã qua SMS an toàn hơn'], answer: 1, explain: 'Lớp chặn nằm trong trình duyệt và khoá, không dựa vào việc người dùng nhận ra tên miền giả.' },
+    { q: 'Một nhân viên được nhắn "nhập mã ABCD-1234 tại trang đăng nhập Microsoft để vào phòng họp". Trang đó đúng là trang thật. Chuyện gì có thể xảy ra?', options: ['Không sao vì trang là thật', 'Đây là lừa nhập mã thiết bị: nhân viên đăng nhập thật, qua MFA thật, nhưng token được cấp cho thiết bị của kẻ gian', 'Chỉ mất quyền vào phòng họp'], answer: 1, explain: 'Luồng mã thiết bị cấp token cho bên đã khởi tạo nó. Chặn bằng Conditional Access và nguyên tắc không nhập mã do người khác gửi.' },
+    { q: 'Phát hiện một phiên bị dùng từ hai quốc gia. Việc làm đầu tiên là gì?', options: ['Đổi mật khẩu', 'Thu hồi mọi phiên và refresh token của tài khoản', 'Gửi email hỏi người dùng'], answer: 1, explain: 'Đổi mật khẩu không đuổi được kẻ gian đang ở trong phiên cũ. Thu hồi phiên trước, rồi mới rà MFA, quy tắc hộp thư, ứng dụng, và đổi mật khẩu.' },
+    { q: 'Vì sao luật giới hạn số lần đăng nhập theo từng IP không đủ chống credential stuffing?', options: ['Vì bot thường dùng rất nhiều IP, mỗi IP chỉ vài lần thử', 'Vì IP không được ghi log', 'Vì giới hạn theo IP làm chậm trang'], answer: 0, explain: 'Cần theo dõi nhiều chiều (dấu vân tay thiết bị, nhà mạng, tỉ lệ thất bại toàn cục) và xác thực thêm khi thiết bị mới.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Sau khi bước qua cổng MFA, session token và refresh token chính là chiếc chìa khóa đại diện cho người dùng; ai nắm giữ token trong thời hạn hiệu lực thì hệ thống coi người đó là chủ tài khoản.
+- Bốn nhóm kỹ thuật vòng qua MFA phổ biến gồm: đánh cắp phiên sau đăng nhập (qua infostealer hoặc proxy AiTM), dội thông báo MFA fatigue, lừa nhập mã thiết bị (device code phishing) và lừa cấp quyền ứng dụng OAuth.
+- Kiến trúc bảo vệ danh tính bền vững kết hợp nhiều lớp: khóa FIDO2 chống phishing, chính sách Conditional Access đòi thiết bị đạt chuẩn, ràng buộc token vào phần cứng thiết bị, rút ngắn thời hạn phiên kèm CAE và xác thực lại ở các thao tác nhạy cảm.
+- Tại SOC, hãy phát hiện xâm nhập ở cấp độ mã phiên (một phiên dùng ở hai nơi, tạo quy tắc chuyển tiếp thư, thêm MFA lạ) và luôn thực hiện thu hồi phiên trước khi đổi mật khẩu.

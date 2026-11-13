@@ -1,0 +1,238 @@
+---
+title: "SOC dùng AI: phát hiện và phản ứng nhanh"
+code: "8.1"
+level: 8
+summary: "Không ai xem hết được hàng nghìn camera an ninh — việc của SOC là lọc ra đúng vài màn hình đáng xem ngay lúc này. Bài này đi từ log thô tới hành động, và viết luật phát hiện cho chính hai kỹ thuật bạn đã tấn công ở Cấp 3: Kerberoasting và DCSync."
+duration: "85 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu đường đi của dữ liệu trong SOC: log, SIEM, cảnh báo, xử lý"
+  - "Phân biệt phát hiện theo luật và phát hiện bất thường bằng học máy"
+  - "Đọc và viết được luật phát hiện Kerberoasting, DCSync từ log Windows"
+  - "Dùng trợ lý AI trong SOC an toàn: việc nào cho AI, việc nào cho người"
+---
+import Callout from '../../components/ui/Callout.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một toà nhà ngân hàng có hàng nghìn camera. Không ai xem hết được. Người bảo vệ giỏi không phải người nhìn được nhiều màn hình nhất, mà là người có một hệ thống lọc ra năm màn hình đáng xem ngay lúc này.
+
+**SOC** (Security Operations Center, trung tâm điều hành an ninh) là phòng bảo vệ đó cho hệ thống máy tính. Những người trực ở đây gọi là **analyst** (chuyên viên phân tích): họ xem cảnh báo và quyết định cái nào là tấn công thật. AI là bộ lọc giúp con người nhìn đúng chỗ, và là đôi tay giúp phản ứng kịp khi kẻ tấn công cũng đang dùng máy để chạy nhanh hơn.
+
+## Kiến thức chính
+
+### Đường đi của dữ liệu trong SOC
+
+Bấm vào từng ô:
+
+<ConceptMap
+  client:visible
+  title="Từ log thô tới hành động"
+  width={720}
+  height={300}
+  nodes={[
+    { id: 'src', label: 'Nguồn log', sub: 'máy trạm, DC, mạng, app', x: 95, y: 70, w: 170, detail: 'EDR trên máy trạm, log bảo mật của Domain Controller, tường lửa, proxy, hệ thống ngân hàng lõi, đăng nhập internet banking. Không có log thì không có gì để phát hiện.' },
+    { id: 'siem', label: 'SIEM', sub: 'gom, chuẩn hoá, lưu', x: 290, y: 80, w: 150, tone: 'accent', detail: 'Gom log từ mọi nguồn về một chỗ, đưa về cùng một khuôn dạng để dễ tìm, và lưu đủ lâu để truy vết về sau. Ví dụ: Splunk, Microsoft Sentinel, Elastic, Wazuh (mã nguồn mở).' },
+    { id: 'det', label: 'Phát hiện', sub: 'luật + học máy', x: 565, y: 70, w: 150, tone: 'accent', detail: 'Luật bắt những kiểu tấn công đã biết (Kerberoasting, DCSync). Mô hình học máy (UEBA, phân tích hành vi người dùng và thiết bị) bắt những hành vi lệch khỏi thói quen bình thường của từng người, từng máy.' },
+    { id: 'tri', label: 'Phân loại', sub: 'analyst + trợ lý AI', x: 565, y: 226, w: 170, detail: 'Analyst quyết định cảnh báo là thật hay giả. Trợ lý AI tóm tắt ngữ cảnh và gợi ý, nhưng người kiểm chứng và quyết định.' },
+    { id: 'soar', label: 'SOAR', sub: 'tự động phản ứng', x: 290, y: 226, w: 150, tone: 'warn', detail: 'SOAR là phần mềm tự động hoá phản ứng. Nó chạy playbook (kịch bản xử lý viết sẵn): thu hồi phiên đăng nhập, khoá tạm tài khoản, cô lập máy khỏi mạng, chặn IP. Việc nhỏ và hoàn tác được thì tự làm ngay; việc lớn cần người duyệt.' },
+    { id: 'learn', label: 'Rút kinh nghiệm', sub: 'luật mới, vá lỗ hổng', x: 95, y: 226, w: 170, detail: 'Sau mỗi sự cố, ta viết thêm luật phát hiện mới, siết cấu hình chặt hơn, và dùng dữ liệu đó để mô hình học lại cho chính xác hơn.' },
+  ]}
+  edges={[
+    { from: 'src', to: 'siem' },
+    { from: 'siem', to: 'det' },
+    { from: 'det', to: 'tri', label: 'cảnh báo' },
+    { from: 'tri', to: 'soar', label: 'quyết định' },
+    { from: 'soar', to: 'learn' },
+    { from: 'learn', to: 'src', dashed: true, label: 'cải tiến' },
+  ]}
+/>
+
+### Hai cách phát hiện
+
+| | Theo luật (rule) | Theo hành vi (học máy, UEBA) |
+|---|---|---|
+| Cách làm | "Nếu thấy A và B thì báo" (do người viết ra) | Máy tự học thế nào là "bình thường" của từng người, từng máy; báo khi thấy lệch |
+| Mạnh ở | Chính xác, dễ giải thích, nhanh | Bắt được cái mới, chưa ai viết luật |
+| Yếu ở | Chỉ bắt được cái đã biết | Dễ báo nhầm, và khó giải thích vì sao nó báo |
+| Ví dụ | Vé Kerberos mã hoá RC4 hàng loạt | Nhân viên kế toán bỗng đăng nhập máy chủ lúc 3 giờ sáng |
+
+SOC tốt dùng cả hai. Luật là nền chắc chắn; học máy là lưới bắt những gì lọt qua luật.
+
+### Báo động giả và báo động sót
+
+- **Báo động giả** (false positive): báo nhưng không có gì. Quá nhiều thì analyst mệt mỏi và bắt đầu bỏ qua, kể cả cảnh báo thật. Hiện tượng này gọi là *alert fatigue* (mệt mỏi vì quá nhiều cảnh báo).
+- **Báo động sót** (false negative): có tấn công nhưng không báo. Nguy hiểm hơn, vì bạn không biết mình đang không biết.
+
+Hạ ngưỡng thì bắt nhiều hơn nhưng giả nhiều hơn; nâng ngưỡng thì ngược lại. Bạn đã tự kéo ngưỡng này trong mô phỏng ở bài 6.2.
+
+## Thực hành: phát hiện chính các kỹ thuật ở Cấp 3
+
+Ở bài 3.5 bạn đã thấy Kerberoasting và DCSync từ phía tấn công. Giờ nhìn từ phía SOC: mỗi kỹ thuật để lại dấu vết trong log Windows.
+
+### Kerberoasting
+
+Mỗi khi ai đó xin "vé" truy cập một dịch vụ qua Kerberos (cơ chế đăng nhập của AD), máy chủ DC ghi lại sự kiện mang mã **4769**. Công cụ Kerberoasting thường xin vé mã hoá **RC4** (mã loại `0x17`) vì dễ bẻ hơn, và xin cho nhiều dịch vụ trong thời gian ngắn. Trong một mạng hiện đại đã chuyển sang AES, vé RC4 là điều bất thường.
+
+Luật dưới đây viết theo định dạng **Sigma** (một cách viết luật phát hiện chung, có thể chuyển sang ngôn ngữ truy vấn của hầu hết SIEM, nên viết một lần dùng ở nhiều nơi):
+
+**Luật Sigma: nghi Kerberoasting**
+
+```yaml
+title: Nhiều vé dịch vụ Kerberos mã hoá RC4
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4769
+    TicketEncryptionType: '0x17'      # RC4
+  filter_machine:
+    ServiceName|endswith: '$'         # bỏ tài khoản máy
+  filter_krbtgt:
+    ServiceName: 'krbtgt'
+  condition: selection and not filter_machine and not filter_krbtgt
+level: medium
+tags:
+  - attack.credential_access
+  - attack.t1558.003
+```
+
+Gom theo người xin vé để thấy mẫu "một tài khoản, nhiều dịch vụ, vài phút" (ví dụ minh hoạ bằng KQL; tên trường tuỳ SIEM):
+
+**Truy vấn gom nhóm và kết quả mẫu**
+
+```text
+SecurityEvent
+| where EventID == 4769 and TicketEncryptionType == "0x17"
+| where ServiceName !endswith "$" and ServiceName != "krbtgt"
+| summarize SoDichVu = dcount(ServiceName), DichVu = make_set(ServiceName)
+    by TargetUserName, IpAddress, bin(TimeGenerated, 10m)
+| where SoDichVu >= 5
+
+TargetUserName   IpAddress     SoDichVu  DichVu
+it.hoang         10.20.5.41    14        ["MSSQL/sql01","HTTP/intranet","CIFS/fs02", ...]
+```
+
+Một nhân viên IT xin vé RC4 cho 14 dịch vụ trong 10 phút: đáng điều tra ngay.
+
+<Callout type="warn" label="Luật này có thể bị né">
+Luật trên bám vào một dấu vết của công cụ (vé RC4). Công cụ Kerberoasting có thể xin vé AES, và kẻ tấn công dùng AI agent sẽ tự đổi sang biến thể khác khi bị chặn. Hãy giữ luật này nhưng đừng chỉ dựa vào nó: bài 8.4 bổ sung luật gom theo khối lượng vé, không phụ thuộc loại mã hoá, và tài khoản SPN mồi gần như không báo động giả.
+</Callout>
+
+### DCSync
+
+DCSync giả làm DC để xin đồng bộ dữ liệu mật khẩu. Trên DC, sự kiện **4662** ghi lại truy cập đối tượng có kèm mã quyền sao chép. Bình thường chỉ các DC (tài khoản máy, tên kết thúc bằng `$`) mới làm việc này.
+
+**Luật Sigma: nghi DCSync**
+
+```yaml
+title: Yêu cầu sao chép thư mục từ tài khoản không phải DC
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4662
+    Properties|contains:
+      - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'   # DS-Replication-Get-Changes
+      - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'   # DS-Replication-Get-Changes-All
+  filter_dc:
+    SubjectUserName|endswith: '$'
+  condition: selection and not filter_dc
+level: high
+tags:
+  - attack.t1003.006
+```
+
+<Callout type="note">
+Luật chỉ chạy được khi log được bật. Hai luật trên cần bật audit policy <strong>Kerberos Service Ticket Operations</strong> và <strong>Directory Service Access</strong> trên DC. Rất nhiều SOC "có SIEM" nhưng không bắt được gì vì nguồn log chưa bật.
+</Callout>
+
+### Phát hiện theo hành vi trên internet banking
+
+Với khách hàng, mô hình học máy học thói quen của từng người: thiết bị nào, giờ nào, thường chuyển cho ai, thao tác nhanh hay chậm.
+
+Một phiên có **thiết bị mới + vừa đổi số điện thoại + thêm người nhận mới + chuyển gần hết số dư** sẽ có điểm rủi ro cao dù từng dấu hiệu riêng lẻ không đáng báo. Đây là chỗ học máy vượt luật: nó cân nhiều tín hiệu yếu cùng lúc.
+
+## Trợ lý AI trong SOC
+
+Mô hình ngôn ngữ (LLM) giúp analyst ở những việc tốn thời gian:
+
+- Tóm tắt một cảnh báo kèm ngữ cảnh: người dùng này là ai, máy này chạy gì, trước đó có gì lạ.
+- Gợi ý kỹ thuật ATT&CK tương ứng và bước điều tra tiếp.
+- Viết truy vấn từ câu hỏi tiếng Việt ("tài khoản này đã đăng nhập những máy nào trong 24 giờ qua?").
+- Soạn nháp báo cáo sự cố.
+
+Xem một vòng phân loại cảnh báo có trợ lý AI:
+
+<SequenceDiagram
+  client:visible
+  title="Phân loại cảnh báo Kerberoasting"
+  actors={['SIEM', 'Trợ lý AI', 'Analyst', 'SOAR']}
+  steps={[
+    { from: 0, to: 1, label: 'cảnh báo 4769 x14', note: 'SIEM bắn cảnh báo: it.hoang xin vé RC4 cho 14 dịch vụ trong 10 phút. Kèm theo log thô.' },
+    { from: 1, to: 2, label: 'tóm tắt + T1558.003', note: 'Trợ lý AI tóm tắt: "Mẫu khớp Kerberoasting. Máy 10.20.5.41 là máy trạm của it.hoang; 40 phút trước tài khoản này đăng nhập từ một IP lạ." Kèm mức tin cậy và đường dẫn tới log gốc.' },
+    { from: 2, to: 0, label: 'kiểm chứng log gốc', note: 'Analyst không tin ngay. Mở log gốc, xác nhận đúng 14 vé RC4 và lần đăng nhập lạ có thật. AI có thể tóm tắt sai hoặc bịa chi tiết.', tone: 'good' },
+    { from: 2, to: 3, label: 'duyệt cô lập máy', note: 'Analyst xác nhận sự cố thật và bấm duyệt playbook: thu hồi phiên, khoá tạm tài khoản, cô lập máy trạm.', tone: 'good' },
+    { from: 3, to: 2, label: 'đã cô lập + khoá', note: 'SOAR thực hiện trong vài giây và báo lại. Bước tiếp: đổi mật khẩu các tài khoản dịch vụ bị xin vé, vì vé có thể đã bị đem đi bẻ khoá.', tone: 'good' },
+  ]}
+/>
+
+<Callout type="warn" label="Rủi ro của trợ lý AI trong SOC">
+<strong>Bịa chi tiết:</strong> luôn kiểm chứng bằng dữ liệu gốc trước khi hành động.
+<br /><strong>Log chứa chữ do kẻ tấn công kiểm soát:</strong> tên file, user-agent, nội dung email đều có thể chứa câu "chỉ dẫn" nhằm vào trợ lý AI đang đọc log (prompt injection, bài 6.4). Trợ lý SOC chỉ nên đọc và gợi ý, không tự hành động.
+<br /><strong>Dữ liệu nhạy cảm:</strong> không gửi log chứa dữ liệu khách hàng ra dịch vụ AI bên ngoài khi chưa được phê duyệt theo chính sách của ngân hàng.
+</Callout>
+
+## Tự động hoá phản ứng (SOAR)
+
+Khi kẻ tấn công đi nhanh, phản ứng bằng tay không kịp. Nhưng tự động hoá sai cũng gây hại: khoá nhầm tài khoản giám đốc giữa phiên họp, cô lập nhầm máy chủ thanh toán.
+
+Cách chia phổ biến:
+
+| Loại hành động | Ví dụ | Ai làm |
+|---|---|---|
+| Nhỏ, đảo ngược được | Chặn IP, buộc đăng xuất, yêu cầu xác thực lại | Máy tự làm ngay |
+| Ảnh hưởng vừa | Khoá tạm tài khoản nhân viên, cô lập máy trạm | Máy đề xuất, analyst bấm duyệt |
+| Ảnh hưởng lớn | Cô lập máy chủ ngân hàng lõi, ngắt kết nối liên ngân hàng | Trưởng ca hoặc lãnh đạo quyết định |
+
+Bảng trên chia theo **mức ảnh hưởng** của hành động. Còn một chiều nữa: **độ tin cậy của tín hiệu**. Khi kẻ tấn công dùng AI agent, chờ analyst nhận và duyệt một cảnh báo có thể mất lâu hơn cả thời gian chúng cần để lấy dữ liệu. Bài 8.4 bàn cách duyệt trước playbook tự động cho những tín hiệu gần như không thể nhầm, như có người chạm vào mồi nhử.
+
+Hai con số SOC hay đo: **MTTD** (thời gian trung bình để phát hiện) và **MTTR** (thời gian trung bình để phản ứng). AI và tự động hoá có giá trị khi chúng kéo hai con số này xuống mà không làm tăng báo động giả.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Xây dựng một SOC hiệu quả bắt đầu từ việc <strong>bật đúng nguồn log nền tảng</strong> trước khi nghĩ tới những mô hình AI phức tạp: bật audit Kerberos và Directory Service trên Domain Controller, bật PowerShell Script Block Logging cùng Sysmon hoặc EDR trên máy trạm, và thu thập log xác thực của các ứng dụng trọng yếu. Toàn bộ nhật ký này phải được giữ đủ lâu tại SIEM để đủ sức truy vết những chiến dịch nằm vùng nhiều tháng.
+
+Hãy <strong>đo độ phủ phát hiện theo khung MITRE ATT&CK</strong> và kiểm chứng định kỳ bằng các buổi <strong>diễn tập purple team</strong> — nơi pentester thực hiện lại các kỹ thuật ở Cấp 3 ngay trong lab để đội SOC tinh chỉnh luật. Cuối cùng, hãy đặt ranh giới rõ ràng cho trợ lý AI và SOAR: để máy tự động hóa việc gom ngữ cảnh, tóm tắt cảnh báo và thực thi các phản ứng nhỏ có thể đảo ngược ngay, nhưng giữ con người ở khâu kiểm chứng log gốc và phê duyệt những hành động có ảnh hưởng lớn tới vận hành.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Đầu tư mua hệ thống SIEM đắt tiền nhưng lại để mặc định nguồn log trên các máy chủ.** Rất nhiều đơn vị nhìn màn hình SIEM xanh mượt không một cảnh báo rồi yên tâm rằng mình an toàn, trong khi thực tế Domain Controller chưa hề bật ghi nhận sự kiện 4769 hay 4662 nên mọi đòn Kerberoasting và DCSync đều đi qua trong im lặng.
+- **Bật toàn bộ hàng trăm luật cảnh báo mặc định của nhà cung cấp mà không tinh chỉnh theo môi trường thật.** Khi màn hình trực ngập hàng nghìn báo động giả mỗi ngày, chuyên viên phân tích sẽ rơi vào trạng thái tê liệt (*alert fatigue*) và bấm đóng hàng loạt, vô tình bỏ lọt đúng cảnh báo tấn công thật.
+- **Tin tưởng tuyệt đối vào đoạn tóm tắt của trợ lý AI trong SOC mà không bấm mở dòng log gốc.** Mô hình ngôn ngữ vừa có thể suy diễn sai chi tiết kỹ thuật, vừa có thể bị kẻ tấn công chèn câu lệnh prompt injection ngay trong chuỗi `User-Agent` hoặc tên tệp để đánh lừa người đọc.
+- **Cấu hình SOAR tự động cách ly mọi máy chủ ngay khi có cảnh báo mức trung bình.** Chỉ cần một báo động giả hoặc một kẻ tấn công cố tình giả mạo địa chỉ nguồn là chính hệ thống tự động sẽ tự tay ngắt kết nối máy chủ ngân hàng lõi giữa giờ giao dịch.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Điểm mạnh của phát hiện theo hành vi (học máy) so với theo luật là gì?', options: ['Không bao giờ báo động giả', 'Bắt được hành vi bất thường chưa ai viết luật', 'Không cần log'], answer: 1, explain: 'Học máy học "bình thường" rồi báo khi lệch, nên bắt được cái mới; đổi lại có nhiều báo động giả hơn.' },
+    { q: 'Dấu hiệu nào trong log gợi ý Kerberoasting?', options: ['Sự kiện 4769 với vé mã hoá RC4 cho nhiều dịch vụ trong thời gian ngắn', 'Một lần đăng nhập thành công lúc 9 giờ sáng', 'Máy in hết giấy'], answer: 0, explain: 'Công cụ Kerberoasting thường xin vé RC4 (0x17) cho nhiều tài khoản có SPN liền nhau.' },
+    { q: 'Vì sao trợ lý AI trong SOC không nên tự hành động dựa trên nội dung log?', options: ['Vì AI chạy chậm', 'Vì log có thể chứa chữ do kẻ tấn công kiểm soát nhằm dụ AI, và AI có thể tóm tắt sai', 'Vì log luôn bị mã hoá'], answer: 1, explain: 'Prompt injection qua log và việc bịa chi tiết là hai rủi ro chính; người cần kiểm chứng và duyệt.' },
+    { q: 'Hành động nào phù hợp để SOAR tự làm ngay không cần duyệt?', options: ['Ngắt kết nối hệ thống thanh toán liên ngân hàng', 'Buộc đăng xuất một phiên đáng ngờ', 'Xoá tài khoản giám đốc'], answer: 1, explain: 'Việc nhỏ và đảo ngược được thì tự động; việc ảnh hưởng lớn cần người quyết định.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Dòng chảy vận hành của một SOC đi từ thu thập nguồn log, chuẩn hóa tại SIEM, phát hiện bằng luật kết hợp học máy (UEBA), phân loại cảnh báo, phản ứng qua SOAR cho tới rút kinh nghiệm cải tiến luật.
+- Mọi kỹ thuật tấn công ở Cấp 3 đều để lại dấu vết đặc trưng (như Kerberoasting ở sự kiện 4769 mã hóa RC4, hay DCSync ở sự kiện 4662 với quyền sao chép thư mục), nhưng chỉ nhìn thấy được khi chính sách ghi log tương ứng đã được bật.
+- Trợ lý AI và SOAR giúp rút ngắn mạnh thời gian phát hiện (MTTD) và phản ứng (MTTR), nhưng con người luôn phải kiểm chứng lại trên log gốc và giữ quyền phê duyệt đối với các hành động có ảnh hưởng diện rộng.

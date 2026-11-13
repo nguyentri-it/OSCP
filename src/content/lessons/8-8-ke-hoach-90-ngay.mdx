@@ -1,0 +1,355 @@
+---
+title: "Kế hoạch 90 ngày cho doanh nghiệp chưa có SOC"
+code: "8.8"
+level: 8
+summary: "Không phải doanh nghiệp nào cũng có đội SOC, SIEM hay ngân sách lớn. Bài này ráp mọi thứ ở Cấp 6–8 thành một kế hoạch 90 ngày cho một doanh nghiệp bình thường: việc nào làm trước và vì sao, dùng thứ đã có, đo tiến độ thế nào, và báo cáo với lãnh đạo ra sao."
+duration: "90 phút"
+updated: "2026-11-09"
+objectives:
+  - "Xếp thứ tự biện pháp phòng thủ theo đường vào thật của kẻ tấn công, kể cả kẻ tấn công dùng AI, thay vì theo danh sách sản phẩm"
+  - "Lập được kế hoạch 90 ngày chia ba chặng, mỗi chặng có đầu ra kiểm chứng được"
+  - "Chọn cách giám sát vừa sức: tự vận hành, dùng tính năng có sẵn, hay thuê dịch vụ trực"
+  - "Đo tiến độ bằng vài chỉ số đơn giản và báo cáo cho lãnh đạo bằng ngôn ngữ rủi ro"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Bạn vừa nhận trông coi một cửa hàng. Trước khi mua camera, bạn đi một vòng: cửa sau có khoá không, ai đang giữ chìa, két sắt để đâu, lỡ cháy thì bình cứu hoả ở chỗ nào. Camera xịn mà cửa sau mở toang thì camera chỉ giúp bạn xem lại cảnh mất đồ.
+
+Bảo vệ một doanh nghiệp cũng nên theo thứ tự đó: **biết mình có gì, đóng những cửa đang mở, bảo đảm dựng lại được, rồi mới tới nhìn thấy và phản ứng**. Bài này biến thứ tự đó thành 90 ngày việc cụ thể, cho một doanh nghiệp không có đội SOC riêng.
+
+<Callout type="note" label="Bài này dành cho ai">
+Nhiều bài ở Cấp 6–8 lấy ví dụ ở ngân hàng Sao Mai. Bài này chuyển cùng các nguyên tắc đó sang một doanh nghiệp thường: xưởng sản xuất, công ty phân phối, cửa hàng bán trực tuyến, công ty phần mềm nhỏ. Bạn nên đọc Cấp 7 và các bài 8.1 tới 8.6 trước. Nếu mục tiêu của bạn là phòng thủ chứ không phải thi OSCP, xem thứ tự đọc ở trang <a href="../../phong-thu/">Nhánh phòng thủ</a>.
+</Callout>
+
+Ví dụ xuyên suốt bài: **công ty phân phối Lúa Vàng** (hư cấu), 150 nhân viên, một văn phòng, một kho, bán hàng qua website, dùng email và bộ văn phòng trên đám mây, một domain Active Directory cho máy văn phòng. Bộ phận IT có hai người, không ai chuyên bảo mật.
+
+## Kiến thức chính
+
+### Vì sao doanh nghiệp nhỏ cũng là mục tiêu
+
+Nhiều người nghĩ "công ty mình nhỏ, ai thèm đánh". Kẻ tấn công dùng AI không chọn mục tiêu theo tên tuổi. Chúng **quét hàng loạt** cả nghìn công ty cùng lúc rồi đánh vào bất cứ ai có cửa mở: một VPN chưa vá, một tài khoản email không có MFA, một kế toán tin cuộc gọi của "giám đốc".
+
+AI làm việc quét, viết thư lừa đảo và thử khai thác gần như miễn phí, nên đánh một công ty 150 người giờ cũng rẻ như đánh một tập đoàn.
+
+Các báo cáo điều tra sự cố hằng năm (ví dụ Verizon DBIR, Mandiant M-Trends) năm nào cũng xếp ba đường vào lên đầu: **khai thác lỗ hổng trên thiết bị, phần mềm truy cập được từ Internet**, **thông tin đăng nhập bị lộ hoặc bị lừa lấy**, và **lừa đảo nhắm vào con người**. Kế hoạch 90 ngày tập trung đóng đúng ba đường đó trước.
+
+### Kẻ tấn công dùng AI, kế hoạch đáp lại ở đâu
+
+Mỗi kiểu tấn công ở Cấp 6–8 đều có chỗ đứng trong kế hoạch. Bảng này là bản đồ của cả kế hoạch: cột đầu là kiểu tấn công, cột giữa là việc ta làm để chặn, cột "Chặng" cho biết việc đó nằm ở giai đoạn nào trong 90 ngày, cột cuối là bài đã học. Phần lớn biện pháp mạnh nhất **không cần AI** và cũng không tốn nhiều tiền:
+
+| Kiểu tấn công có dùng AI | Biện pháp trong kế hoạch | Chặng | Bài |
+|---|---|---|---|
+| Email lừa đảo viết hoàn hảo, cá nhân hoá | MFA cho mọi tài khoản, MFA chống phishing cho quản trị và người duyệt tiền; DMARC | 1, 2 | 7.3, 7.5 |
+| Gọi điện, họp video giả lãnh đạo đòi chuyển tiền | Quy định gọi lại số đã lưu và duyệt hai người | 1 | 6.2 |
+| Giả giọng gọi bộ phận IT xin đặt lại mật khẩu, MFA | Quy trình cấp lại có xác minh | 3 | 7.4 |
+| Quét và khai thác lỗ hổng mới trong vài giờ | Kiểm kê bề mặt bên ngoài, vá thiết bị biên theo KEV | 1 | 7.1 |
+| AI agent di chuyển ngang ở tốc độ máy | Tách tài khoản quản trị, mồi nhử, ngăn chặn tự động duyệt trước | 1, 2, 3 | 8.4 |
+| Mã độc tự viết lại, gọi API AI khi chạy | EDR ở chế độ chặn, luật bám hành vi, luật tiến trình lạ gọi API AI | 2 | 8.4, 3.8 |
+| Đánh cắp phiên đăng nhập sau MFA | Thiết bị được quản lý, phiên ngắn, thu hồi phiên khi có sự cố | 2, 3 | 7.3 |
+| Tống tiền, AI đọc nhanh dữ liệu lấy được | Sao lưu bất biến, giám sát luồng ra, giữ ít dữ liệu | 1, 2 | 8.6 |
+| Nhân viên dán dữ liệu vào AI công khai; chatbot của công ty bị lừa | Chính sách dùng AI, công cụ AI được duyệt, kiểm kê agent | 2 | 6.4 |
+| Ứng viên giả qua phỏng vấn video, nhân viên IT từ xa mạo danh | Xác minh danh tính khi tuyển, laptop chỉ gửi tới địa chỉ khớp giấy tờ, quyền tăng dần | 1 | 6.3 |
+| Trang giả bảo người dùng tự dán lệnh (ClickFix) | Tắt hộp Run, giới hạn PowerShell, luật phát hiện | 2 | 7.2 |
+| Khoá đám mây bị lộ, bị dùng để chạy AI (LLMjacking) | Ít quản trị viên tối cao, bỏ khoá dài hạn, chặn dịch vụ AI nơi không cần, cảnh báo chi phí | 1, 2 | 7.6 |
+| Gói phần mềm bịa tên, gói phổ biến bị chiếm, công cụ của nhà cung cấp bị lợi dụng | Bảo vệ công cụ quản trị từ xa như Tier 0, khoá phiên bản, chờ trước khi nhận bản mới | 2 | 7.7 |
+
+<ConceptMap
+  client:visible
+  title="Lộ trình 3 Chặng 90 Ngày Thiết lập Lá chắn An ninh Doanh nghiệp"
+  width={740}
+  height={300}
+  zones={[
+    { label: "Chặng 1 (ngày 1–30): phòng ngừa", x: 10, y: 10, w: 235, h: 280 },
+    { label: "Chặng 2 (ngày 31–60): giám sát", x: 255, y: 10, w: 235, h: 280 },
+    { label: "Chặng 3 (ngày 61–90): tự động", x: 500, y: 10, w: 235, h: 280 },
+  ]}
+  nodes={[
+    { id: 'p1', label: '1. Khóa cửa cơ bản', sub: 'MFA 100% & Vá KEV', x: 127, y: 72, tone: 'accent', detail: 'Bắt buộc MFA cho toàn bộ email/VPN. Vá khẩn cấp các lỗ hổng trên thiết bị biên theo danh mục CISA KEV.' },
+    { id: 'bk', label: '2. Sao lưu bất biến', sub: 'Quy tắc 3-2-1-1-0', x: 127, y: 225, tone: 'warn', detail: 'Thiết lập bản sao lưu bất biến (immutable backup) ngắt kết nối khỏi mạng để chống Ransomware.' },
+    { id: 'edr', label: '3. EDR & Cứng hóa', sub: 'Defender Block Mode & LAPS', x: 372, y: 72, tone: 'accent', detail: 'Chuyển EDR sang chế độ Chặn tự động. Triển khai LAPS và tắt các giao thức cũ LLMNR/NBT-NS.' },
+    { id: 'mail', label: '4. Chống lừa đảo thư', sub: 'DMARC p=quarantine/reject', x: 372, y: 225, detail: 'Thiết lập SPF, DKIM và siết DMARC để ngăn chặn kẻ xấu mạo danh tên miền công ty lừa đảo khách hàng.' },
+    { id: 'canary', label: '5. Mồi nhử tốc độ máy', sub: 'Canarytokens & Bẫy giả', x: 617, y: 72, tone: 'warn', detail: 'Rải các file mồi nhử tài khoản và tài liệu giả để kích hoạt báo động ngay khi có kẻ xâm nhập mạng.' },
+    { id: 'drill', label: '6. Diễn tập sự cố', sub: 'Tabletop Exercise', x: 617, y: 225, tone: 'good', detail: 'Tổ chức diễn tập ứng phó sự cố thực tế với Ban Giám đốc: Quy trình cô lập máy, gọi ngân hàng và khôi phục hệ thống.' },
+  ]}
+  edges={[
+    { from: 'p1', to: 'edr' },
+    { from: 'bk', to: 'canary' },
+    { from: 'edr', to: 'canary' },
+    { from: 'mail', to: 'drill' },
+    { from: 'canary', to: 'drill' },
+  ]}
+/>
+
+### Ba nguyên tắc cho đơn vị ít người
+
+1. **Dùng thứ đã có sẵn trước khi mua thêm.** Bản quyền email và bộ văn phòng trên đám mây mà công ty đang trả tiền thường đã kèm MFA, Conditional Access, lọc thư, có khi cả EDR. Windows có sẵn Defender, BitLocker, Windows LAPS. Sysmon, Wazuh, Atomic Red Team miễn phí. Danh mục KEV miễn phí.
+2. **Không ai đọc cảnh báo thì cảnh báo vô nghĩa.** Với đơn vị không có người trực, một biện pháp **chặn** đáng giá hơn mười cảnh báo. Ưu tiên phòng ngừa, và chỉ bật những cảnh báo có người nhận.
+3. **Mỗi việc có một đầu ra kiểm chứng được.** Không ghi "tăng cường bảo mật email". Ghi "DMARC ở p=quarantine, báo cáo tổng hợp được đọc mỗi tuần". Như vậy cuối chặng biết chắc việc nào đã xong.
+
+Trước ngày đầu tiên, trả lời bốn câu hỏi cùng lãnh đạo, mỗi câu một dòng:
+
+- **Thứ quý nhất là gì?** Ở Lúa Vàng: tiền trong tài khoản công ty, dữ liệu khách hàng và đơn hàng, hệ thống quản lý kho.
+- **Ngừng một tuần thì mất gì?** Kho không xuất được hàng, website không nhận đơn. Câu trả lời này quyết định thứ tự khôi phục.
+- **Ai bảo trợ?** Một người trong ban giám đốc ký các quy định mới. Quy định chuyển tiền mà không ai có quyền ký thì không ai theo.
+- **Ai đang có quyền vào hệ thống từ bên ngoài?** Nhân viên làm từ xa, công ty IT thuê ngoài, nhà cung cấp phần mềm kho.
+
+### Chặng 1 (ngày 1–30): biết mình có gì, đóng cửa đang mở
+
+**Kiểm kê tối thiểu.** Không cần hệ thống quản lý tài sản đắt tiền. Một bảng tính là đủ để bắt đầu, miễn là có năm phần: máy và máy chủ, tài khoản (nhất là tài khoản quản trị), dịch vụ truy cập được từ Internet, dịch vụ đám mây và phần mềm thuê bao, bên thứ ba có quyền truy cập. Phần dịch vụ truy cập được từ Internet làm theo cách đối chiếu ở bài 7.1.
+
+Với tài khoản trên Active Directory, vài lệnh PowerShell cho bức tranh đầu tiên:
+
+<Lenh noi="PowerShell trên máy quản trị miền (đã có mô-đun ActiveDirectory)" muc="Kiểm kê nhanh ai đang giữ quyền Domain Admin, tài khoản nào bỏ không lâu ngày và tài khoản nào gắn SPN" quyen="Tài khoản có quyền đọc thông tin Active Directory">
+<Terminal title="Rà nhanh tài khoản đặc quyền, tài khoản ngủ đông và SPN trên AD">
+
+```text
+# Ai đang có quyền quản trị domain, kể cả qua nhóm lồng nhau?
+Get-ADGroupMember 'Domain Admins' -Recursive | Select-Object SamAccountName, objectClass
+
+# Tài khoản còn bật nhưng 90 ngày không đăng nhập: nhân viên đã nghỉ, tài khoản thử nghiệm
+Search-ADAccount -AccountInactive -TimeSpan 90.00:00:00 -UsersOnly |
+  Where-Object Enabled | Select-Object SamAccountName, LastLogonDate
+
+# Tài khoản có SPN: đích của Kerberoasting (bài 3.5), cần mật khẩu dài hoặc gMSA
+Get-ADUser -Filter 'ServicePrincipalName -like "*"' -Properties ServicePrincipalName |
+  Select-Object SamAccountName, ServicePrincipalName
+
+SamAccountName    objectClass
+--------------    -----------
+Administrator     user
+it.thanh          user
+ketoan.lan        user        ← kế toán có quyền quản trị domain?
+nhacungcap.kho    user        ← tài khoản của bên thứ ba
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `Get-ADGroupMember 'Domain Admins' -Recursive`: liệt kê toàn bộ thành viên nhóm quản trị cao nhất của domain, xuyên qua cả các nhóm lồng nhau (`-Recursive`).
+- `Search-ADAccount -AccountInactive -TimeSpan 90.00:00:00 -UsersOnly`: tìm các tài khoản người dùng vẫn đang bật (`Enabled`) nhưng suốt 90 ngày qua không đăng nhập để khoá hoặc dọn dẹp.
+- `Get-ADUser -Filter 'ServicePrincipalName -like "*"'`: điểm danh mọi tài khoản gắn SPN có nguy cơ bị tấn công Kerberoasting.
+
+</div>
+
+<div slot="doc">
+
+- `ketoan.lan        user` và `nhacungcap.kho    user`: hai tài khoản nghiệp vụ và đối tác bên ngoài lại nằm trong nhóm `Domain Admins`, cần thu hồi quyền quản trị ngay trong chặng 1.
+
+</div>
+
+</Lenh>
+
+Kết quả mẫu (hư cấu) ở trên là chuyện rất thường gặp: quyền được cấp "tạm" từ nhiều năm trước rồi không ai thu lại. Mỗi dòng bất thường là một việc phải xử lý ngay trong chặng này.
+
+**Bảy việc đóng cửa:**
+
+1. **Thiết bị biên:** vá VPN, tường lửa, cổng truy cập từ xa theo danh mục KEV; gỡ giao diện quản trị khỏi Internet; đăng ký nhận bản tin bảo mật của nhà cung cấp (bài 7.1).
+2. **MFA cho mọi thứ truy cập được từ Internet:** email, VPN, truy cập từ xa, trang quản trị đám mây. Chặn legacy authentication không có MFA. Quản trị viên và người duyệt tiền dùng khoá FIDO2 hoặc passkey trước tiên (bài 7.3).
+3. **Tách tài khoản quản trị:** quản trị viên có tài khoản riêng cho việc quản trị, không dùng để đọc email hay lướt web. Gỡ quyền quản trị máy cục bộ của người dùng thường. Bật Windows LAPS để mỗi máy có mật khẩu quản trị cục bộ riêng (bài 7.2).
+4. **Thu dọn tài khoản:** khoá tài khoản không dùng, thu quyền thừa vừa tìm thấy, đổi mật khẩu dài cho tài khoản dịch vụ. Trên email và đám mây: không quá bốn quản trị viên tối cao, rà ứng dụng đang được cấp quyền đọc thư và file (bài 7.6).
+5. **Quy định chuyển tiền:** mọi yêu cầu chuyển tiền hay đổi số tài khoản của nhà cung cấp phải **gọi lại số đã lưu sẵn** và **có người thứ hai duyệt**, bất kể yêu cầu tới từ ai, qua kênh nào. Đây là lớp chặn rẻ nhất trước giọng nói và video giả bằng AI (bài 6.2).
+6. **Sao lưu:** kiểm tra hệ thống trọng yếu đã có bản sao lưu bất biến hoặc ngoại tuyến chưa, dùng danh tính tách khỏi AD chưa. Khôi phục thử một hệ thống và ghi lại mất bao lâu (bài 8.6).
+7. **Email:** công bố SPF, DKIM, DMARC ở `p=none` kèm `rua=` để bắt đầu nhận báo cáo (bài 7.5).
+
+<Checklist
+  client:visible
+  title="Chặng 1: ngày 1–30"
+  storageKey="plan90-phase1"
+  items={[
+    { label: 'Bảng kiểm kê có đủ: máy, tài khoản quản trị, dịch vụ truy cập được từ Internet, dịch vụ đám mây, bên thứ ba', hint: 'Bài 7.1' },
+    { label: 'Thiết bị biên đã vá theo KEV, giao diện quản trị không truy cập được từ Internet' },
+    { label: 'Mọi tài khoản email, VPN, quản trị đám mây có MFA; legacy authentication đã chặn', hint: 'Bài 7.3' },
+    { label: 'Quản trị viên và người duyệt tiền dùng khoá FIDO2 hoặc passkey' },
+    { label: 'Tài khoản quản trị tách khỏi tài khoản dùng hằng ngày; người dùng thường không có quyền quản trị máy' },
+    { label: 'Windows LAPS đã bật cho máy trạm và máy chủ', hint: 'Bài 7.2' },
+    { label: 'Không quá bốn quản trị viên tối cao trên email và đám mây; đã rà ứng dụng được cấp quyền', hint: 'Bài 7.6' },
+    { label: 'Tài khoản không dùng đã khoá, quyền thừa đã thu lại' },
+    { label: 'Quy định gọi lại và duyệt hai người cho mọi lệnh chuyển tiền đã được lãnh đạo ký', hint: 'Bài 6.2' },
+    { label: 'Hệ thống trọng yếu có bản sao lưu bất biến; đã khôi phục thử một hệ thống', hint: 'Bài 8.6' },
+    { label: 'SPF, DKIM, DMARC p=none đã công bố, báo cáo đang về', hint: 'Bài 7.5' },
+  ]}
+/>
+
+### Chặng 2 (ngày 31–60): thấy được và chặn được
+
+**Giữ được log trước đã.** Log bảo mật của Windows mặc định chỉ vài chục MB; trên máy chủ bận, nó bị ghi đè sau vài giờ, và lúc cần điều tra thì không còn gì. Tăng kích thước, kiểm tra audit policy, rồi đẩy log về một nơi kẻ tấn công không xoá được:
+
+**Kiểm tra và tăng kích thước log (áp hàng loạt bằng Group Policy khi làm thật)**
+
+```powershell
+# Xem các nhóm sự kiện nào đang được ghi
+auditpol /get /category:*
+
+# Tăng log Security lên 1 GB để không bị ghi đè sau vài giờ
+wevtutil sl Security /ms:1073741824
+```
+
+Nguồn log tối thiểu, theo bài 8.2: đăng nhập trên hệ thống danh tính và email, log trên domain controller (4624, 4625, 4769, 4662, 4728/4732), Sysmon trên máy chủ quan trọng, log thiết bị biên. Giữ ít nhất 90 ngày.
+
+**EDR ở chế độ chặn.** Cài trên mọi máy trạm và máy chủ, bật chế độ chặn chứ không chỉ cảnh báo, bật Tamper Protection để mã độc không tự tắt được EDR. Với Defender, bật thêm các luật ASR (Attack Surface Reduction), ví dụ chặn ứng dụng Office tạo tiến trình con.
+
+**Hardening theo baseline** (bài 7.2): SMB signing, tắt LLMNR, audit NTLM, tắt hộp Run với người không cần để chặn ClickFix. Đo bằng PingCastle và Lynis trước và sau. Song song, liệt kê phần mềm có quyền cao của bên thứ ba (công cụ quản trị từ xa, sao lưu) và bảo vệ bảng điều khiển của chúng như Tier 0 (bài 7.7).
+
+**Chọn cách giám sát vừa sức.** Đây là quyết định lớn nhất của chặng 2. Đi qua cây dưới đây với tình hình thật của đơn vị bạn:
+
+<DecisionTree
+  client:visible
+  title="Tự giám sát, dùng tính năng có sẵn, hay thuê dịch vụ trực?"
+  start="staff"
+  nodes={{
+    staff: { q: 'Đơn vị có ít nhất một người làm IT hoặc bảo mật toàn thời gian không?', options: [{ label: 'Có', next: 'night' }, { label: 'Không', next: 'none' }] },
+    none: { result: 'Đừng tự dựng SIEM. Bật hết tính năng bảo mật trong bản quyền đang trả (MFA, lọc thư, EDR đi kèm), để công ty IT thuê ngoài hoặc một dịch vụ phát hiện và phản ứng có người trực (MDR) theo dõi cảnh báo. Dồn sức vào phòng ngừa, sao lưu bất biến và quy định chuyển tiền.', tone: 'warn' },
+    night: { q: 'Ngoài giờ hành chính và cuối tuần, có ai nhận và xử lý được cảnh báo trong vòng một giờ không?', options: [{ label: 'Có', next: 'time' }, { label: 'Không', next: 'hybrid' }] },
+    hybrid: { result: 'Tự xử lý ban ngày, thuê dịch vụ trực cho ngoài giờ, và bật ngăn chặn tự động cho vài tín hiệu độ tin cậy rất cao (mồi nhử bị chạm, xoá sao lưu). Nhiều vụ mã hoá dữ liệu được tung ra vào đêm và cuối tuần, đúng lúc không ai trực.', tone: 'warn' },
+    time: { q: 'Người đó có thời gian viết luật, đọc log và kiểm thử luật mỗi tháng không?', options: [{ label: 'Có', next: 'self' }, { label: 'Không', next: 'vendor' }] },
+    self: { result: 'Tự vận hành: Wazuh và Sysmon như bài 8.3 hoặc SIEM của nhà cung cấp đám mây, luật từ bài 8.2, mồi nhử từ bài 8.4. Vẫn nên ký trước hợp đồng với một đơn vị ứng cứu sự cố để gọi khi vượt sức.', tone: 'good' },
+    vendor: { result: 'Dựa vào luật phát hiện có sẵn của các nền tảng (EDR, lọc thư, bảo vệ danh tính) và chỉ thêm vài luật riêng quan trọng (mồi nhử, sao lưu, quy tắc hộp thư). Người IT dành thời gian cho vá lỗi và danh tính.', tone: 'good' },
+  }}
+/>
+
+**Mười cảnh báo đầu tiên.** Bắt đầu nhỏ, mỗi cảnh báo có một người nhận và một việc phải làm khi nó kêu. Chọn tín hiệu ít báo động giả, gắn với chặng cuối của các chuỗi tấn công đã học:
+
+| Cảnh báo | Vì sao chọn | Bài |
+|---|---|---|
+| Tài khoản SPN mồi bị xin vé, file mồi bị mở | Gần như không báo động giả | 8.4 |
+| Thêm thành viên vào nhóm quản trị | Hiếm khi xảy ra, luôn cần biết (4728, 4732) | 8.2 |
+| Xoá shadow copy, dừng agent sao lưu hoặc EDR | Thường ngay trước khi mã hoá | 8.6 |
+| Công cụ đồng bộ đám mây chạy trên máy chủ | Đường đẩy dữ liệu ra hay gặp | 8.6 |
+| Quy tắc hộp thư tự chuyển tiếp thư ra ngoài | Dấu hiệu email bị chiếm | 7.3 |
+| Ứng dụng mới được cấp quyền đọc email, file | Lừa cấp quyền ứng dụng | 7.3 |
+| Một phiên đăng nhập dùng từ hai nơi | Phiên bị đánh cắp | 7.3 |
+| Tài khoản quản trị đăng nhập từ quốc gia hoặc thiết bị lạ | Dễ thấy, ít người | 7.3 |
+| Đặt lại MFA cho quản trị viên hoặc người duyệt tiền | Đường cấp lại bị lạm dụng | 7.4 |
+| Tiến trình lạ gọi tới API mô hình AI | Mã độc gọi AI khi chạy | 8.4 |
+
+**Mồi nhử từ ngày 31.** Với đơn vị ít người, mồi nhử là thứ đáng làm nhất của bài 8.4: chi phí gần bằng không, và khi nó kêu thì gần như chắc chắn có chuyện. Đặt ít nhất một tài khoản SPN mồi, một file mồi trên thư mục chia sẻ, một khoá đám mây mồi trong repo. Làm thử cả bộ trong lab ở bài 8.5 trước khi đặt lên hệ thống thật.
+
+**Chính sách dùng AI.** Một trang là đủ: công cụ AI nào được dùng, dữ liệu nào không bao giờ được dán vào AI công khai (dữ liệu khách hàng, hợp đồng, mã nguồn, mật khẩu), ai duyệt khi một bộ phận muốn dùng công cụ mới. Kiểm kê các chatbot và AI agent mà công ty đang chạy, kể cả do một bộ phận tự dựng, rồi áp các nguyên tắc ở bài 6.4.
+
+<Checklist
+  client:visible
+  title="Chặng 2: ngày 31–60"
+  storageKey="plan90-phase2"
+  items={[
+    { label: 'Log Security đủ lớn, audit policy đúng, log về một nơi tập trung, giữ ít nhất 90 ngày', hint: 'Bài 8.2' },
+    { label: 'EDR trên mọi máy, ở chế độ chặn, bật Tamper Protection' },
+    { label: 'Đã chạy PingCastle, Lynis; SMB signing, tắt LLMNR, tắt hộp Run với người không cần', hint: 'Bài 7.2' },
+    { label: 'Công cụ quản trị từ xa của bên thứ ba được bảo vệ như Tier 0', hint: 'Bài 7.7' },
+    { label: 'Đã chọn cách giám sát: tự vận hành, dựa vào nền tảng, hay thuê dịch vụ trực' },
+    { label: 'Mười cảnh báo đầu tiên đã bật, mỗi cảnh báo có người nhận và việc phải làm' },
+    { label: 'Có tài khoản SPN mồi, file mồi, khoá đám mây mồi', hint: 'Bài 8.4' },
+    { label: 'Chính sách dùng AI đã ban hành; có công cụ AI được duyệt cho nhân viên', hint: 'Bài 6.4' },
+    { label: 'Danh sách chatbot và AI agent đang chạy, mỗi cái có người chịu trách nhiệm' },
+    { label: 'DMARC lên p=quarantine sau khi đã đọc báo cáo và khai báo đủ nguồn gửi', hint: 'Bài 7.5' },
+  ]}
+/>
+
+### Chặng 3 (ngày 61–90): tập phản ứng, đo, báo cáo
+
+**Kế hoạch ứng phó hai trang.** Không cần dày. Chỉ cần trả lời được năm câu lúc 2 giờ sáng: ai được tuyên bố sự cố? Ai được ra lệnh ngắt hệ thống? Liên lạc qua kênh nào nếu email đã bị chiếm? Gọi ai (đơn vị ứng cứu sự cố, luật sư, cơ quan công an, công ty bảo hiểm nếu có)? Khôi phục hệ thống theo thứ tự nào (bài 8.7, 8.6)?
+
+**Ngăn chặn tự động cho hai, ba tín hiệu.** Lấy các tín hiệu độ tin cậy rất cao (mồi bị chạm, xoá shadow copy) và cho máy tự khoá tài khoản, cô lập máy trạm. Kèm theo là các cầu dao an toàn ở bài 8.4: danh sách tài sản không tự cô lập, giới hạn số lần mỗi giờ, đường đảo ngược.
+
+**Một buổi diễn tập trên bàn, hai giờ.** Chọn một trong ba kịch bản, mời đúng người sẽ phải quyết định thật (bài 8.7):
+
+- Kế toán nhận cuộc họp video với "giám đốc" đòi chuyển gấp tiền đặt cọc cho một nhà cung cấp mới.
+- Hộp thư của trưởng phòng kinh doanh bị chiếm qua phiên đăng nhập bị đánh cắp, kẻ gian gửi hoá đơn giả cho khách hàng.
+- Sáng thứ Hai, máy chủ kho bị mã hoá, kèm thư doạ đăng dữ liệu khách hàng.
+
+**Kiểm thử phát hiện.** Trong lab của bạn (bài 8.3) hoặc trên một máy được phép bằng văn bản, chạy vài bài thử Atomic Red Team cho các kỹ thuật gắn với mười cảnh báo. Ghi lại cảnh báo có kêu không, kêu sau bao lâu, ai nhận.
+
+**Quy trình cấp lại tài khoản.** Áp các nguyên tắc ở bài 7.4 cho bộ phận IT, kể cả công ty IT thuê ngoài: không đặt lại MFA chỉ vì người gọi nói đúng ngày sinh và mã nhân viên.
+
+<Checklist
+  client:visible
+  title="Chặng 3: ngày 61–90"
+  storageKey="plan90-phase3"
+  items={[
+    { label: 'Kế hoạch ứng phó hai trang, có kênh liên lạc dự phòng và danh bạ in sẵn', hint: 'Bài 8.7, 8.6' },
+    { label: 'Ngăn chặn tự động cho tín hiệu độ tin cậy rất cao, có cầu dao an toàn, lãnh đạo đã duyệt', hint: 'Bài 8.4' },
+    { label: 'Đã diễn tập trên bàn ít nhất một kịch bản với người ra quyết định thật' },
+    { label: 'Đã kiểm thử mười cảnh báo, ghi lại cái nào kêu, cái nào không' },
+    { label: 'Đã khôi phục thử một hệ thống trọng yếu từ bản bất biến, so thời gian thật với RTO' },
+    { label: 'Quy trình cấp lại mật khẩu và MFA có xác minh, áp cả cho công ty IT thuê ngoài', hint: 'Bài 7.4' },
+    { label: 'Báo cáo 90 ngày đã gửi lãnh đạo, kèm kế hoạch 90 ngày tiếp theo' },
+  ]}
+/>
+
+### Đo tiến độ
+
+Vài chỉ số đơn giản, đo đầu kỳ và cuối kỳ, đủ để thấy thay đổi và đủ để lãnh đạo hiểu:
+
+| Chỉ số | Đầu kỳ (Lúa Vàng) | Ngày 90 |
+|---|---|---|
+| Tài khoản có MFA | 40% | 100% |
+| Quản trị viên dùng MFA chống phishing | 0 / 6 | 6 / 6 |
+| Dịch vụ truy cập được từ Internet không có trong danh mục | 4 | 0 |
+| Lỗ hổng KEV trên thiết bị biên còn mở quá 7 ngày | 2 | 0 |
+| Hệ thống trọng yếu đã khôi phục thử trong 6 tháng | 0 / 3 | 2 / 3 |
+| Kỹ thuật trong bộ kiểm thử có cảnh báo kêu | chưa đo | 8 / 10 |
+| Thời gian từ cảnh báo tới ngăn chặn trong diễn tập | chưa đo | 25 phút |
+
+Số liệu trong bảng là hư cấu. Điều đáng học là cách chọn: mỗi chỉ số gắn với một đường vào thật, đo được bằng việc đếm, và không thể đẹp lên nếu không làm việc thật.
+
+### Báo cáo với lãnh đạo
+
+Lãnh đạo không cần biết Kerberoasting là gì. Họ cần biết **rủi ro đã giảm bao nhiêu, còn lại gì, và cần quyết định gì**. Viết theo ba câu hỏi:
+
+- **Nếu hôm nay bị tấn công thì sao?** "Đầu kỳ: nếu bị mã hoá, ước tính mất hai tuần để chạy lại kho và không chắc còn bản sao lưu sạch. Hôm nay: đã khôi phục thử hệ thống kho trong 9 giờ từ bản bất biến."
+- **Còn lại gì?** "Website bán hàng chưa có tường lửa ứng dụng web; ngoài giờ chưa có ai trực cảnh báo."
+- **Cần quyết định gì?** "Duyệt ngân sách dịch vụ trực ngoài giờ, hoặc chấp nhận rủi ro có ghi chép."
+
+Đừng trả lời câu "chúng ta đã an toàn chưa" bằng có hay không. Trả lời bằng rủi ro còn lại và cái giá để giảm tiếp.
+
+### Những gì cố tình để sau ngày 90
+
+Phân đoạn mạng chi tiết, mô hình zero trust đầy đủ, chứng nhận ISO 27001, chương trình red team: không phải vì không quan trọng, mà vì chúng cần nền móng của 90 ngày đầu. Kế hoạch 90 ngày là một vòng lặp. Cuối mỗi vòng, đo lại, chọn ba tới năm rủi ro lớn nhất còn lại, và lập vòng tiếp theo.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Với một doanh nghiệp chưa có đội SOC riêng, thứ tự ưu tiên quan trọng hơn rất nhiều so với việc mua sắm công cụ đắt tiền: bạn phải biết mình đang có tài sản gì, đóng các cánh cửa đang mở toang, bảo đảm khả năng khôi phục dữ liệu rồi mới tiến tới giám sát và phản ứng.
+
+Hãy dồn sức khóa chặt ba đường vào phổ biến nhất (lỗ hổng trên thiết bị biên hướng ra Internet, thông tin đăng nhập và lừa đảo nhắm vào con người) bằng những lớp chặn nền tảng không hề đòi hỏi ngân sách lớn như khoá FIDO2, quy định gọi lại kèm duyệt hai người khi chuyển tiền, sao lưu bất biến và cài đặt mồi nhử.
+
+Đừng bật hàng trăm cảnh báo nếu không có người đọc; chỉ chọn lọc một số ít tín hiệu độ tin cậy cao có người chịu trách nhiệm nhận tin (hoặc thuê dịch vụ trực ngoài giờ), đo lường tiến độ bằng những con số đếm được và báo cáo với ban lãnh đạo bằng ngôn ngữ rủi ro kinh doanh.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Vội vã xin ngân sách mua công cụ bảo mật đắt tiền trước khi lập danh mục kiểm kê tài sản tối thiểu.** Khi chưa biết công ty có bao nhiêu máy chủ, dịch vụ lộ ra Internet hay tài khoản bên thứ ba, công cụ mua về sẽ chỉ bảo vệ được một góc nhỏ và bỏ sót đúng cánh cửa đang mở.
+- **Bật toàn bộ bộ luật cảnh báo mặc định đẩy về hộp thư chung khi đơn vị không có nhân sự chuyên trách đọc log.** Rất nhanh chóng, hàng nghìn thông báo rác mỗi tuần sẽ khiến đội IT tê liệt cảm giác cảnh giác, và khi có cảnh báo xâm nhập thật thì không ai nhận ra.
+- **Triển khai MFA rầm rộ cho nhân viên văn phòng nhưng lại bỏ sót tài khoản quản trị, tài khoản nhà cung cấp bên ngoài và các giao thức cũ (`legacy authentication`).** Kẻ tấn công chỉ cần một khe hở không bắt buộc MFA là đủ để đi vòng qua toàn bộ lớp bảo vệ của bạn.
+- **Đánh dấu hoàn thành hạng mục sao lưu ngay khi cài xong phần mềm mà chưa từng một lần bấm nút khôi phục thử.** Không đo thời gian khôi phục thực tế và đối chiếu với RTO, bạn sẽ không biết hệ thống kho hay kế toán sẽ phải ngừng hoạt động bao nhiêu ngày khi gặp sự cố.
+- **Âm thầm tự làm bảo mật một mình trong phòng IT mà không xin sự bảo trợ chính thức từ ban giám đốc.** Những biện pháp chặn đòn lừa đảo AI hiệu quả nhất như quy định gọi lại khi chuyển tiền hay xác minh trước khi cấp lại MFA sẽ không ai tuân thủ nếu không có chữ ký của lãnh đạo cao nhất.
+- **Sao chép nguyên xi danh sách kiểm tra của một ngân hàng lớn áp vào một xưởng sản xuất hay công ty phân phối nhỏ.** Không bắt đầu từ câu hỏi "thứ quý nhất của đơn vị mình là gì", bạn sẽ tiêu hết nguồn lực ít ỏi vào những thủ tục nặng nề không giải quyết đúng rủi ro cốt lõi.
+- **Coi kế hoạch 90 ngày là một dự án làm một lần rồi cất vào ngăn kéo.** Bề mặt tấn công, nhân sự và các ứng dụng đám mây của doanh nghiệp thay đổi từng tháng, nên bảo mật phải là những vòng lặp 90 ngày nối tiếp nhau.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Một công ty 80 người chưa làm gì về bảo mật, có ngân sách cho đúng một việc trong tháng đầu. Việc nào hợp lý nhất?', options: ['Mua một hệ thống SIEM', 'Bật MFA cho email, VPN và trang quản trị, vá thiết bị biên theo KEV', 'Thuê một đội red team'], answer: 1, explain: 'Đóng hai đường vào phổ biến nhất (thông tin đăng nhập và lỗ hổng trên thứ truy cập được từ Internet) trước. SIEM không ai đọc thì chưa giúp được gì.' },
+    { q: 'Vì sao quy định "gọi lại số đã lưu và duyệt hai người" nằm ngay ở chặng 1?', options: ['Vì nó cần công cụ AI đắt tiền', 'Vì nó gần như miễn phí và chặn được mạo danh bằng giọng nói, video giả mà không cần nhận ra hàng giả', 'Vì luật bắt buộc'], answer: 1, explain: 'Kẻ mạo danh không kiểm soát được kênh thứ hai. Không cần phát hiện deepfake, chỉ cần quy trình.' },
+    { q: 'Đơn vị không có ai trực ngoài giờ. Cách nào hợp lý cho giám sát?', options: ['Bật thật nhiều cảnh báo gửi về email chung', 'Thuê dịch vụ trực ngoài giờ, và bật ngăn chặn tự động cho vài tín hiệu độ tin cậy rất cao như mồi bị chạm', 'Tắt giám sát vào ban đêm'], answer: 1, explain: 'Cảnh báo không ai đọc là vô nghĩa. Tự động hoá chỉ ở nơi tín hiệu gần như không thể nhầm, phần còn lại cần người trực.' },
+    { q: 'Lãnh đạo hỏi: "Giờ chúng ta an toàn chưa?". Cách trả lời tốt nhất?', options: ['"An toàn rồi"', 'Nêu rủi ro đã giảm bằng số đo được, rủi ro còn lại, và quyết định cần lãnh đạo đưa ra', 'Giải thích chi tiết các kỹ thuật Kerberoasting đã chặn'], answer: 1, explain: 'Không có trạng thái "an toàn tuyệt đối". Lãnh đạo cần thông tin để quyết định ngân sách và chấp nhận rủi ro.' },
+    { q: 'Vì sao nên tăng kích thước log Security của Windows ngay ở chặng 2?', options: ['Để máy chạy nhanh hơn', 'Vì mặc định log nhỏ, trên máy bận bị ghi đè sau vài giờ, lúc cần điều tra không còn dấu vết', 'Vì EDR yêu cầu'], answer: 1, explain: 'Bật audit mà log bị ghi đè thì cũng như không bật. Tăng kích thước và đẩy log về nơi tập trung.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Hãy luôn đi theo thứ tự thực tế: nắm rõ mình có tài sản gì, đóng những cánh cửa đang mở, bảo đảm khả năng khôi phục dữ liệu rồi mới tiến tới giám sát và phản ứng.
+- Ba mươi ngày đầu tập trung khoá chặt các đường vào phổ biến nhất; ba mươi ngày tiếp theo lo giữ log, chọn cách giám sát vừa sức và bật một số ít cảnh báo có người nhận; ba mươi ngày cuối dành để diễn tập, đo lường và báo cáo.
+- Trước các chiến dịch tấn công có AI hỗ trợ, những lớp phòng thủ rẻ và chắc chắn nhất vẫn nằm ở quy trình và nền tảng như khoá FIDO2, gọi lại kèm duyệt hai người, sao lưu bất biến và cài mồi nhử.
+- Hãy vận hành kế hoạch 90 ngày như một vòng lặp liên tục: cuối mỗi chặng lại đo đạc bằng con số thực tế, chọn ra những rủi ro lớn nhất còn lại và bắt đầu vòng tiếp theo.

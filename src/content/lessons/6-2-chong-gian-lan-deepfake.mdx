@@ -1,0 +1,227 @@
+---
+title: "Chống gian lận giao dịch và mạo danh deepfake"
+code: "6.2"
+level: 6
+summary: "Chặn được gian lận và deepfake không đòi hỏi nhận ra hàng giả bằng mắt — nó đòi hỏi nhìn đúng tín hiệu (thiết bị, hành vi, mạng lưới tài khoản) và đặt đúng quy trình (gọi lại, duyệt hai người). Bài này đi vào cách thiết kế từng lớp đó, và giữ chúng bền khi kẻ gian cũng dùng AI để dò ngược."
+duration: "75 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu mô hình chấm điểm rủi ro giao dịch và đánh đổi khi chọn ngưỡng"
+  - "Biết các tín hiệu giúp phát hiện chiếm tài khoản và tài khoản mule"
+  - "Hiểu vai trò và giới hạn của xác thực sinh trắc và kiểm tra người thật"
+  - "Thiết kế được quy trình chống mạo danh bằng giọng nói, video trong nội bộ ngân hàng"
+  - "Biết kẻ gian dùng AI dò mô hình chống gian lận và làm giả danh tính khi mở tài khoản ra sao, và cách giữ các lớp này bền"
+---
+import Callout from '../../components/ui/Callout.astro';
+import FraudScoring from '../../components/sim/FraudScoring.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một giao dịch viên lâu năm nhìn là biết có chuyện: khách lớn tuổi vừa rút số tiền lớn bất thường vừa nghe điện thoại, tay run, liên tục nhìn tin nhắn. Họ sẽ hỏi nhẹ một câu: "Bác đang chuyển cho ai ạ?". Câu hỏi đó đã cứu không ít người.
+
+Mô hình chống gian lận làm đúng việc đó, nhưng cho hàng triệu giao dịch mỗi ngày, và mỗi giao dịch chỉ mất chưa đầy một giây. Còn trong nội bộ ngân hàng, thứ thay cho "linh cảm" là **quy trình** (các bước bắt buộc làm theo).
+
+## Kiến thức chính
+
+### Hai kiểu gian lận chính
+
+- **Chiếm tài khoản:** kẻ gian tự đăng nhập và chuyển tiền thay chủ tài khoản, sau khi lấy được mã OTP, dụ chủ tài khoản cài ứng dụng độc để điều khiển điện thoại từ xa, hoặc chiếm luôn số điện thoại. Người bấm không phải chủ tài khoản, nên dấu vết thiết bị và hành vi thường lộ.
+- **Lừa nạn nhân tự chuyển:** giả công an, giả nhân viên ngân hàng, "chuyên gia đầu tư". Chính chủ, trên đúng thiết bị, tự tay bấm chuyển. Khó phát hiện hơn nhiều, vì mọi tín hiệu kỹ thuật đều bình thường.
+
+AI làm cả hai kiểu thuyết phục hơn: kịch bản trôi chảy, giọng nói giống người thân, video "cán bộ" mặc đồng phục. Cả hai kiểu đều cần **tài khoản mule** (*mule account*: tài khoản trung gian, thường đi thuê, mua lại hoặc mở bằng giấy tờ giả) để nhận tiền rồi chuyển đi cho khó truy vết.
+
+### Mô hình chấm điểm rủi ro giao dịch
+
+Mô hình nhìn nhiều nhóm tín hiệu cùng lúc:
+
+| Nhóm tín hiệu | Ví dụ |
+|---|---|
+| Giao dịch | Số tiền so với lịch sử, người nhận mới, giờ giao dịch |
+| Thiết bị | Thiết bị mới, máy giả lập, máy đã bị root (mở khoá quyền quản trị, dễ bị cài phần mềm lạ), ứng dụng điều khiển từ xa đang chạy, đang có cuộc gọi trong lúc chuyển tiền |
+| Hành vi (cách thao tác) | Nhịp gõ, cách cầm máy, tốc độ thao tác, so với thói quen thường ngày của chủ tài khoản |
+| Mạng lưới (quan hệ giữa các tài khoản) | Tài khoản nhận có đang nhận tiền từ nhiều người lạ không, có vừa mới mở không |
+
+Kết quả không phải chỉ "chặn" hoặc "cho qua", mà là **mức cản trở tương xứng với rủi ro** (người trong nghề gọi là "ma sát"): rủi ro thấp cho qua; vừa thì hiện cảnh báo; cao thì yêu cầu xác thực khuôn mặt; rất cao thì tạm giữ và gọi xác minh.
+
+Tự chỉnh ngưỡng và xem cái giá của từng lựa chọn:
+
+<FraudScoring client:visible />
+
+Ba điều nên rút ra từ mô phỏng:
+
+1. **Không có ngưỡng hoàn hảo.** Ngưỡng thấp làm phiền khách thật; ngưỡng cao để lọt gian lận. Ngân hàng chọn ngưỡng tuỳ mức rủi ro họ chấp nhận được, và có đội người xem lại các giao dịch bị tạm giữ.
+2. **Dữ liệu tốt quan trọng hơn thuật toán.** Thêm tín hiệu thiết bị, hành vi và mạng lưới tách hai nhóm rõ hơn nhiều so với chỉ nhìn số tiền.
+3. **Ca nạn nhân tự chuyển vẫn khó.** Khi chính chủ bấm, tín hiệu kỹ thuật gần như bình thường. Lớp chặn hiệu quả hơn nằm ở phía tài khoản nhận và ở việc cảnh báo khách đúng lúc.
+
+### Kẻ gian cũng học mô hình của bạn
+
+Mô hình chống gian lận là đối thủ mà kẻ gian cố hiểu. AI làm việc đó rẻ hơn: tự động thử nhiều biến thể, ghi lại cái nào lọt, rồi nhân rộng. MITRE ATLAS (bài 6.1) có riêng các nhóm kỹ thuật để né mô hình, hoặc cho nó học dữ liệu sai để làm hỏng (gọi là "đầu độc"). Ở ngân hàng, ba kiểu hay gặp:
+
+| Kiểu | Trông như thế nào | Lớp chặn |
+|---|---|---|
+| **Dò ngưỡng** | Nhiều giao dịch nhỏ thử từ các tài khoản mule để tìm mức tiền, giờ, cách thao tác không bị giữ | Không cho bên giao dịch thấy điểm hay lý do chi tiết; phát hiện chính hành vi dò: nhiều giao dịch bị giữ hoặc sát ngưỡng, đến từ cùng nhóm thiết bị hoặc cùng người nhận |
+| **Nuôi tài khoản** | Tài khoản mule giao dịch nhỏ, đều đặn nhiều tuần để mô hình coi là "quen", rồi mới nhận tiền lừa đảo | Nhìn quan hệ giữa các tài khoản (tiền từ nhiều người lạ đổ về) và hành vi đổi đột ngột, không chỉ dựa vào lịch sử riêng của tài khoản đó |
+| **Làm bẩn nhãn** | Mô hình học từ các giao dịch đã được gắn nhãn "gian lận" hoặc "bình thường"; kẻ gian gửi báo cáo hay khiếu nại giả hàng loạt để lần huấn luyện (cho mô hình học lại) sau này học sai | Người kiểm tra lại nhãn trước khi cho mô hình học; cảnh báo khi số báo cáo tăng đột biến |
+
+Hai nguyên tắc chung:
+
+- **Giữ một lớp không học được.** Hạn mức cứng và thời gian chờ cho người nhận mới (phần "Bảo vệ khách hàng" bên dưới) là quy tắc cố định, không đổi theo dữ liệu, nên kẻ gian dò bao nhiêu cũng không tìm ra kẽ hở.
+- **Cho một nhóm đóng vai kẻ gian thử né mô hình mới trước khi đưa vào dùng**, giống pentest nhưng dành cho mô hình (dùng dữ liệu giả). Sau khi triển khai vẫn phải theo dõi độ trôi (drift): mô hình dần kém chính xác khi kiểu gian lận thay đổi.
+
+### Tài khoản mule và cách nhìn cả mạng lưới
+
+Tiền lừa đảo hiếm khi đi thẳng tới kẻ gian. Nó đi qua nhiều tài khoản mule (thường thuê, mua lại hoặc mở bằng giấy tờ giả), bị chia nhỏ rồi rút ra hoặc đổi sang tài sản khó truy vết. Nhìn từng giao dịch riêng lẻ thì bình thường; nhìn **cả mạng lưới** thì lộ:
+
+<ConceptMap
+  client:visible
+  title="Dòng tiền qua tài khoản mule"
+  width={680}
+  height={300}
+  nodes={[
+    { id: 'v1', label: 'Nạn nhân 1', x: 90, y: 60, w: 130, tone: 'muted', detail: 'Chuyển 9,8 triệu theo lời "nhân viên ngân hàng" gọi video.' },
+    { id: 'v2', label: 'Nạn nhân 2', x: 90, y: 150, w: 130, tone: 'muted', detail: 'Chuyển 30 triệu để "xác minh tài khoản" theo yêu cầu của "công an".' },
+    { id: 'v3', label: 'Nạn nhân 3', x: 90, y: 240, w: 130, tone: 'muted', detail: 'Chuyển 15 triệu "phí rút tiền" cho một sàn đầu tư giả.' },
+    { id: 'm1', label: 'Tài khoản mule A', sub: 'mở 5 ngày trước', x: 280, y: 150, w: 170, tone: 'warn', detail: 'Dấu hiệu: mới mở, nhận tiền từ hàng chục người lạ không liên quan nhau trong vài giờ, tiền vào là đi ra ngay. Mô hình phân tích mạng lưới tài khoản (đồ thị) chấm điểm cao cho tài khoản này dù từng giao dịch đều nhỏ.' },
+    { id: 'm2', label: 'Tài khoản mule B, C', sub: 'chia nhỏ, chuyển tiếp', x: 585, y: 100, w: 170, tone: 'warn', detail: 'Tiền bị chia nhỏ và chuyển tiếp qua nhiều tầng để làm rối dấu vết.' },
+    { id: 'out', label: 'Rút ra', sub: 'ATM, tài sản số', x: 585, y: 220, w: 170, tone: 'accent', detail: 'Điểm cuối. Phát hiện và tạm giữ trước bước này là cơ hội cuối để thu hồi tiền cho nạn nhân.' },
+  ]}
+  edges={[
+    { from: 'v1', to: 'm1' },
+    { from: 'v2', to: 'm1' },
+    { from: 'v3', to: 'm1' },
+    { from: 'm1', to: 'm2', label: 'vài phút sau' },
+    { from: 'm2', to: 'out' },
+  ]}
+/>
+
+Ngân hàng của tài khoản nhận vì vậy cũng có vai trò lớn: phát hiện tài khoản có mẫu "nhận từ nhiều nạn nhân, đi ra ngay", tạm giữ, và phối hợp với ngân hàng của nạn nhân.
+
+### Sinh trắc học và kiểm tra người thật
+
+Từ năm 2024, ở Việt Nam giao dịch trực tuyến lớn phải xác thực khuôn mặt, đối chiếu với ảnh khuôn mặt lưu trong căn cước gắn chip hoặc cơ sở dữ liệu dân cư. Ảnh trong chip được cơ quan cấp "ký số" (như con dấu điện tử, không làm giả được), nên đối chiếu với chip đáng tin hơn nhiều so với chụp ảnh mặt trước giấy tờ.
+
+Nhưng một hệ thống so khuôn mặt cần thêm một câu hỏi: **người trước camera có phải người thật, đang có mặt ngay lúc này không?** Đó là **kiểm tra người thật** (liveness detection), tên chính thức là phát hiện tấn công giả mạo sinh trắc (PAD, đánh giá theo chuẩn quốc tế ISO/IEC 30107). Nó phân biệt khuôn mặt thật với ảnh in, video phát lại, mặt nạ hay hình tổng hợp.
+
+<Callout type="warn" label="Sinh trắc không phải bức tường tuyệt đối">
+Đây là cuộc chạy đua: công nghệ tạo hình giả tiến bộ, công nghệ phát hiện phải theo. Ngân hàng không nên dựa vào một lớp duy nhất mà kết hợp: kiểm tra người thật, tín hiệu toàn vẹn thiết bị và ứng dụng (máy giả lập, máy bị can thiệp, nguồn camera bất thường), mô hình rủi ro giao dịch, và theo dõi hành vi sau khi đã xác thực.
+</Callout>
+
+Cần phân biệt hai kiểu đánh lừa sinh trắc, vì lớp chặn khác nhau: **presentation attack** (giơ thứ giả ra trước camera) và **injection attack** (bơm hình giả thẳng vào ứng dụng).
+
+| | Presentation attack | Injection attack |
+|---|---|---|
+| Cách làm | Đưa ảnh in, màn hình phát video, mặt nạ ra **trước camera thật** | Đưa luồng hình giả (thường là deepfake) **thẳng vào ứng dụng**, không qua camera thật |
+| Đánh giá | ISO/IEC 30107 tập trung vào kiểu này | Cần kiểm thử riêng: kiểm tra trước camera không nhìn thấy nó |
+| Lớp chặn chính | Kiểm tra người thật, thụ động hoặc chủ động | Toàn vẹn thiết bị và ứng dụng (camera ảo, máy giả lập, máy bị root, ứng dụng bị sửa); thử thách ngẫu nhiên do máy chủ sinh ra; đối chiếu ảnh ký số trong chip |
+
+Deepfake càng giống thật thì injection attack càng nguy hiểm, vì nó không cần qua mắt camera. Khi đánh giá một giải pháp eKYC (xác minh danh tính khách hàng từ xa bằng điện thoại), hỏi nhà cung cấp cả hai câu: chống presentation attack thế nào, và chống injection attack thế nào.
+
+### Danh tính tổng hợp khi mở tài khoản
+
+Tài khoản mule phải được mở ra trước. AI giúp kẻ gian làm ảnh giấy tờ giả, khuôn mặt của người không có thật, hoặc ghép thông tin thật bị lộ với khuôn mặt giả. Lớp chặn ở khâu mở tài khoản trực tuyến:
+
+- **Đọc chip căn cước bằng cách chạm điện thoại (công nghệ NFC)** và kiểm tra chữ ký số của cơ quan cấp. Ảnh chụp giấy tờ giả không có chip ký số hợp lệ.
+- **Đối chiếu với cơ sở dữ liệu dân cư.**
+- **Kiểm tra người thật chống được cả presentation attack lẫn injection attack**, như bảng trên.
+- **Tín hiệu thiết bị và mạng:** nhiều hồ sơ mở từ cùng một thiết bị, cùng dải IP, cùng mẫu thao tác.
+- **Giám sát chặt tài khoản mới trong những tuần đầu**, vì đây là lúc tài khoản mule hoạt động; nối với phân tích đồ thị ở trên.
+
+### Mạo danh lãnh đạo trong nội bộ
+
+Nhớ vụ Arup ở bài 6.1. Trong ngân hàng, kịch bản nguy hiểm là một cuộc gọi video từ "lãnh đạo" yêu cầu kế toán hoặc bộ phận thanh toán chuyển gấp một khoản lớn và giữ bí mật. So sánh hai cách xử lý:
+
+<SequenceDiagram
+  client:visible
+  title={'Cuộc gọi video từ "Phó tổng giám đốc"'}
+  actors={['PTGĐ (giả)', 'Kế toán', 'PTGĐ thật', 'Thanh toán']}
+  scenarios={[
+    {
+      name: 'Không có quy trình',
+      steps: [
+        { from: 0, to: 1, label: 'chuyển gấp 18 tỷ', note: 'Cuộc gọi video, hình và giọng giống hệt. "Thương vụ mật, chuyển ngay cho đối tác trước 15 giờ, đừng báo ai."', tone: 'bad' },
+        { from: 1, to: 3, label: 'tạo lệnh chuyển', note: 'Kế toán thấy đúng mặt, đúng giọng, lại bị hối thúc, nên tạo lệnh ngay.', tone: 'bad' },
+        { from: 3, to: 1, label: 'đã chuyển', note: 'Tiền đi. Vài giờ sau mới phát hiện, khi tiền đã qua nhiều tầng tài khoản.', tone: 'bad' },
+      ],
+    },
+    {
+      name: 'Có quy trình gọi lại',
+      steps: [
+        { from: 0, to: 1, label: 'chuyển gấp 18 tỷ', note: 'Cùng cuộc gọi, cùng lời hối thúc.' },
+        { from: 1, to: 1, label: 'dấu hiệu đỏ → dừng', note: 'Ba dấu hiệu đỏ cùng lúc: khẩn cấp, bí mật, bỏ qua quy trình. Quy định của ngân hàng: lệnh trên ngưỡng phải gọi lại xác minh.', tone: 'good' },
+        { from: 1, to: 2, label: 'gọi số trong danh bạ', note: 'Kế toán gọi số của PTGĐ trong danh bạ nội bộ, không dùng số hay đường link người gọi đưa.', tone: 'good' },
+        { from: 2, to: 1, label: '"tôi không yêu cầu"', note: 'PTGĐ thật không hề biết. Kẻ mạo danh không kiểm soát được kênh thứ hai này.', tone: 'good' },
+        { from: 1, to: 3, label: 'không tạo lệnh, báo ATTT', note: 'Không có lệnh nào được tạo. Sự cố được báo cho bộ phận an toàn thông tin để cảnh báo toàn ngân hàng.', tone: 'good' },
+      ],
+    },
+  ]}
+/>
+
+Quy trình hiệu quả mà **không cần ai nhận ra hình ảnh là giả**. Đó là điểm mấu chốt.
+
+Tự đi qua quy tắc xử lý:
+
+<DecisionTree
+  client:visible
+  title="Nhận yêu cầu chuyển tiền qua điện thoại, tin nhắn hoặc video"
+  start="channel"
+  nodes={{
+    channel: { q: 'Yêu cầu có đi qua hệ thống phê duyệt chính thức không?', options: [{ label: 'Có, qua hệ thống', next: 'okSystem' }, { label: 'Không, chỉ qua gọi/nhắn', next: 'callback' }] },
+    okSystem: { result: 'Làm theo quy trình phê duyệt bình thường. Hệ thống đã ghi lại ai yêu cầu, ai duyệt.', tone: 'good' },
+    callback: { q: 'Bạn đã gọi lại người yêu cầu qua số lưu sẵn trong danh bạ nội bộ (không phải số họ đưa) chưa?', options: [{ label: 'Chưa', next: 'stop' }, { label: 'Đã gọi, đúng người xác nhận', next: 'amount' }] },
+    stop: { result: 'Dừng lại. Không tạo lệnh. Gọi lại qua số lưu sẵn. Nếu người thật không xác nhận, báo ngay bộ phận an toàn thông tin.', tone: 'bad' },
+    amount: { q: 'Số tiền có vượt ngưỡng cần người thứ hai duyệt không?', options: [{ label: 'Có', next: 'dual' }, { label: 'Không', next: 'go' }] },
+    dual: { result: 'Đưa yêu cầu vào hệ thống để người thứ hai duyệt. Không bỏ qua bước này dù bị hối thúc.', tone: 'warn' },
+    go: { result: 'Tiến hành qua hệ thống chính thức và lưu lại bằng chứng xác minh.', tone: 'good' },
+  }}
+/>
+
+### Bảo vệ khách hàng
+
+- **Cảnh báo đúng lúc trong ứng dụng:** khi phát hiện đang có cuộc gọi trong lúc chuyển tiền, khi người nhận từng bị báo cáo lừa đảo, hoặc khi số tiền bất thường. Câu cảnh báo cụ thể ("Ngân hàng và công an không bao giờ yêu cầu bạn chuyển tiền để xác minh") hiệu quả hơn câu chung chung.
+- **Thời gian chờ cho người nhận mới:** giới hạn số tiền hoặc chờ một khoảng ngắn cho lần đầu chuyển tới người lạ.
+- **Kênh báo cáo nhanh:** khách bấm "tôi bị lừa" trong ứng dụng, giao dịch được đánh dấu ngay để ngân hàng nhận tạm giữ.
+- **Giáo dục liên tục:** các chiêu thay đổi theo mùa (thuế, bảo hiểm, "dịch vụ công"), nên thông điệp cũng phải cập nhật.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Bảo vệ dòng tiền trước gian lận công nghệ cao đòi hỏi phối hợp ba mặt trận cùng lúc. Với <strong>giao dịch của khách hàng</strong>, hãy kết hợp mô hình rủi ro đa tín hiệu (giao dịch, thiết bị, hành vi thao tác, đồ thị mạng lưới tài khoản nhận) với mức cản trở tương xứng rủi ro, xác thực sinh trắc có kiểm tra người thật, và giữ lại một lớp hạn mức cứng cho người nhận mới mà kẻ gian không thể "dò" hay dạy sai được.
+
+Ở <strong>khâu mở tài khoản (eKYC)</strong>, ưu tiên đọc và xác thực chữ ký số trong chip căn cước qua NFC, kiểm tra toàn vẹn thiết bị để chống cả hình giả giơ trước camera (presentation attack) lẫn luồng video giả bơm thẳng vào ứng dụng (injection attack), đồng thời giám sát chặt những tài khoản vừa mở trong vài tuần đầu.
+
+Còn trong <strong>vận hành nội bộ ngân hàng</strong>, nguyên tắc sống còn là không bao giờ phê duyệt lệnh chuyển tiền qua một kênh liên lạc duy nhất: luôn gọi lại vào số đã lưu trong danh bạ nội bộ, áp dụng nguyên tắc hai người duyệt độc lập trên ngưỡng quy định, và coi bộ ba "khẩn cấp + giữ bí mật + đòi bỏ quy trình" là còi báo động đỏ.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Thiết lập ngưỡng chặn gian lận một lần rồi để nguyên suốt cả năm.** Kẻ gian liên tục thay đổi kịch bản và dùng công cụ tự động để dò ngưỡng; nếu không theo dõi độ trôi (drift) và cập nhật mô hình định kỳ, tỉ lệ lọt lưới sẽ tăng dần mà không ai hay biết.
+- **Chỉ nhìn vào số tiền giao dịch để đánh giá rủi ro.** Các đường dây tài khoản mule thường chia nhỏ dòng tiền xuống ngay dưới ngưỡng cảnh báo; chỉ khi kết hợp thêm tín hiệu thiết bị, hành vi cầm máy và đồ thị dòng tiền hội tụ về một tài khoản nhận mới tách bạch được giao dịch gian lận.
+- **Coi xác thực khuôn mặt là bức tường tuyệt đối rồi bỏ qua các lớp kiểm soát sau đăng nhập.** Sinh trắc học vẫn có thể bị qua mặt nếu ứng dụng bị can thiệp hoặc khi chính nạn nhân bị thao túng tâm lý tự đưa mặt vào quét.
+- **Trông cậy vào việc tập huấn cho kế toán "cách nhìn khẩu hình để phát hiện video deepfake".** Công nghệ tạo sinh hoàn thiện từng tháng khiến mắt người sớm muộn cũng thua; thứ chặn đứng kẻ mạo danh lãnh đạo là quy trình bắt buộc gọi lại số lưu sẵn và hai người duyệt.
+- **Hiển thị thông báo lỗi quá chi tiết khi tạm giữ giao dịch của khách.** Những dòng báo lỗi kiểu "giao dịch bị giữ vì vượt hạn mức chuyển đêm cho người mới" chính là lời chỉ dẫn miễn phí giúp kẻ gian chỉnh lại kịch bản ở lần thử kế tiếp.
+- **Chỉ kiểm tra người thật ở phía trước ống kính camera mà quên kiểm tra tính toàn vẹn của thiết bị.** Nếu điện thoại đã bị root hoặc chạy trên trình giả lập, kẻ tấn công có thể bơm thẳng luồng video deepfake vào tầng phần mềm (injection attack) mà không cần giơ bức ảnh nào ra trước camera thật.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Hạ ngưỡng tạm giữ của mô hình chống gian lận xuống thấp thì điều gì xảy ra?', options: ['Bắt được nhiều gian lận hơn nhưng làm phiền nhiều khách hàng thật hơn', 'Không có gì thay đổi', 'Mô hình chạy nhanh hơn'], answer: 0, explain: 'Đánh đổi kinh điển: ngưỡng thấp tăng phát hiện nhưng tăng báo động giả.' },
+    { q: 'Vì sao ca "nạn nhân tự chuyển" khó phát hiện hơn ca chiếm tài khoản?', options: ['Vì số tiền luôn nhỏ', 'Vì chính chủ bấm trên đúng thiết bị nên tín hiệu kỹ thuật gần như bình thường', 'Vì không có log'], answer: 1, explain: 'Thiết bị, nhịp gõ, vị trí đều là của chủ tài khoản; lớp chặn hiệu quả nằm ở tài khoản nhận và cảnh báo đúng lúc.' },
+    { q: 'Kiểm tra người thật (liveness) trả lời câu hỏi nào?', options: ['Khuôn mặt có giống ảnh trên giấy tờ không', 'Người trước camera có phải người thật, đang có mặt ngay lúc này không', 'Người dùng có nhớ mật khẩu không'], answer: 1, explain: 'So khớp khuôn mặt là một câu hỏi; liveness là câu hỏi khác, nhằm chặn ảnh, video phát lại, mặt nạ, hình tổng hợp.' },
+    { q: 'Cách chắc chắn nhất để chặn mạo danh lãnh đạo qua video yêu cầu chuyển tiền?', options: ['Đào tạo nhân viên nhận ra deepfake bằng mắt', 'Quy định gọi lại qua số lưu sẵn và duyệt hai người cho lệnh lớn', 'Cấm họp video'], answer: 1, explain: 'Quy trình xác minh ngoài kênh không cần ai nhận ra hàng giả, và kẻ mạo danh không kiểm soát được kênh thứ hai.' },
+    { q: 'Injection attack vào eKYC khác presentation attack ở chỗ nào?', options: ['Không khác gì', 'Hình giả được đưa thẳng vào ứng dụng, không qua camera thật, nên kiểm tra trước camera không thấy', 'Chỉ dùng ảnh in'], answer: 1, explain: 'Chống injection attack cần kiểm tra toàn vẹn thiết bị và ứng dụng, thử thách do máy chủ sinh, và đối chiếu chip căn cước.' },
+    { q: 'Vì sao không nên hiện cho khách lý do chi tiết khiến giao dịch bị giữ?', options: ['Vì tốn chữ', 'Vì kẻ gian dùng thông tin đó để dò ngưỡng và né mô hình', 'Vì luật cấm'], answer: 1, explain: 'Thông báo chung vẫn bảo vệ được khách thật, trong khi không cho kẻ gian biết mình hụt bao nhiêu.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Mô hình chống gian lận hiện đại kết hợp đồng thời tín hiệu giao dịch, thiết bị, hành vi thao tác và mạng lưới tài khoản để áp mức cản trở tương xứng với rủi ro.
+- Tài khoản trung gian (mule) rất khó lộ nếu chỉ nhìn từng giao dịch lẻ, nhưng sẽ hiện rõ trên đồ thị mạng lưới khi nhận tiền từ nhiều người lạ rồi chuyển đi ngay.
+- Vì kẻ gian cũng dùng AI để dò ngưỡng và làm bẩn dữ liệu học, hệ thống cần ẩn lý do từ chối chi tiết, kiểm soát chặt dữ liệu gắn nhãn và luôn giữ một lớp quy tắc hạn mức cứng không phụ thuộc mô hình.
+- Sinh trắc học phải đi kèm kiểm tra người thật (chống cả presentation lẫn injection attack) và đối chiếu chip căn cước; còn trong nội bộ, quy trình gọi lại số lưu sẵn và duyệt hai người sẽ chặn đứng deepfake mà không cần mắt thường phân biệt.

@@ -1,0 +1,304 @@
+---
+title: "Dò quét và liệt kê dịch vụ"
+code: "2.2"
+level: 2
+summary: "Đây là lúc bạn thật sự gõ cửa mục tiêu: tìm ra nó đang mở những cổng nào, chạy phần mềm gì, rồi hỏi chuyện từng dịch vụ cho tới khi lộ ra một chỗ yếu. Phần lớn thành bại của một cuộc pentest, và của bài thi OSCP, nằm ở bước này."
+duration: "90 phút"
+updated: "2026-11-12"
+prereq: ["1.2", "1.3"]
+objectives:
+  - "Chọn và dựng được lệnh nmap phù hợp: quét nhanh toàn bộ cổng trước, quét sâu đúng những cổng đã mở sau"
+  - "Đọc được kết quả nmap và phân biệt cổng mở, đóng, bị lọc, rồi biết dòng nào cần ghi vào sổ tay"
+  - "Liệt kê sâu được dịch vụ SMB bằng enum4linux và smbclient để thu tên người dùng và file để lộ"
+  - "Dò được thư mục web ẩn bằng gobuster hoặc ffuf, và nhận ra thư mục nào đáng chú ý"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import NmapBuilder from '../../components/sim/NmapBuilder.tsx';
+import EnumExplorer from '../../components/sim/EnumExplorer.tsx';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import ReconPathLab from '../../components/sim/ReconPathLab.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Tới một toà nhà lạ, việc đầu tiên là đi một vòng xem có cửa nào, cửa nào đang mở, sau mỗi cửa là phòng gì. Quét và liệt kê chính là vòng đi đó, với máy tính.
+
+Ở bài 2.1 bạn đứng ngoài đường quan sát toà nhà; từ giờ bạn bước vào sân và thử từng cánh cửa, nên mọi thứ bạn làm đều để lại dấu vết trong nhật ký của mục tiêu và chỉ được làm trong phạm vi được phép (bài 0.1).
+
+Trong phòng thi OSCP, đây là nơi mọi bài làm bắt đầu: đề đưa bạn một địa chỉ IP, không có gì khác, và bạn phải tự tìm ra máy đó đang chạy gì.
+
+Người làm OSCP lâu năm có một câu: **"Bế tắc thì quay lại liệt kê."** Phần lớn thất bại không phải do thiếu kỹ thuật cao mà do liệt kê chưa đủ kỹ. Bài này dạy bạn làm bước đó có hệ thống, để không bỏ sót.
+
+## Kiến thức chính
+
+### Một cổng, ba kết quả
+
+Quét cổng nghĩa là thử bắt đầu "bắt tay" TCP (bài 1.2) với từng cổng rồi đọc xem máy mục tiêu phản ứng ra sao. Ba phản ứng khác nhau cho ba kết luận khác nhau, và kết luận nào cũng có ý nghĩa với người quét. Bấm "Tiếp" ở từng tình huống để xem:
+
+<SequenceDiagram
+  client:visible
+  title="Một cổng cho ba kết quả khác nhau"
+  actors={['Máy quét', 'Máy mục tiêu']}
+  scenarios={[
+    { name: 'Cổng mở', steps: [
+      { from: 0, to: 1, label: 'SYN → 80', note: 'Máy quét gửi SYN tới cổng 80.' },
+      { from: 1, to: 0, label: 'SYN + ACK', note: 'Có dịch vụ lắng nghe nên trả lời. Kết luận: cổng MỞ.', tone: 'good' },
+      { from: 0, to: 1, label: 'RST', note: 'Máy quét ngắt ngay để nhanh và bớt dấu vết.', tone: 'muted' },
+    ] },
+    { name: 'Cổng đóng', steps: [
+      { from: 0, to: 1, label: 'SYN → 81', note: 'Gửi SYN tới cổng 81.' },
+      { from: 1, to: 0, label: 'RST', note: 'Không có dịch vụ, từ chối thẳng. Kết luận: cổng ĐÓNG.', tone: 'bad' },
+    ] },
+    { name: 'Cổng bị lọc', steps: [
+      { from: 0, to: 1, label: 'SYN → 82', note: 'Gửi SYN tới cổng 82.' },
+      { from: 0, to: 1, label: '(không trả lời)', note: 'Firewall lặng lẽ bỏ gói. Kết luận: BỊ LỌC. Đây là lý do quét qua firewall chậm.', tone: 'muted' },
+    ] },
+  ]}
+/>
+
+### Dựng lệnh nmap
+
+Mỗi "cờ" là một tuỳ chọn thêm vào sau tên lệnh để đổi cách nmap làm việc. Đừng cố thuộc hết: hãy tích thử các cờ bên dưới để thấy lệnh hoàn chỉnh và ý nghĩa từng cờ, rồi tự hỏi "tình huống nào thì mình cần cờ này".
+
+<NmapBuilder client:visible />
+
+### Quy trình nmap hai bước thường dùng
+
+Có 65535 cổng trên một máy, và quét sâu cả 65535 cổng mất hàng giờ. Vì vậy người làm nghề chia việc làm hai lần. Lần 1 quét thật nhanh toàn bộ cổng, chỉ để biết cổng nào đang mở, không cần biết bên trong là gì.
+
+Lần 2 chỉ quét kỹ (nhận diện phiên bản, chạy script) đúng những cổng đó, vài cổng thay vì vài vạn. Cách này vừa nhanh vừa không bỏ sót cổng ở số cao, nơi người mới hay quên nhìn. Ta bắt đầu với bước 1:
+
+<Lenh noi="Terminal trên máy Kali" muc="Quét rất nhanh toàn bộ 65535 cổng để biết cổng nào mở, trước khi tốn thời gian quét sâu">
+
+<Terminal title="Bước 1: quét nhanh tất cả cổng để biết cổng nào mở">
+
+```text
+kali@lab:~$ nmap -p- --min-rate 2000 10.10.14.30
+PORT     STATE SERVICE
+22/tcp   open  ssh
+80/tcp   open  http
+445/tcp  open  microsoft-ds
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `nmap`: chương trình quét cổng và dịch vụ.
+- `-p-`: quét **toàn bộ** 65535 cổng (viết tắt của `-p 1-65535`). Mặc định nmap chỉ quét 1000 cổng phổ biến nhất, nên dễ bỏ sót dịch vụ ở cổng cao.
+- `--min-rate 2000`: ép nmap gửi tối thiểu khoảng 2000 gói/giây để quét nhanh hơn. Đổi lại ồn hơn, dễ bị phát hiện.
+- `10.10.14.30`: địa chỉ máy mục tiêu.
+
+</div>
+
+<div slot="doc">
+
+- Ba cột: `PORT` (số cổng/giao thức), `STATE` (trạng thái), `SERVICE` (tên dịch vụ nmap đoán theo số cổng — chỉ là đoán, chưa xác nhận).
+- Cả ba dòng đều `open`: đây là **danh sách cổng cần quét sâu** ở bước 2. Chỉ ghi lại các cổng `open`; bỏ qua `closed` và `filtered` ở đây.
+- Nếu không có dòng nào: máy không mở cổng TCP nào tới được, hoặc bị chặn — kiểm tra lại mạng lab (bài 0.2).
+
+</div>
+
+</Lenh>
+
+Bước 1 cho bạn ba số: 22, 80 và 445. Giờ bạn chỉ cần quét kỹ đúng ba cổng đó. Bước 2 hỏi từng dịch vụ "bạn là phần mềm gì, phiên bản bao nhiêu", vì từ phiên bản bạn mới tra được lỗ hổng:
+
+<Lenh noi="Terminal trên máy Kali" muc="Quét kỹ đúng các cổng đã biết mở, để lấy tên và phiên bản dịch vụ">
+
+<Terminal title="Bước 2: quét sâu đúng các cổng đó">
+
+```text
+kali@lab:~$ nmap -p 22,80,445 -sC -sV 10.10.14.30
+22/tcp  open  ssh      OpenSSH 7.6p1 Ubuntu 4ubuntu0.3
+80/tcp  open  http     Apache httpd 2.4.29 ((Ubuntu))
+|_http-title: Megacorp Intranet
+445/tcp open  netbios-ssn Samba smbd 4.7.6
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `-p 22,80,445`: chỉ quét đúng ba cổng này (lấy từ kết quả bước 1), cách nhau bằng dấu phẩy, không dấu cách.
+- `-sC`: chạy các **script mặc định** của nmap (an toàn, không phá hoại) để lấy thêm chi tiết, ví dụ tiêu đề trang web.
+- `-sV`: dò **phiên bản** dịch vụ (Version), bằng cách "hỏi chuyện" dịch vụ thay vì chỉ đoán theo số cổng.
+
+</div>
+
+<div slot="doc">
+
+- Cột cuối giờ có **tên phần mềm và số phiên bản** thật, không chỉ đoán theo cổng: `OpenSSH 7.6p1 Ubuntu`, `Apache httpd 2.4.29`, `Samba smbd 4.7.6`.
+- Dòng bắt đầu bằng `|_` là kết quả của một script `-sC`, ở đây là tiêu đề trang web (`http-title`).
+- **Đây là dữ liệu quan trọng nhất của bài**: ghi mọi tên và số phiên bản vào ghi chú, dùng để tra lỗ hổng đã biết ở bài 2.5.
+
+</div>
+
+</Lenh>
+
+Đừng quên UDP, vì nmap mặc định chỉ quét TCP: `sudo nmap -sU --top-ports 20 10.10.14.30` kiểm tra nhanh 20 cổng UDP phổ biến nhất (DNS, SNMP...).
+
+## Thực hành: liệt kê sâu dịch vụ
+
+Biết cổng mở mới chỉ là biết có những cánh cửa. Giờ bạn mở từng cánh ra xem bên trong có gì. Từ kết quả bước 2, có ba dịch vụ cần hỏi chuyện tiếp: cổng 445 (SMB, chia sẻ file Windows và Samba, thường rất giàu thông tin), và cổng 80 (web, nơi hay giấu thư mục quản trị).
+
+Bấm từng lệnh để xem output mẫu, và đọc phần "điều đáng chú ý" như cách người làm nghề đọc: dòng nào là mỏ vàng, dòng nào bỏ qua được:
+
+<EnumExplorer
+  client:visible
+  title="Liệt kê SMB (cổng 445) và web (cổng 80)"
+  intro="Mẫu từ một máy lab. Dòng tô vàng là chỗ cần để ý."
+  items={[
+    {
+      cmd: 'enum4linux -a 10.10.14.30',
+      explain: [
+        'enum4linux: công cụ liệt kê dịch vụ SMB/Samba của Windows và Linux.',
+        '-a: chạy mọi kiểm tra (all) — domain, người dùng, share, chính sách mật khẩu...',
+      ],
+      output: [
+        { text: '[+] Got domain/workgroup name: MEGACORP' },
+        { text: '[+] Users via RID cycling:' },
+        { text: "  MEGACORP\\jdoe (Local User)", hit: true },
+        { text: "  MEGACORP\\svc_backup (Local User)", hit: true },
+        { text: '[+] Share Enumeration:' },
+        { text: '  backups        Disk      (có thể đọc được)', hit: true },
+      ],
+      finding: 'Mỗi dòng [+] là một mục dò được. Hai dòng đáng ghi nhất: (1) "Users via RID cycling" lộ tên người dùng thật (jdoe, svc_backup); tên svc_backup trông như tài khoản dịch vụ sao lưu, loại hay có quyền cao và mật khẩu yếu, nên là ứng viên hàng đầu cho bài 2.6. (2) "Share Enumeration" liệt kê các thư mục chia sẻ qua mạng (share); share backups ghi "có thể đọc được" nghĩa là vào được ngay, không cần mật khẩu, và file sao lưu rất hay chứa mật khẩu.',
+      tone: 'warn',
+    },
+    {
+      cmd: 'smbclient //10.10.14.30/backups -N',
+      explain: [
+        'smbclient: chương trình kết nối vào một share SMB, dùng như FTP.',
+        '//10.10.14.30/backups: đường dẫn share, dạng //máy/tên-share.',
+        '-N: thử kết nối không cần mật khẩu ("null session").',
+      ],
+      output: [
+        { text: 'Try "help" to get a list of possible commands.' },
+        { text: 'smb: \\> ls' },
+        { text: '  web_config.bak      A   2048  ...', hit: true },
+        { text: 'smb: \\> get web_config.bak' },
+      ],
+      finding: 'Kết nối thành công (không bị từ chối) nghĩa là null session hoạt động trên share này, một cấu hình đáng lo. Lệnh con "ls" trong dấu nhắc "smb: \\>" liệt kê file, "get" tải file về máy Kali. File web_config.bak là thứ phải tải ngay: bản sao lưu cấu hình web hay chứa mật khẩu cơ sở dữ liệu, và bạn đã biết từ bài 1.4 rằng người ta dùng lại mật khẩu cho nhiều nơi. Ghi vào sổ tay: share nào, file nào, mở bằng cách nào.',
+      tone: 'bad',
+    },
+    {
+      cmd: 'gobuster dir -u http://10.10.14.30 -w /usr/share/wordlists/dirb/common.txt',
+      explain: [
+        'gobuster dir: chế độ dò thư mục/đường dẫn của gobuster.',
+        '-u: địa chỉ web cần dò. -w: đường dẫn tới wordlist, danh sách tên để thử từng cái.',
+      ],
+      output: [
+        { text: '/index.html           (Status: 200)' },
+        { text: '/admin                (Status: 401)', hit: true },
+        { text: '/backup               (Status: 301)', hit: true },
+        { text: '/.git                 (Status: 200)', hit: true },
+      ],
+      finding: 'Gobuster thử từng tên trong danh sách và báo cái nào tồn tại. Bỏ qua /index.html (trang chủ, ai cũng biết). Hai dòng đáng chú ý: /admin trả 401 nghĩa là có trang quản trị nhưng cần đăng nhập (đáng nhớ để thử mật khẩu yếu ở bài 2.6), và /.git trả 200 là mỏ vàng thật sự, vì thư mục này lộ cả kho mã nguồn kèm lịch sử, nơi hay còn sót mật khẩu của các phiên bản cũ.',
+      tone: 'bad',
+    },
+  ]}
+/>
+
+<Callout type="note">
+`gobuster` và `ffuf` làm cùng việc: thử hàng loạt đường dẫn từ một danh sách từ (wordlist) và báo cái nào tồn tại. Danh sách phổ biến nằm sẵn trong Kali tại <code>/usr/share/wordlists/</code> (bộ SecLists rất hay dùng).
+</Callout>
+
+### Mỗi dịch vụ, một câu hỏi đầu tiên
+
+SMB và web là hai dịch vụ giàu thông tin nhất, nhưng bước 2 của nmap hay lộ ra cả những cổng khác. Mỗi dịch vụ có một "câu hỏi đầu tiên" riêng; nhớ đúng lệnh mở màn cho mỗi loại là đủ để không bế tắc khi gặp một cổng lạ. Đây là bảng tra nhanh, không phải để thuộc lòng:
+
+| Cổng / dịch vụ | Lệnh mở màn | Tìm gì |
+|---|---|---|
+| 21 FTP | `ftp 10.10.14.30` rồi đăng nhập `anonymous` | Đăng nhập ẩn danh có được không; file để quên trong thư mục |
+| 25 SMTP | `smtp-user-enum -M VRFY -U users.txt -t 10.10.14.30` | Lệnh `VRFY`/`EXPN` xác nhận tài khoản nào có thật → danh sách user |
+| 53 DNS | `dig axfr megacorp.lab @10.10.14.30` | Zone transfer để lộ toàn bộ tên máy nội bộ (bài 2.1) |
+| 111/2049 NFS | `showmount -e 10.10.14.30` | Thư mục được xuất ra; mount về đọc, để ý `no_root_squash` (bài 3.1) |
+| 161 SNMP (UDP) | `snmpwalk -v2c -c public 10.10.14.30` | Community string `public`; lộ tiến trình, user, đôi khi cả mật khẩu |
+| 389 LDAP | `ldapsearch -x -H ldap://10.10.14.30 -s base` | Tên domain, naming context → nguyên liệu cho bài 3.4 |
+| 1433 MSSQL | `impacket-mssqlclient user@10.10.14.30 -windows-auth` | Đăng nhập; nếu có quyền, `xp_cmdshell` chạy lệnh (bài 2.3) |
+| 3389 RDP | `xfreerdp /u:user /v:10.10.14.30` | Đăng nhập đồ hoạ khi đã có tài khoản; kiểm tra NLA |
+| 3306 MySQL | `mysql -h 10.10.14.30 -u root -p` | Thử `root` không mật khẩu và mật khẩu nhặt được; đọc bảng người dùng của ứng dụng |
+| 6379 Redis | `redis-cli -h 10.10.14.30` rồi `info` | Vào được không cần mật khẩu là cấu hình sai; bản cũ cho ghi file ra đĩa (khoá SSH, web shell) |
+| 8080 Tomcat | Mở `/manager/html`, thử `tomcat:tomcat`, `admin:admin`, `tomcat:s3cret` | Vào được trang Manager là tải lên được một gói `.war` chứa reverse shell (`msfvenom -p java/jsp_shell_reverse_tcp -f war`) |
+| 8080 Jenkins | Mở `/script` (Script Console) | Console chạy mã Groovy, tức chạy lệnh trên máy chủ; thử cả tài khoản mặc định và trang đăng ký còn mở |
+
+Nguyên tắc chung không đổi: thấy một cổng mở là hỏi chuyện dịch vụ sau nó cho tới khi hết thông tin, rồi mới sang cổng kế. `nmap -sC` đã chạy sẵn vài script liệt kê cơ bản cho các dịch vụ này, nên luôn đọc kỹ output `-sC` trước khi gõ công cụ riêng.
+
+### Tự nối mạch liệt kê trên một máy mới
+
+Trên máy `10.10.14.30` vừa rồi, cả SMB lẫn web đều mở toang cho bạn xem. Nhưng khi bước sang một máy khác trong lab hay phòng thi, không phải cánh cửa nào bạn gõ cũng mở sẵn.
+
+Hãy thử tự tay đi một vòng liệt kê trên máy giả lập `10.10.14.35` dưới đây để rèn phản xạ thực tế: thấy cổng mở thì hỏi tiếp dịch vụ nào, gặp cánh cửa đóng thì gác lại ra sao, và ghi lại hướng điều tra tiếp theo vào sổ tay như thế nào.
+
+<ReconPathLab client:visible />
+
+<LabBrief
+  ten="Liệt kê trọn Metasploitable 2 bằng tay"
+  muctieu="Tìm mọi cổng TCP mở và hỏi chuyện từng dịch vụ cho tới khi hết thông tin, đúng quy trình ba bước ở đầu bài"
+  may="Metasploitable 2"
+  ip="10.10.14.20"
+  thoigian="40 phút"
+  xong="Bạn trả lời được bằng chữ của chính mình: máy mở bao nhiêu cổng TCP, phiên bản FTP và Samba là gì, SMB có những share nào, và máy xuất thư mục nào qua NFS"
+>
+
+1. Quét toàn bộ 65535 cổng TCP, rồi quét sâu chỉ trên các cổng vừa tìm được.
+2. Thử đăng nhập FTP ẩn danh.
+3. Liệt kê share và tài khoản qua SMB, dùng cả hai công cụ trong bảng "Mỗi dịch vụ, một câu hỏi đầu tiên".
+4. Xem máy xuất thư mục nào qua NFS.
+5. Ghi mọi thứ vào sổ tay theo mẫu bài 0.3, kèm cổng nguồn cho mỗi dòng.
+
+<div slot="goiy1">
+Ba bước ở đầu mục "Kiến thức chính" chính là thứ tự cần làm: quét ngoài, quét sâu, rồi hỏi chuyện từng dịch vụ theo bảng tra nhanh ngay phía trên.
+</div>
+
+<div slot="goiy2">
+Lệnh mở màn cho FTP, SMB và NFS đã có sẵn trong bảng "Mỗi dịch vụ, một câu hỏi đầu tiên" ở trên — chỉ cần đổi địa chỉ IP.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng hướng: tổng số cổng TCP mở khoảng 30; nếu bạn chỉ thấy khoảng 20, có thể đã quên quét hết dải cổng.
+- FTP cho đăng nhập `anonymous` không cần mật khẩu — đó là dấu hiệu cấu hình sai, ghi lại để dùng ở bài sau.
+- Share SMB tên `tmp` vào được không cần thông tin đăng nhập.
+- `smbclient` báo lỗi thương lượng giao thức: máy này rất cũ, cần ép giao thức cũ hơn — xem lại ghi chú dưới bảng liệt kê SMB ở bài 3.3.
+- NFS xuất ra cả ổ đĩa cho mọi người: ghi lại địa chỉ này, bài 3.1 sẽ quay lại dùng.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hãy đứng ở ghế người quản trị mạng và hỏi: nếu hôm nay có ai quét cả dải máy của mình, mình có biết không? Dấu hiệu rất rõ: nhiều gói SYN tới nhiều cổng khác nhau trong thời gian ngắn từ một nguồn, và một hệ thống giám sát thông thường bắt được nó. Phòng thủ tốt hơn là làm cho kết quả quét không còn gì để lộ. Đóng mọi cổng không dùng, vì cổng nào đóng thì không còn chỗ để hỏi chuyện.
+
+Tắt null session trên SMB và không để share chứa dữ liệu nhạy cảm cho đọc ẩn danh. Không để thư mục `.git` nằm trên web. Những dịch vụ trong bảng tra trên cũng là danh sách rà soát của chính người quản trị: tắt đăng nhập FTP ẩn danh, chặn lệnh `VRFY` trên SMTP, cấm zone transfer DNS, xuất NFS với `root_squash`, đổi community string SNMP mặc định `public`. Quy tắc vàng cho mọi dịch vụ: không cần thì đừng để chạy.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Chỉ quét 1000 cổng mặc định rồi dừng.** Nmap mặc định chỉ xét 1000 cổng phổ biến, nên dịch vụ ở cổng cao bị bỏ sót, và bạn nghĩ máy "không có gì". Luôn có một lần `-p-`; đây là lỗi hay làm người ta mất nhiều giờ trong phòng thi.
+- **Quên quét UDP.** Vì UDP chậm nên người mới hay bỏ qua, và bỏ lỡ DNS, SNMP, những chỗ hay có cấu hình yếu.
+- **Dừng ngay sau nmap.** Nmap chỉ mở màn; người mới mãn nguyện vì có danh sách cổng rồi nhảy sang tìm khai thác. Manh mối thật sự nằm ở bước liệt kê sâu SMB và web, nên đừng rời một dịch vụ khi chưa hỏi hết nó.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Máy mục tiêu trả về RST ngay khi nhận SYN. Cổng ở trạng thái nào?', options: ['Mở', 'Đóng', 'Bị lọc'], answer: 1, explain: 'RST là từ chối: không có dịch vụ lắng nghe, cổng đóng.' },
+    { q: '`-sV` trong nmap làm gì?', options: ['Quét nhanh hơn', 'Nhận diện tên và phiên bản dịch vụ', 'Quét UDP'], answer: 1, explain: '-sV hỏi chuyện dịch vụ để đoán phần mềm và phiên bản, dẫn tới bước tra CVE.' },
+    { q: '`smbclient //host/share -N` với cờ -N nghĩa là gì?', options: ['Dùng mật khẩu NULL/không cần xác thực', 'Quét mạng', 'Tạo share mới'], answer: 0, explain: '-N thử null session, truy cập share mà không cần đăng nhập.' },
+    { q: 'Tìm thấy /.git trên web có giá trị gì?', options: ['Không có gì', 'Có thể tải cả mã nguồn và lịch sử về đọc', 'Chỉ là thư mục rỗng'], answer: 1, explain: 'Thư mục .git lộ cho phép khôi phục toàn bộ mã nguồn, nơi hay có mật khẩu và logic nhạy cảm.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Làm theo thứ tự rộng rồi hẹp: tìm máy sống, quét hết cổng (`-p-`), quét sâu đúng cổng đã mở (`-sC -sV`), rồi hỏi chuyện từng dịch vụ. Đừng nhảy cóc.
+- Một cổng cho ba câu trả lời (mở, đóng, bị lọc), và sự im lặng cũng là thông tin chứ không phải "không có gì".
+- Ghi mọi tên phần mềm và số phiên bản vào sổ tay ngay lúc thấy. Đó là nguyên liệu của bài 2.5.
+- Bí đường thì quay lại đây: `enum4linux`, `smbclient -N` và `gobuster dir` thường đào ra thứ bạn đã bỏ sót.

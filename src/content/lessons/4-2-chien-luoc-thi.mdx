@@ -1,0 +1,213 @@
+---
+title: "Chiến lược thi OSCP"
+code: "4.2"
+level: 4
+summary: "OSCP là một kỳ thi dài gần 24 giờ, nơi kỹ thuật giỏi thôi chưa đủ — người đỗ thường là người quản lý thời gian và tâm lý tốt hơn, không phải người biết nhiều lệnh nhất."
+duration: "50 phút"
+updated: "2026-11-12"
+prereq: ["4.1"]
+objectives:
+  - "Hiểu hình thức và cách tính điểm chung của kỳ thi, để không bất ngờ vào đúng ngày thi"
+  - "Dựng được một kế hoạch phân bổ thời gian cụ thể cho 24 giờ thi"
+  - "Có một quy trình tấn công máy cố định để bám khi bế tắc, thay vì quét loạn xạ"
+  - "Chuẩn bị tâm lý và thể chất cho một kỳ thi dài, không phải một buổi lab bình thường"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Checklist from '../../components/sim/Checklist.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+OSCP giống chạy marathon hơn chạy nước rút. Người về đích không phải người chạy nhanh nhất lúc đầu, mà người giữ được sức, không hoảng khi mệt, và biết lúc nào nên đi bộ lấy lại hơi.
+
+Gần 24 giờ ngồi một mình trước một mạng máy tính lạ, không ai giải thích hộ, là một dạng áp lực hoàn toàn khác so với giải một bài lab ở nhà có thể dừng bất cứ lúc nào — và chính áp lực đó, không phải độ khó kỹ thuật, mới là thứ đánh bại nhiều người thi lần đầu.
+
+> Thể lệ, điểm số và cấu trúc cụ thể do OffSec quy định và thay đổi theo thời gian. Luôn đọc hướng dẫn chính thức mới nhất trước khi thi. Phần dưới là chiến lược chung, không phải quy định.
+
+## Kiến thức chính
+
+### Hình thức chung
+
+OSCP là kỳ thi thực hành dài gần một ngày liên tục: bạn tấn công các máy trong một mạng lab và phải đạt một ngưỡng điểm, thường có cả một phần Active Directory nhiều máy nối nhau. Sau phần thực hành là thời gian viết và nộp báo cáo (bài 4.1). Điểm đến từ việc chứng minh đã chiếm máy, kèm bằng chứng trong báo cáo (ảnh chụp, các mã local.txt/proof.txt).
+
+<Callout type="note" label="Cập nhật OSCP+ (từ cuối 2024)">
+Từ tháng 11/2024, OffSec đổi một số điểm, trong đó chứng chỉ mang tên <strong>OSCP+</strong> và <strong>có hiệu lực 3 năm</strong> (phải thi lại hoặc tích luỹ để gia hạn). Một số thay đổi đáng chú ý theo hướng hiện hành: bỏ 10 điểm thưởng từ bài tập khoá học; phần Active Directory thường theo kiểu <strong>"assumed breach"</strong> (cho sẵn một bộ thông tin đăng nhập ban đầu).
+
+Tràn bộ đệm (bài 3.6) <strong>không còn là phần bắt buộc được bảo đảm</strong> như các kỳ thi cũ. Đây là những điểm hay thay đổi, nên luôn đối chiếu hướng dẫn chính thức mới nhất của OffSec trước khi đăng ký thi.
+</Callout>
+
+### Cấu trúc đề và cách tính điểm
+
+Theo hướng dẫn thi OSCP+ của OffSec (đối chiếu tháng 11/2026), đề gồm hai phần, tổng 100 điểm:
+
+| Phần | Số máy | Điểm | Cách tính |
+|---|---|---|---|
+| Máy đơn lẻ | 3 | 60 (20 mỗi máy) | 10 điểm khi có chỗ đứng đầu tiên (`local.txt`), 10 điểm khi leo lên quyền cao nhất (`proof.txt`) |
+| Cụm Active Directory | 3 (2 máy thành viên + DC) | 40 | 10 điểm cho máy thứ nhất, 10 cho máy thứ hai, 20 cho Domain Controller; bắt đầu bằng một tài khoản domain cho sẵn |
+
+Thời gian làm bài là **23 giờ 45 phút**, sau đó bạn có thêm **24 giờ** để nộp báo cáo. Suốt phần làm bài có **giám thị theo dõi qua webcam và chia sẻ màn hình**; muốn rời bàn thì báo giám thị, đồng hồ vẫn chạy.
+
+<Callout type="warn" label="Mốc đỗ đổi từ 1/12/2026">
+Với bài thi làm đến hết <strong>30/11/2026</strong>, mốc đỗ là <strong>70/100 điểm</strong>. Từ <strong>1/12/2026</strong>, OffSec chuyển sang <strong>điểm quy đổi (scaled scoring)</strong>: không còn một mốc điểm thô chung cho mọi bộ đề, nên đừng lấy 70 làm đích. Nội dung thi, hình thức, thời lượng và việc giám sát không đổi. Cách ôn vì thế cũng không đổi: nhắm chiếm được càng nhiều máy càng tốt, và đọc thông báo chấm điểm mới nhất của OffSec trước ngày thi.
+</Callout>
+
+Từ bảng điểm rút ra hai điều cho chiến lược. Một: cụm AD nặng nhất và các máy trong cụm nối nhau, nên phải luyện AD thật kỹ (bài 3.4, 3.5, 3.9, 5.2). Hai: chỗ đứng đầu tiên trên một máy đơn đã có 10 điểm, nên đừng bỏ một máy chỉ vì chưa leo được quyền.
+
+### Công cụ bị cấm và bị giới hạn
+
+Vi phạm phần này có thể bị huỷ kết quả dù đã chiếm đủ máy, nên phải thuộc trước khi thi:
+
+| Loại | Ví dụ | Trong phòng thi |
+|---|---|---|
+| Công cụ khai thác tự động | **sqlmap**, SQLninja, `db_autopwn` | **Cấm.** SQL injection phải làm tay (bài 2.3) |
+| Trình quét lỗ hổng hàng loạt | Nessus, OpenVAS, Nexpose | **Cấm.** `nmap` và các script NSE của nó vẫn được dùng |
+| Trợ lý AI | ChatGPT, Gemini, OffSec KAI và mọi chatbot/LLM | **Cấm**, kể cả lúc viết báo cáo; bị coi là nhận trợ giúp từ bên thứ ba |
+| Bản thương mại | Metasploit Pro, Burp Suite Pro | **Cấm.** Bản miễn phí (Burp Community) dùng được |
+| Metasploit, Meterpreter | module khai thác, `getsystem` | **Giới hạn:** chỉ được dùng trên một máy do bạn chọn (bài 3.7). `multi/handler` và `msfvenom` không tính vào giới hạn |
+
+Những thứ vẫn dùng bình thường: nmap, gobuster/ffuf, Burp Community, bộ impacket, NetExec, BloodHound, linPEAS/winPEAS, hashcat/john, chisel/ligolo-ng. Ghi chú của chính bạn và tài liệu trên mạng cũng được tra, miễn là không hỏi người khác và không hỏi AI.
+
+<Callout type="note" label="Bằng chứng phải chụp cho mỗi máy">
+Mỗi mã <code>local.txt</code>/<code>proof.txt</code> chỉ được tính khi ảnh chụp cho thấy, <strong>trong cùng một phiên shell tương tác</strong>: nội dung file (<code>type</code> hoặc <code>cat</code>), địa chỉ IP của máy (<code>ipconfig</code>/<code>ip a</code>) và tài khoản đang dùng (<code>whoami</code>). Đọc mã qua web shell hay qua một lỗi đọc file thì không được tính. Ngoài ảnh, nhớ dán mã vào bảng điều khiển của kỳ thi trước khi hết giờ. Bài 4.1 có phần luyện chọn ảnh bằng chứng.
+</Callout>
+
+### Một kế hoạch thời gian mẫu
+
+Với một kỳ thi dài khoảng 24 giờ, nhiều người chia đại ý như sau (điều chỉnh theo bản thân):
+
+| Khoảng | Việc |
+|---|---|
+| 0–1h | Quét toàn bộ mục tiêu cùng lúc (nmap `-p-`: quét hết 65535 cổng), ghi lại cổng mở |
+| 1h+ | Chọn máy có vẻ dễ nhất trước, bám quy trình bên dưới |
+| Mỗi máy | Đặt mốc 1.5–2h; không tiến triển thì chuyển máy, quay lại sau |
+| ~1/2 chặng | Ưu tiên phần AD nếu có, vì nhiều điểm và liên hoàn |
+| 4–6h cuối | Ngừng tấn công, dồn cho ghi chú còn thiếu và viết báo cáo |
+
+<ConceptMap
+  client:visible
+  title="Dòng thời gian chiến lược 24 giờ thi OSCP (Exam Lifecycle)"
+  width={690}
+  height={320}
+  zones={[
+    { label: "Giai đoạn Tấn công mục tiêu (0h - 16h)", x: 10, y: 10, w: 420, h: 290 },
+    { label: "Hồi phục & Nghiệm thu (16h - 24h)", x: 440, y: 10, w: 240, h: 290 },
+  ]}
+  nodes={[
+    { id: 'h0', label: '0h - 1h: Quét toàn dải', sub: 'nmap -p- & autorecon', x: 110, y: 70, tone: 'accent', detail: 'Quét toàn bộ 65535 cổng trên cả 3 máy đơn và cụm AD. Khởi tạo cấu trúc file ghi chú cho từng máy.' },
+    { id: 'ad', label: '1h - 6h: Cụm AD (40đ)', sub: 'Assumed breach -> DC', x: 310, y: 70, tone: 'warn', detail: 'Mảng điểm lớn nhất và liên hoàn: từ tài khoản cho sẵn -> leo domain admin -> chiếm DC lấy trọn 40 điểm.' },
+    { id: 's1', label: '6h - 11h: Máy đơn 1 & 2', sub: '40 điểm (2 x 20đ)', x: 110, y: 200, tone: 'accent', detail: 'Tập trung lấy Foothold (10đ) + Root (10đ). Đạt mốc an toàn vượt qua ngưỡng điểm yêu cầu.' },
+    { id: 'rest', label: '11h - 13h: Nghỉ ngơi', sub: 'Ăn tối & Rời màn hình', x: 310, y: 200, detail: 'Bắt buộc rời màn hình ít nhất 60-90 phút. Não bộ cần nạp lại năng lượng để giải quyết bế tắc.' },
+    { id: 's3', label: '13h - 18h: Máy đơn 3', sub: '20 điểm dự phòng', x: 560, y: 70, tone: 'warn', detail: 'Giải quyết máy còn lại để tối đa hóa điểm số lên 100 điểm.' },
+    { id: 'audit', label: '18h - 23h45: Bằng chứng', sub: 'Chụp ảnh 3-in-1 & Nộp cờ', x: 560, y: 200, tone: 'bad', detail: 'Rà soát toàn bộ ảnh chụp màn hình: phải đủ IP + whoami + flag trong cùng 1 terminal. Dán mã cờ vào portal.' },
+  ]}
+  edges={[
+    { from: 'h0', to: 'ad' },
+    { from: 'ad', to: 's1' },
+    { from: 's1', to: 'rest' },
+    { from: 'rest', to: 's3' },
+    { from: 's3', to: 'audit' },
+  ]}
+/>
+
+### Một quy trình tấn công máy để bám
+
+Khi căng thẳng, có một checklist cố định giúp bạn không hoảng:
+
+<Checklist
+  client:visible
+  title="Quy trình cho mỗi máy (bám khi bế tắc)"
+  storageKey="exam-permachine"
+  items={[
+    { label: 'Quét đủ: -p- rồi -sC -sV; đừng quên UDP top ports' },
+    { label: 'Liệt kê TỪNG dịch vụ, không chỉ cái dễ nhất', hint: 'web: gobuster; SMB: enum4linux; v.v.' },
+    { label: 'Với web: xem /robots.txt, dò thư mục, thử phiên bản → searchsploit' },
+    { label: 'Có thông tin đăng nhập nào chưa? Thử lại ở mọi dịch vụ' },
+    { label: 'Vào được rồi: chạy linPEAS/winPEAS + kiểm tra tay' },
+    { label: 'Leo thang: sudo -l, SUID/GTFOBins (Linux); whoami /priv, dịch vụ (Windows)' },
+    { label: 'Chụp bằng chứng NGAY khi chiếm được (có thời gian)' },
+    { label: 'Bế tắc 30 phút? Quay lại liệt kê hoặc nghỉ ngắn, đổi máy' },
+  ]}
+/>
+
+### Khi bế tắc
+
+Quay lại liệt kê (phần lớn bế tắc là do bỏ sót). Đọc lại ghi chú "đã thử". Nghỉ ngắn — rời màn hình vài phút thường hiệu quả hơn nhìn thêm một giờ. Kiểm tra lại điều cơ bản: đúng IP chưa, dịch vụ còn chạy không, có quên cổng nào không.
+
+### Tâm lý và thể chất
+
+Ngủ đủ trước ngày thi quan trọng hơn ôn thêm một kỹ thuật đêm cuối. Chuẩn bị đồ ăn, nước. Chấp nhận cảm giác bế tắc là bình thường — gần như ai cũng có lúc thấy "chịu rồi"; người qua được là người giữ bình tĩnh và quay lại quy trình.
+
+<Callout type="note">
+Mọi thói quen ở đây nên tập từ lúc luyện lab (bài 4.3), không đợi tới hôm thi. Thi chỉ là ngày bạn làm lại những gì đã thành phản xạ.
+</Callout>
+
+## Mô phỏng: Điều phối nhịp độ và ra quyết định trong phòng thi
+
+<DecisionTree
+  client:visible
+  title="Xử lý tình huống phân bổ thời gian khi thi OSCP"
+  start="ad_or_standalone"
+  nodes={{
+    ad_or_standalone: {
+      q: 'Đã 5 giờ trôi qua kể từ khi bắt đầu thi. Bạn đã chiếm được Foothold (10đ) trên máy đơn 1 nhưng leo quyền bế tắc 90 phút. Trong khi đó cụm Active Directory (40đ) bạn chưa chạm vào. Quyết định tiếp theo?',
+      options: [
+        { label: 'Cố ngồi thêm 2 tiếng nữa để lấy bằng được quyền root máy đơn 1', next: 'sunk_cost' },
+        { label: 'Chụp ảnh bằng chứng 3-in-1 cho local.txt, dán cờ, rồi chuyển ngay sang cụm AD', next: 'switch_ad' },
+      ],
+    },
+    sunk_cost: {
+      result: 'Bẫy tâm lý chi phí chìm (Sunk Cost Fallacy)! Cố đấm ăn xôi ở một máy đơn đang kẹt sẽ đốt cạn thời gian và thể lực. Nếu không giải quyết được cụm AD 40 điểm, bạn gần như không có cơ hội đỗ.',
+      tone: 'bad',
+    },
+    switch_ad: {
+      q: 'Quyết định chính xác! Bạn bắt đầu cụm AD và đã chiếm được 2 máy thành viên (20đ). Lúc này đồng hồ chỉ 13h thi, mắt bạn bắt đầu mỏi và gõ lệnh hay nhầm. Hành động hợp lý?',
+      options: [
+        { label: 'Uống thêm nước tăng lực, thức trắng để đánh nốt máy Domain Controller', next: 'burnout' },
+        { label: 'Báo giám thị, rời máy tính đi ăn tối và ngủ một giấc ngắn 2 tiếng', next: 'recharge' },
+      ],
+    },
+    burnout: {
+      result: 'Nguy cơ sập nguồn thể lực! Sau 13 giờ căng thẳng, não bộ thiếu oxy và dopamine sẽ khiến bạn bỏ sót những cờ đơn giản nhất trên Domain Controller. Đã có rất nhiều thí sinh gục ngã vì kiệt sức ở nửa đêm.',
+      tone: 'bad',
+    },
+    recharge: {
+      result: 'Chiến thuật của người đỗ! Ngủ 2 tiếng giúp não bộ sắp xếp lại thông tin và phục hồi khả năng tư duy logic. Khi quay lại bàn thi lúc 16h với đầu óc tỉnh táo, bạn thường hạ gục Domain Controller chỉ trong vòng 1-2 tiếng.',
+      tone: 'good',
+    },
+  }}
+/>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Kỷ luật ghi chép và quy trình có hệ thống không chỉ để thi. Trong công việc phòng thủ hay ứng cứu sự cố thật, chính sự bình tĩnh và ghi chép đầy đủ dưới áp lực mới tạo ra khác biệt giữa xử lý tốt và làm mọi thứ tệ hơn.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Sa lầy vào một máy suốt 5–6 giờ liền chỉ vì tiếc công đã dò dẫm.** Tâm lý "chắc chỉ còn thiếu một chút nữa thôi" rất dễ cuốn bạn đi hết nửa thời gian thi, trong khi những điểm số quyết định lại đang nằm ở một máy khác dễ thở hơn nhiều.
+- **Cố vắt kiệt từng phút cuối để tấn công thêm mà quên dành giờ kiểm tra lại bằng chứng.** Chiếm được đủ điểm trên máy thi nhưng chụp thiếu một tấm ảnh `ipconfig`/`ifconfig` kèm mã `proof.txt`, hoặc không kịp hoàn thành báo cáo đúng hạn, vẫn dẫn tới kết quả trượt đáng tiếc.
+- **Thức khuya nhồi nhét thêm công cụ mới ngay đêm trước ngày thi.** Bước vào một ca làm việc căng thẳng kéo dài 24 giờ với cái đầu thiếu ngủ sẽ làm bạn đọc sót những chi tiết hiển nhiên nhất ngay trong kết quả `nmap` hay `sudo -l`.
+- **Hoảng loạn khi bế tắc rồi chuyển sang chạy công cụ tự động loạn xạ.** Khi không thấy đường vào ngay, việc ném hàng loạt script khai thác mù quáng chỉ làm bạn rối trí thêm; cách thoát bế tắc luôn là đứng dậy nghỉ 10 phút rồi quay lại đọc kỹ từng dòng kết quả liệt kê từ đầu.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Một máy làm bạn mất quá nhiều thời gian không tiến triển, nên làm gì?', options: ['Cố thêm tới khi xong', 'Chuyển sang máy khác và quay lại sau', 'Bỏ thi'], answer: 1, explain: 'Đặt giới hạn thời gian cho mỗi máy giúp không mắc kẹt và không bỏ lỡ điểm dễ hơn ở máy khác.' },
+    { q: 'Vì sao cần dành 4–6 giờ cuối cho báo cáo?', options: ['Báo cáo không quan trọng', 'Điểm phụ thuộc bằng chứng trong báo cáo; làm vội dễ trượt', 'Báo cáo tự viết'], answer: 1, explain: 'Chiếm được máy mà không chứng minh được trong báo cáo thì có thể không được tính.' },
+    { q: 'Gặp một ô tìm kiếm nghi dính SQL injection trong phòng thi, cách làm nào hợp lệ?', options: ['Chạy sqlmap cho nhanh', 'Khai thác bằng tay qua Burp Community hoặc curl', 'Dán request vào một chatbot AI để nhờ viết payload'], answer: 1, explain: 'sqlmap là công cụ khai thác tự động và trợ lý AI đều bị cấm trong kỳ thi; SQL injection phải làm tay.' },
+    { q: 'Ảnh bằng chứng cho proof.txt cần có gì?', options: ['Chỉ cần chuỗi mã', 'Nội dung file, địa chỉ IP và tài khoản đang dùng, trong cùng một shell tương tác', 'Ảnh màn hình đăng nhập'], answer: 1, explain: 'Thiếu IP hoặc đọc mã qua web shell thì mã có thể không được tính.' },
+    { q: 'Cách xử lý bế tắc hiệu quả nhất thường là gì?', options: ['Đổi công cụ mạnh hơn', 'Quay lại liệt kê và nghỉ ngắn', 'Thử ngẫu nhiên nhiều cách'], answer: 1, explain: 'Bế tắc thường do bỏ sót thông tin; liệt kê lại và nghỉ ngắn hiệu quả hơn thử mò.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Kỳ thi OSCP là cuộc đua đường dài về quản lý thời gian, năng lượng và tâm lý: hãy đặt giới hạn giờ cho từng máy và luôn giữ lại 4–6 giờ cuối cùng để rà soát bằng chứng, hoàn thiện báo cáo.
+- Chuẩn bị sẵn một checklist quy trình cố định cho mỗi máy (từ quét toàn bộ cổng, liệt kê từng dịch vụ tới kiểm tra leo thang) để có chỗ bám vững chắc những lúc mệt mỏi.
+- Đề có 3 máy đơn (60 điểm) và một cụm AD (40 điểm), làm trong 23 giờ 45 phút có giám thị; sqlmap, trình quét lỗ hổng hàng loạt và trợ lý AI bị cấm, Metasploit chỉ dùng trên một máy.
+- Khi rơi vào bế tắc, giải pháp hiệu quả nhất là rời màn hình nghỉ ngắn rồi quay lại bước liệt kê ban đầu; hãy ngủ thật đủ giấc trước ngày thi và luôn kiểm tra quy định mới nhất của OffSec.

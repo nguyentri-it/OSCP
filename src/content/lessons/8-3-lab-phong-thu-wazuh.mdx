@@ -1,0 +1,433 @@
+---
+title: "Lab phòng thủ: tự ra đòn, tự thấy log"
+code: "8.3"
+level: 8
+summary: "Thêm một máy giám sát Wazuh và Sysmon vào chính lab của bạn, chạy lại vài kỹ thuật ở Cấp 2–3 rồi tìm chúng trong log và cảnh báo. Biến phần phát hiện từ đọc để biết thành tự tay thấy."
+duration: "150 phút"
+updated: "2026-11-09"
+objectives:
+  - "Dựng được một máy Wazuh và cài agent lên một máy Linux, một máy Windows trong lab"
+  - "Cài Sysmon, bật log dòng lệnh và PowerShell, đẩy tất cả về Wazuh"
+  - "Tự chạy một kỹ thuật tấn công trong lab rồi tìm lại nó trong log và cảnh báo"
+  - "Viết một luật Wazuh riêng, thử bằng wazuh-logtest và bằng chính đòn tấn công"
+  - "Ráp các cảnh báo rời rạc thành một dòng thời gian như nhà phân tích SOC"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một người học võ chỉ tập ra đòn, chưa bao giờ đứng ở vị trí đỡ đòn, sẽ không hiểu đòn của mình trông thế nào trong mắt đối thủ. Suốt Cấp 2–3 bạn đã ra đòn từ Kali. Bài này cho bạn đứng ở phía bên kia: cùng một đòn, nhưng nhìn qua màn hình của đội phòng thủ.
+
+Bài 8.2 trả lời "kỹ thuật nào để lại dấu gì" trên giấy. Lab này để bạn **tự thấy** điều đó, và tự phát hiện ra chỗ nào bản đồ trên giấy sai với thực tế.
+
+## Kiến thức chính
+
+### Wazuh là gì
+
+**Wazuh** là một nền tảng giám sát an ninh mã nguồn mở, miễn phí, đủ để bạn học trọn vòng làm việc của một SIEM (hệ thống gom và phân tích log, bài 8.1) ngay trên máy cá nhân. Nó gồm:
+
+- **Agent** (phần mềm nhỏ cài lên từng máy cần giám sát): đọc log của máy đó (auth.log, auditd, Windows Event Log, Sysmon), theo dõi file bị thay đổi, rồi gửi về máy chủ Wazuh.
+- **Máy chủ (manager):** nhận log, đối chiếu với bộ luật có sẵn rồi sinh ra cảnh báo, kèm mức độ nghiêm trọng và mã ATT&CK (mã số của kỹ thuật tấn công trong danh mục MITRE ATT&CK, bài 6.1).
+- **Kho lưu (indexer)** để lưu và tìm kiếm log, và **giao diện (dashboard)** để bạn xem cảnh báo trên trình duyệt.
+
+Ở lab, gói cài "tất cả trong một" đặt cả ba phần lên cùng một máy ảo. Wazuh có sẵn hàng nghìn luật cho SSH, sudo, Windows, Sysmon và FIM (giám sát file nào vừa bị tạo hoặc sửa); bạn chỉ phải viết thêm luật cho những chuyện đặc thù của riêng mình.
+
+### Kiến trúc lab
+
+<ConceptMap
+  client:visible
+  title="Lab có thêm máy giám sát"
+  width={700}
+  height={330}
+  zones={[{ label: 'Mạng ảo cô lập (bài 0.2)', x: 10, y: 10, w: 680, h: 310 }]}
+  nodes={[
+    { id: 'kali', label: 'Kali', sub: 'ra đòn, xem dashboard', x: 110, y: 165, tone: 'accent', detail: 'Máy tấn công như mọi bài trước. Bạn cũng mở dashboard Wazuh bằng trình duyệt trên chính máy này.' },
+    { id: 'lin', label: 'Ubuntu mục tiêu', sub: 'agent Wazuh, auditd, FIM', x: 350, y: 75, w: 190, tone: 'warn', detail: 'Ubuntu Server LTS bản mới. Metasploitable 2 quá cũ để cài agent hiện đại, nên ta dựng một máy Linux mới và tự tạo vài lỗi cấu hình nhỏ để thực hành.' },
+    { id: 'win', label: 'Windows mục tiêu', sub: 'agent Wazuh, Sysmon', x: 350, y: 255, w: 190, tone: 'warn', detail: 'Máy Windows bản đánh giá ở bài 1.5. Thêm Sysmon, bật log dòng lệnh và Script Block Logging.' },
+    { id: 'wazuh', label: 'Máy Wazuh', sub: 'manager, indexer, dashboard', x: 580, y: 165, w: 170, detail: 'Ubuntu Server LTS, khoảng 4 vCPU, 8 GB RAM. Nhận log qua cổng 1514, cấp đăng ký agent qua 1515, dashboard ở 443.' },
+  ]}
+  edges={[
+    { from: 'kali', to: 'lin', label: 'ra đòn' },
+    { from: 'kali', to: 'win', label: 'ra đòn' },
+    { from: 'lin', to: 'wazuh', label: 'log' },
+    { from: 'win', to: 'wazuh', label: 'log' },
+    { from: 'kali', to: 'wazuh', label: 'dashboard', dashed: true },
+  ]}
+/>
+
+Máy Wazuh cần thêm một card NAT trong lúc cài để tải gói (giống Kali); cài xong có thể tháo. Không bật cả lab cùng lúc nếu máy yếu: một máy mục tiêu cộng máy Wazuh là đủ cho từng bài tập.
+
+### Dựng máy Wazuh
+
+Làm theo trang **Quickstart** trong tài liệu chính thức của Wazuh. Trang đó cho một lệnh tải script cài đặt từ `packages.wazuh.com` rồi chạy với tham số `-a` (cài tất cả trong một). Hai điều cần giữ:
+
+- **Đọc script trước khi chạy bằng quyền root** (bài 1.6). Tải về, mở ra xem, rồi mới chạy.
+- **Chép đúng lệnh cho phiên bản hiện hành** trên trang chính thức, không chép lại từ blog cũ.
+
+Cài xong, script in ra địa chỉ dashboard và mật khẩu của tài khoản `admin`:
+
+<Lenh noi="Terminal trên máy Wazuh vừa dựng, trong thư mục đã tải script cài đặt" muc="Cài trọn bộ Wazuh (manager, indexer, dashboard) lên một máy, theo đúng hướng dẫn Quickstart chính thức" quyen="Cần quyền root (sudo)">
+
+<Terminal title="Cuối quá trình cài Wazuh tất cả trong một (minh hoạ)">
+
+```text
+wazuh@giamsat:~$ sudo bash ./wazuh-install.sh -a
+INFO: --- Summary ---
+INFO: You can access the web interface https://<IP máy Wazuh>:443
+    User: admin
+    Password: ****************
+INFO: Installation finished.
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sudo bash ./wazuh-install.sh -a`: chạy script cài đặt (đã tải và đọc qua trước) bằng quyền root. `-a` nghĩa là cài **tất cả trong một** (manager, indexer, dashboard cùng trên máy này).
+
+</div>
+
+<div slot="doc">
+
+- Quá trình cài in rất nhiều dòng tiến trình; phần quan trọng nhất là khối `--- Summary ---` ở cuối.
+- `https://<IP máy Wazuh>:443`: địa chỉ để mở dashboard bằng trình duyệt — thay `<IP máy Wazuh>` bằng IP thật của máy này trong mạng lab.
+- `Password: ****************`: mật khẩu thật được in ra **đúng một lần** lúc cài. Lưu lại ngay vào trình quản lý mật khẩu; chạy lại script sẽ không hiện lại mật khẩu này.
+- `Installation finished.`: cài xong, không có lỗi. Thấy lỗi ở các dòng trên đó, đọc kỹ thông báo (thường do thiếu RAM hoặc cổng đã bị chiếm).
+
+</div>
+
+</Lenh>
+
+Lưu mật khẩu vào trình quản lý mật khẩu, đừng để trong file văn bản. Mở dashboard bằng trình duyệt trên Kali; trình duyệt sẽ cảnh báo chứng chỉ tự ký, ở lab chấp nhận được.
+
+### Cài agent lên máy mục tiêu
+
+Trên dashboard: **Agents → Deploy new agent**. Chọn hệ điều hành, điền IP máy Wazuh, đặt tên agent (ví dụ `ubuntu-muctieu`, `win-muctieu`). Dashboard sinh sẵn đúng lệnh cài cho máy đó; chép sang máy mục tiêu, chạy, rồi khởi động dịch vụ agent. Vài phút sau agent hiện trạng thái **Active**.
+
+**Trên Ubuntu mục tiêu**, thêm hai việc:
+
+1. Cài `auditd` và nạp bộ luật ở bài 8.2 (`/etc/audit/rules.d/50-phong-thu.rules`).
+2. Cho agent đọc log của auditd và theo dõi thư mục web theo thời gian thực, trong `/var/ossec/etc/ossec.conf` của agent:
+
+```xml
+<localfile>
+  <log_format>audit</log_format>
+  <location>/var/log/audit/audit.log</location>
+</localfile>
+
+<syscheck>
+  <directories realtime="yes" check_all="yes">/var/www/html</directories>
+</syscheck>
+```
+
+Khởi động lại agent: `sudo systemctl restart wazuh-agent`.
+
+**Trên Windows mục tiêu**, bật ba nguồn log mà bài 8.2 coi là rẻ mà lấp nhiều chỗ mù nhất. Chạy PowerShell bằng quyền quản trị:
+
+<Lenh noi="PowerShell chạy bằng quyền Administrator trên máy Windows mục tiêu" muc="Bật ghi nhận sự kiện tạo tiến trình kèm dòng lệnh (4688), nội dung script PowerShell (4104) và cài đặt Sysmon">
+
+<Terminal title="Bật log 4688 kèm dòng lệnh, PowerShell 4104 và cài Sysmon">
+
+```text
+# 1. Ghi sự kiện tạo tiến trình (4688) kèm dòng lệnh (tên mục con theo Windows tiếng Anh)
+auditpol /set /subcategory:"Process Creation" /success:enable
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit" /v ProcessCreationIncludeCmdLine_Enabled /t REG_DWORD /d 1 /f
+
+# 2. Ghi nội dung script PowerShell (4104)
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" /v EnableScriptBlockLogging /t REG_DWORD /d 1 /f
+
+# 3. Sysmon: tải từ trang Sysinternals của Microsoft, cấu hình từ dự án sysmon-config (SwiftOnSecurity)
+.\Sysmon64.exe -accepteula -i .\sysmonconfig-export.xml
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `auditpol /set /subcategory:"Process Creation" /success:enable`: bật ghi sự kiện 4688 mỗi khi có tiến trình mới khởi chạy.
+- `ProcessCreationIncludeCmdLine_Enabled`: khoá registry bắt buộc sự kiện 4688 phải ghi kèm toàn bộ tham số dòng lệnh.
+- `EnableScriptBlockLogging`: bật sự kiện 4104 để ghi lại toàn bộ nội dung mã PowerShell thực thi, kể cả khi được giải mã ngay trong bộ nhớ.
+- `.\Sysmon64.exe -accepteula -i .\sysmonconfig-export.xml`: cài đặt dịch vụ Sysmon với bộ lọc cấu hình chuẩn của cộng đồng.
+
+</div>
+
+<div slot="doc">
+
+- Cả hai lệnh `auditpol` và `reg add` báo `The command was successfully executed` / `The operation completed successfully` nghĩa là đã bật ghi log thành công.
+- Khi `Sysmon64.exe` cài xong sẽ báo dịch vụ `Sysmon64` đã được đăng ký và khởi chạy; có thể kiểm tra lại bằng `Get-Service Sysmon64`.
+
+</div>
+
+</Lenh>
+
+Ở lab, `auditpol` và `reg add` là đủ; ở doanh nghiệp, cả hai thiết lập đầu được đẩy bằng Group Policy. Tiếp theo, cho agent Windows đọc thêm hai kênh log, trong `C:\Program Files (x86)\ossec-agent\ossec.conf`:
+
+```xml
+<localfile>
+  <location>Microsoft-Windows-Sysmon/Operational</location>
+  <log_format>eventchannel</log_format>
+</localfile>
+
+<localfile>
+  <location>Microsoft-Windows-PowerShell/Operational</location>
+  <log_format>eventchannel</log_format>
+</localfile>
+```
+
+Khởi động lại agent: `Restart-Service -Name wazuh`.
+
+<Callout type="warn">
+Mọi bài tập dưới đây chỉ chạy từ Kali vào máy mục tiêu **trong lab của bạn**. Tài khoản mật khẩu yếu và cấu hình sudo sai mà bạn tạo ra chỉ được tồn tại trên máy lab, và nên xoá sau khi học. Chụp snapshot mọi máy trước khi bắt đầu.
+</Callout>
+
+## Bốn bài tập: ra đòn rồi đỡ đòn
+
+<LabBrief
+  ten="Lab SOC thực chiến: Ra đòn từ Kali, bắt log Sysmon & Auditd trên máy chủ Wazuh"
+  muctieu="Thực hiện tấn công brute-force SSH và leo quyền GTFOBins từ Kali, sau đó truy vấn Wazuh Dashboard để bóc tách cảnh báo sự kiện và viết luật phát hiện XML tùy biến"
+  may="Wazuh SIEM Server"
+  ip="10.10.14.50"
+  kali="10.10.14.7"
+  thoigian="60 phút"
+  xong="Tìm thấy cảnh báo bruteforce luật 5716 trên Wazuh Dashboard, phát hiện sự kiện auditd leo quyền root qua find, và viết luật 100100 vượt qua kiểm tra wazuh-logtest"
+>
+
+1. Kiểm tra trạng thái kết nối agent của 2 máy mục tiêu Ubuntu và Windows trên Wazuh Dashboard.
+2. Từ Kali, chạy hydra tấn công brute-force SSH vào user hocvien trên máy Ubuntu mục tiêu.
+3. Mở Wazuh Dashboard (mục Threat Hunting), lọc theo agent và phân tích các bản ghi xác thực thất bại liên tiếp (luật 5716 và 5715).
+4. Khai thác leo quyền bằng GTFOBins `sudo find . -exec /bin/sh \; -quit` và tìm dấu vết trong log auditd.
+5. Viết luật XML tùy biến trong `/var/ossec/etc/rules/local_rules.xml` và kiểm thử bằng `wazuh-logtest`.
+
+<div slot="goiy1">
+  Để lọc cảnh báo SSH brute-force trên Wazuh Dashboard, hãy dùng thanh tìm kiếm với cú pháp: <code>rule.groups: "authentication_failed" AND agent.name: "ubuntu-muctieu"</code>.
+</div>
+
+<div slot="goiy2">
+  Quy tắc viết luật Wazuh: Sử dụng ID từ <code>100000</code> trở lên cho luật tự định nghĩa. Kiểm tra cú pháp trước khi nạp vào hệ thống bằng lệnh <code>sudo /var/ossec/bin/wazuh-logtest</code>.
+</div>
+
+<div slot="loigiai">
+  <p>Cấu hình luật phát hiện shell root sinh ra từ sudo trong <code>local_rules.xml</code>:</p>
+
+```xml
+<group name="local,linux,privesc,">
+  <rule id="100100" level="12">
+    <if_group>audit</if_group>
+    <field name="audit.key">root_tu_nguoi_dung</field>
+    <description>Phát hiện tiến trình con sinh ra với EUID=0 từ tài khoản thường: Nghi vấn leo quyền</description>
+    <mitre><id>T1548.003</id></mitre>
+  </rule>
+</group>
+```
+</div>
+
+<div slot="kiemtra">
+  <ul>
+    <li><strong>Wazuh Logtest:</strong> Lệnh <code>wazuh-logtest</code> in ra <code>**Phase 3: Completed filtering (rules). Rule id: '100100'</code>.</li>
+    <li><strong>Dashboard:</strong> Xuất hiện cảnh báo mức Level 12 kèm ánh xạ MITRE ATT&CK T1548.003 khi thực hiện lệnh exploit.</li>
+  </ul>
+</div>
+
+</LabBrief>
+
+Mỗi bài có ba phần: **ra đòn** (từ Kali, đúng kỹ thuật ở bài đã học), **tìm lại** (trên dashboard Wazuh), và **câu hỏi** để tự trả lời. Số hiệu luật Wazuh nêu dưới đây là của bộ luật mặc định và có thể khác đôi chút giữa các phiên bản; tìm theo mô tả nếu không khớp.
+
+### Bài 1: Dò mật khẩu SSH (bài 2.6)
+
+**Chuẩn bị trên Ubuntu mục tiêu:** tạo người dùng `hocvien` với một mật khẩu yếu nằm trong rockyou, và cho phép SSH đăng nhập bằng mật khẩu (`PasswordAuthentication yes` trong `/etc/ssh/sshd_config`).
+
+**Ra đòn:** từ Kali, dùng `hydra` thử một danh sách khoảng 50 mật khẩu cho `hocvien` qua SSH, như ở bài 2.6.
+
+**Tìm lại:** trên dashboard vào **Threat Hunting**, lọc theo agent `ubuntu-muctieu` và nhóm luật `authentication_failed`. Bạn sẽ thấy cảnh báo "sshd: authentication failed" (luật 5716) lặp lại, một cảnh báo tổng hợp kiểu "multiple authentication failures" khi số lần vượt ngưỡng, và nếu đoán trúng thì "sshd: authentication success" (5715) từ cùng IP.
+
+**Câu hỏi:** Có bao nhiêu lần thất bại trước lần thành công? Cảnh báo tổng hợp xuất hiện sau lần thất bại thứ mấy? Nếu kẻ tấn công thử chậm, mỗi 10 phút một lần, cảnh báo đó có còn kêu không?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+Luật tổng hợp của Wazuh đếm số lần trong một cửa sổ thời gian. Thử chậm thì không chạm ngưỡng trong cửa sổ đó: luật im lặng, nhưng từng cảnh báo 5716 vẫn còn. Đó là lý do cần thêm luật "thành công ngay sau chuỗi thất bại" và luật gom theo nguồn trong cửa sổ dài hơn (bài 8.2). Biện pháp gốc vẫn là tắt đăng nhập SSH bằng mật khẩu.
+
+</details>
+
+### Bài 2: Leo thang qua sudo (bài 3.1) và luật Wazuh đầu tiên của bạn
+
+**Chuẩn bị:** thêm một dòng cấu hình sai vào sudoers bằng `sudo visudo -f /etc/sudoers.d/hocvien`:
+
+```text
+hocvien ALL=(root) NOPASSWD: /usr/bin/find
+```
+
+**Ra đòn:** đăng nhập bằng `hocvien` (vừa dò được ở bài 1), chạy `sudo -l`, rồi leo thang bằng đúng kỹ thuật GTFOBins với `find` ở bài 3.1. Chạy `id` để xác nhận đã là root.
+
+**Tìm lại:** Wazuh có sẵn cảnh báo cho lệnh sudo lên root, kèm dòng lệnh `/usr/bin/find` đọc từ auth.log. Nhưng shell root bật ra từ **bên trong** `find` thì không nằm trong auth.log. Nó nằm trong log auditd, dưới khoá `root_tu_nguoi_dung`. Tìm sự kiện auditd có `audit.key: root_tu_nguoi_dung`: bạn sẽ thấy `audit.exe` là một shell, `audit.euid` là 0, còn `audit.auid` là số hiệu của `hocvien`.
+
+**Viết luật riêng.** Trên máy Wazuh, thêm vào `/var/ossec/etc/rules/local_rules.xml`:
+
+```xml
+<group name="local,audit,privilege_escalation,">
+  <rule id="100100" level="12">
+    <if_group>audit</if_group>
+    <field name="audit.key">root_tu_nguoi_dung</field>
+    <field name="audit.exe" type="pcre2">^/usr/bin/(dash|bash|sh)$</field>
+    <description>Shell chạy bằng root do người dùng auid=$(audit.auid) khởi phát: nghi leo thang qua sudo/SUID</description>
+    <mitre>
+      <id>T1548</id>
+    </mitre>
+  </rule>
+</group>
+```
+
+Số hiệu từ 100000 trở lên dành cho luật tự viết. Trước khi khởi động lại, thử luật bằng công cụ có sẵn: chạy `sudo /var/ossec/bin/wazuh-logtest`, dán vào một dòng log auditd lấy từ máy mục tiêu, và xem luật nào khớp. Khớp đúng `100100` rồi mới `sudo systemctl restart wazuh-manager`, sau đó ra đòn lại lần nữa.
+
+**Câu hỏi:** Nếu chỉ có auth.log mà không có auditd, bạn biết được những gì và không biết được những gì? Luật của bạn có kêu khi một quản trị viên hợp lệ chạy `sudo -i` không? Như vậy là đúng hay là báo động giả?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+Chỉ có auth.log: bạn biết `hocvien` đã chạy `sudo find`, nhưng không biết `find` đã mở một shell. Thấy `sudo find` thôi thì rất dễ bỏ qua như một lệnh tìm file bình thường. `sudo -i` cũng sinh ra shell root do người dùng thường khởi phát, nên luật sẽ kêu.
+
+Đó không phải sai: quản trị viên mở shell root cũng là sự kiện đáng ghi. Cách tinh chỉnh hợp lý là hạ mức độ khi cha là `sudo` và người dùng thuộc nhóm quản trị, giữ mức cao khi cha là `find`, `vim`, `less`... (bài 8.2, luật số 3).
+
+</details>
+
+### Bài 3: File lạ xuất hiện trong thư mục web (bài 2.8)
+
+**Chuẩn bị:** cài Apache và PHP trên Ubuntu mục tiêu, tạo thư mục `/var/www/html/uploads`.
+
+**Ra đòn (mô phỏng an toàn):** thay vì một web shell thật, giả lập bước "tải file lên" bằng cách tạo một file PHP vô hại trong thư mục upload:
+
+```bash
+echo '<?php echo "kiem tra FIM"; ?>' | sudo tee /var/www/html/uploads/kiemtra.php
+```
+
+Rồi từ Kali gọi `curl http://<IP Ubuntu>/uploads/kiemtra.php`.
+
+**Tìm lại:** vì thư mục được theo dõi `realtime`, Wazuh sinh cảnh báo "File added to the system" (luật 554) gần như ngay lập tức, kèm đường dẫn, chủ sở hữu, quyền, và mã băm. Tìm thêm request tới `kiemtra.php` trong access.log của Apache (nếu bạn đã cho agent đọc nó).
+
+**Câu hỏi:** Một file `.php` mới trong thư mục upload có bao giờ hợp lệ không? Nếu ứng dụng chỉ cho tải ảnh, bạn nên đặt mức cảnh báo nào cho sự kiện này? Biện pháp nào ở bài 2.8 khiến file này dù có mặt cũng không chạy được?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+Với một thư mục chỉ chứa ảnh, file `.php` mới là cảnh báo mức cao, không cần chờ nó bị gọi. Biện pháp gốc ở bài 2.8: lưu file tải lên ngoài thư mục web, đổi tên, và cấu hình máy chủ web **không thực thi** script trong thư mục upload. FIM là lớp phát hiện; cấu hình đúng là lớp phòng ngừa. Cần cả hai.
+
+</details>
+
+### Bài 4: Di chuyển ngang vào Windows bằng WMI (bài 3.9)
+
+**Chuẩn bị:** trên Windows mục tiêu, có một tài khoản quản trị cục bộ mà bạn biết mật khẩu (tài khoản lab), tường lửa cho phép quản trị từ xa trong mạng lab.
+
+**Ra đòn:** từ Kali, dùng `impacket-wmiexec` với tài khoản đó, như ở bài 3.9, và chạy vài lệnh liệt kê (`whoami`, `hostname`, `ipconfig`).
+
+**Tìm lại:** tìm sự kiện Sysmon 1 (tạo tiến trình) trên `win-muctieu` có `win.eventdata.parentImage` là `WmiPrvSE.exe`. Đọc trường `commandLine`: bạn sẽ thấy dấu riêng của wmiexec, lệnh của bạn được bọc trong `cmd.exe /Q /c` và kết quả bị ghi tạm vào chia sẻ `ADMIN$`. Tìm thêm 4624 kiểu 3 từ IP của Kali ngay trước đó.
+
+**Viết luật riêng** bám vào cơ chế chứ không bám vào công cụ (luật số 4 ở bài 8.2), thêm vào `local_rules.xml`:
+
+```xml
+<group name="local,windows,sysmon,lateral_movement,">
+  <rule id="100110" level="10">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.parentImage" type="pcre2">(?i)(wmiprvse|wsmprovhost|mmc)\.exe$</field>
+    <field name="win.eventdata.image" type="pcre2">(?i)(cmd|powershell|pwsh)\.exe$</field>
+    <description>Shell sinh ra từ WMI/WinRM/DCOM trên $(win.system.computer): nghi di chuyển ngang</description>
+    <mitre>
+      <id>T1047</id>
+      <id>T1021.006</id>
+    </mitre>
+  </rule>
+</group>
+```
+
+Thử lại bằng `evil-winrm` (WinRM). Trong phiên đó chạy `Get-Process` (một lệnh PowerShell), rồi `cmd /c hostname`. Luật kêu ở lần nào? Cha của tiến trình lần này là gì?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+Lệnh PowerShell như `Get-Process` chạy **ngay bên trong** `wsmprovhost.exe`, không sinh tiến trình con nào, nên luật im lặng. `cmd /c hostname` thì sinh ra `cmd.exe` với cha là `wsmprovhost.exe`, và luật kêu.
+
+Đây là một chỗ mù thật mà chỉ lab mới cho bạn thấy: với WinRM, phần lớn hoạt động chỉ hiện ra trong **4104** (nội dung script PowerShell) và trong sự kiện kênh WinRM, không phải trong cây tiến trình. Bổ sung: tìm 4104 của phiên đó trên dashboard.
+
+Nếu luật không kêu cả với `cmd /c`, kiểm tra lần lượt: Sysmon đã chạy chưa (`Get-Service Sysmon64`), agent đã đọc kênh Sysmon chưa (sự kiện Sysmon có về dashboard không), rồi mới tới luật. Thứ tự này chính là ba câu hỏi ở bài 8.2.
+
+</details>
+
+## Ráp thành một dòng thời gian
+
+Cảnh báo rời rạc chưa phải là câu chuyện. Nhà phân tích ghép chúng theo thời gian, theo người dùng và theo IP nguồn. Sau bài 1 và bài 2, dòng thời gian trên Ubuntu mục tiêu trông như sau (minh hoạ):
+
+| Giờ | Nguồn | Sự kiện | Ý nghĩa |
+|---|---|---|---|
+| 09:14:02 → 09:15:40 | auth.log, luật 5716 | 41 lần SSH sai mật khẩu cho `hocvien` từ 10.10.14.7 | Dò mật khẩu trực tuyến |
+| 09:15:47 | auth.log, luật 5715 | `hocvien` đăng nhập SSH thành công từ 10.10.14.7 | Mật khẩu đã bị đoán trúng |
+| 09:16:30 | auth.log | `hocvien` chạy `sudo /usr/bin/find` | Chuẩn bị leo thang |
+| 09:16:31 | auditd, luật 100100 | `/usr/bin/dash` chạy với euid=0, auid=`hocvien` | Đã có shell root |
+
+Bốn dòng này chính là nửa đầu của bài capstone 5.1, nhìn từ phía phòng thủ. Câu hỏi cho đội ứng phó (bài 8.7): ở dòng thứ hai đã đủ để khoá tài khoản và chặn IP chưa? Nếu có cơ chế ngăn chặn tự động duyệt trước (bài 8.4), dòng thứ ba và thứ tư đã không xảy ra.
+
+### Bước tiếp theo: thử có hệ thống
+
+Khi đã quen tay, chuyển từ "tự ra đòn bằng tay" sang **Atomic Red Team** (bài 8.2): mỗi bài thử gắn với một mã ATT&CK, có sẵn lệnh dọn dẹp.
+
+Cài theo hướng dẫn chính thức của dự án, đọc script trước khi chạy, chỉ chạy trên máy lab, và luôn chạy bước dọn dẹp sau mỗi bài thử. Mỗi bài thử chạy xong, cập nhật trạng thái tương ứng trong bản đồ phát hiện của bạn.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Môi trường lab bạn vừa dựng chính là một phòng trực SOC thu nhỏ. Qua bốn bài tập thực hành, bạn thấy rõ toàn bộ quy trình vận hành thực tế: <strong>gom log từ nhiều tầng</strong> (`auth.log`, `auditd`, giám sát tệp FIM, Windows Event Log, Sysmon) về một đầu mối tập trung, và chủ động <strong>bật những nguồn log mà hệ điều hành tắt mặc định</strong> (như `auditd`, sự kiện 4688 kèm dòng lệnh, PowerShell 4104 và Sysmon — thiếu chúng thì các đòn leo thang `sudo find` hay di chuyển ngang qua WinRM gần như tàng hình).
+
+Khi viết luật phát hiện riêng, hãy luôn <strong>bám vào cơ chế hệ thống, kiểm tra trước bằng `wazuh-logtest` rồi mới bắn đòn tấn công thật</strong> để xác nhận cảnh báo nổ. Sau cùng, hãy tập thói quen <strong>ráp các cảnh báo lẻ thành một dòng thời gian hoàn chỉnh</strong> theo người dùng và IP nguồn, đồng thời nhớ rằng phòng ngừa (tắt SSH mật khẩu, siết `sudoers`, chặn thực thi trong thư mục upload) luôn phải đi trước phát hiện.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Dựng lab phòng thủ"
+  storageKey="defense-lab"
+  items={[
+    { label: 'Máy Wazuh đã cài xong, đăng nhập được dashboard từ Kali', hint: 'Lưu mật khẩu admin vào trình quản lý mật khẩu' },
+    { label: 'Agent trên Ubuntu mục tiêu ở trạng thái Active' },
+    { label: 'auditd chạy với bộ luật ở bài 8.2; agent đọc /var/log/audit/audit.log' },
+    { label: 'FIM theo dõi /var/www/html theo thời gian thực' },
+    { label: 'Agent trên Windows mục tiêu ở trạng thái Active' },
+    { label: 'Windows ghi 4688 kèm dòng lệnh và 4104' },
+    { label: 'Sysmon đã cài với cấu hình cộng đồng; sự kiện Sysmon về tới dashboard' },
+    { label: 'Bài 1: thấy chuỗi 5716 và 5715 từ IP Kali' },
+    { label: 'Bài 2: luật 100100 khớp trong wazuh-logtest và kêu khi ra đòn' },
+    { label: 'Bài 3: cảnh báo file mới trong thư mục upload' },
+    { label: 'Bài 4: luật 100110 kêu với wmiexec; thấy được phiên evil-winrm qua 4104', hint: 'Lệnh PowerShell trong WinRM không sinh tiến trình con' },
+    { label: 'Đã xoá tài khoản mật khẩu yếu và dòng sudoers sai sau khi học xong' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Nhìn màn hình dashboard Wazuh trống trơn rồi vội mừng là "không có ai tấn công".** Rất có thể dịch vụ `wazuh-agent` trên máy mục tiêu đang dừng hoặc chưa được cấu hình đọc đúng tệp log cần thiết.
+- **Cài đặt Sysmon trên Windows xong xuôi nhưng quên khai báo kênh `Microsoft-Windows-Sysmon/Operational` trong `ossec.conf` của agent.** Sự kiện vẫn được Sysmon ghi đầy đủ vào Event Viewer cục bộ của máy Windows, nhưng không một dòng nào được gửi về máy chủ Wazuh.
+- **Sửa tệp `local_rules.xml` rồi bấm khởi động lại `wazuh-manager` ngay mà không chạy `wazuh-logtest`.** Chỉ một thẻ XML đóng sai cú pháp cũng đủ làm toàn bộ dịch vụ phân tích của SIEM ngừng hoạt động.
+- **Viết luật chỉ bắt đúng chuỗi tham số `cmd.exe /Q /c` của riêng `impacket-wmiexec`.** Khi kẻ tấn công chuyển sang công cụ khác hoặc gõ lệnh qua WinRM, luật lập tức bị qua mặt; hãy bắt mối quan hệ tiến trình cha (`WmiPrvSE.exe`, `wsmprovhost.exe`) sinh ra tiến trình con kết hợp giám sát sự kiện 4104.
+- **Giữ nguyên tài khoản mật khẩu yếu và dòng cấu hình `sudoers` cố tình làm sai trên máy ảo sau khi kết thúc bài lab.** Nếu sau đó bạn chuyển mạng máy ảo sang chế độ Bridged hoặc tái sử dụng máy đó cho việc khác, chính lỗ hổng tự tạo sẽ biến máy bạn thành mục tiêu thật.
+- **Chỉ đọc từng cảnh báo rời rạc mà không xâu chuỗi theo trục thời gian và địa chỉ IP.** Một sự kiện "đăng nhập SSH thành công" nhìn riêng lẻ hoàn toàn vô hại, nhưng khi đặt ngay sau 41 lần đăng nhập thất bại từ cùng một IP và nối tiếp bằng sự kiện `execve` lên root thì đó là một cuộc xâm nhập rõ mười mươi.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Ở bài tập 2, vì sao chỉ có auth.log thì chưa đủ để biết đã bị leo thang?', options: ['auth.log không ghi lệnh sudo', 'auth.log ghi được dòng sudo find, nhưng shell root bật ra từ bên trong find chỉ auditd (hoặc EDR) mới thấy', 'auth.log bị xoá sau mỗi lần sudo'], answer: 1, explain: 'sudo find trông như một lệnh tìm file bình thường. Dấu vết quyết định là shell chạy với euid=0 do hocvien khởi phát, nằm trong log auditd.' },
+    { q: 'Trước khi khởi động lại wazuh-manager với luật mới, nên làm gì?', options: ['Không cần làm gì', 'Thử luật bằng wazuh-logtest với một dòng log thật để xem có khớp đúng không', 'Xoá hết luật mặc định'], answer: 1, explain: 'wazuh-logtest cho thấy dòng log được giải mã thế nào và luật nào khớp, tránh luật sai hoặc lỗi cú pháp làm manager không chạy.' },
+    { q: 'Luật "cha là WmiPrvSE.exe hoặc wsmprovhost.exe, con là cmd hoặc powershell" có ưu điểm gì so với luật khớp chuỗi "cmd.exe /Q /c"?', options: ['Chạy nhanh hơn', 'Bám vào cơ chế quản trị từ xa nên không phụ thuộc một công cụ cụ thể', 'Không có báo động giả và bắt được mọi lệnh qua WinRM'], answer: 1, explain: 'Chuỗi /Q /c là dấu của một công cụ cụ thể. Cơ chế cha-con thì công cụ nào cũng phải đi qua. Nhưng nó vẫn có chỗ mù: lệnh PowerShell chạy trong phiên WinRM không sinh tiến trình con, phải dựa vào 4104.' },
+    { q: 'Dashboard không có sự kiện Sysmon nào từ máy Windows. Nên kiểm tra theo thứ tự nào?', options: ['Viết lại luật trước', 'Sysmon có chạy không → agent có đọc kênh Sysmon không → sự kiện có về dashboard không → rồi mới tới luật', 'Cài lại Wazuh'], answer: 1, explain: 'Đúng thứ tự ba câu hỏi ở bài 8.2: có dấu vết, có nguồn log, rồi mới tới luật.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Một phòng lab phòng thủ hoàn chỉnh kết hợp các máy mục tiêu sẵn có với máy chủ Wazuh cùng các nguồn log chi tiết (`auditd`, FIM, Sysmon, sự kiện 4688 kèm dòng lệnh và PowerShell 4104).
+- Phương pháp luyện tập hiệu quả nhất là tự bắn đòn tấn công từ Kali, sang màn hình Wazuh tìm lại dấu vết, rồi tự hỏi "nếu tắt bớt một nguồn log thì mình sẽ mù ở bước nào".
+- Khi tự viết luật cảnh báo mới, hãy bám vào cơ chế hệ thống, kiểm tra trước bằng `wazuh-logtest` rồi mới kiểm chứng lại bằng đòn tấn công thực tế.
+- Luôn xâu chuỗi các cảnh báo rời rạc thành một dòng thời gian hoàn chỉnh để nhìn thấy toàn bộ kịch bản xâm nhập, và nhớ xóa sạch các cấu hình cố tình làm yếu sau khi kết thúc buổi học.

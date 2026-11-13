@@ -1,0 +1,252 @@
+---
+title: "Chuỗi cung ứng phần mềm, CI/CD và container"
+code: "7.7"
+level: 7
+summary: "Bạn có thể khoá kỹ mọi cửa, rồi tự tay cài vào một bản cập nhật đã bị nhiễm từ nhà cung cấp. Bài này đi qua bốn đường tấn công qua chuỗi cung ứng, các biện pháp cho mọi doanh nghiệp, rồi phần dành cho đơn vị tự viết phần mềm: gói mã nguồn mở, CI/CD, container và Kubernetes, kể cả chiêu tận dụng chính trợ lý AI của lập trình viên."
+duration: "95 phút"
+updated: "2026-11-09"
+objectives:
+  - "Nhận diện bốn đường tấn công qua chuỗi cung ứng qua các vụ việc thật"
+  - "Áp biện pháp cho mọi doanh nghiệp: coi phần mềm có quyền cao của bên thứ ba như Tier 0, giới hạn quyền nhà cung cấp, cập nhật theo vòng"
+  - "Với đơn vị viết phần mềm: khoá phiên bản, độ trễ nhận bản mới, chặn script cài đặt, secret scanning, hardening CI/CD"
+  - "Hardening container và Kubernetes ở mức nền tảng, và thử Pod Security Admission trong lab"
+  - "Hiểu vai trò của AI: tên gói bịa ra, mã độc dùng trợ lý AI trên máy lập trình viên"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một nhà hàng giữ bếp sạch tuyệt đối, kiểm từng nhân viên ra vào. Nhưng bột mì đến từ một nhà máy, rau từ một trang trại, gia vị từ một xưởng khác. Chỉ cần một bao bột nhiễm bẩn ở nhà máy là ba trăm nhà hàng cùng lúc có khách ngộ độc, dù bếp của họ không có lỗi gì.
+
+Phần mềm bây giờ cũng vậy. Một ứng dụng web nhỏ có thể kéo theo hàng trăm thư viện mã nguồn mở. Một công ty không tự viết dòng mã nào vẫn chạy phần mềm của hàng chục nhà cung cấp, nhiều cái chạy với quyền cao nhất trên mọi máy.
+
+Kẻ tấn công đánh vào một mắt xích phía trên là vào được rất nhiều nạn nhân phía dưới. Cách tấn công này gọi là tấn công **chuỗi cung ứng** (supply chain): không đánh thẳng vào bạn, mà đánh vào thứ bạn mượn hoặc mua từ bên ngoài.
+
+## Kiến thức chính
+
+### Bốn đường vào qua chuỗi cung ứng
+
+| Đường vào | Vụ việc thật | Bài học |
+|---|---|---|
+| **Bản cập nhật của nhà cung cấp phần mềm** | SolarWinds Orion (2020): kẻ tấn công cài mã độc vào chính bản cập nhật chính thức, nên hàng nghìn khách hàng tự tải về. 3CX (2023): ứng dụng gọi điện bị cài mã độc; nguồn gốc lại là một vụ chuỗi cung ứng khác nhắm vào máy của một nhân viên 3CX | Bản cập nhật có chữ ký hợp lệ vẫn có thể chứa mã độc |
+| **Công cụ quản trị từ xa của nhà cung cấp dịch vụ IT** | Kaseya VSA (7/2021): nhóm đòi tiền chuộc chiếm công cụ quản trị từ xa mà các công ty dịch vụ IT dùng, rồi từ đó mã hoá dữ liệu của khoảng 1.500 doanh nghiệp khách hàng | Công cụ của bên thứ ba chạy quyền cao trên mọi máy phải được bảo vệ như tài sản trọng yếu nhất (Tier 0, bài 7.2) |
+| **Gói mã nguồn mở** (thư viện lập trình viên tải về dùng chung, ví dụ từ kho npm) | xz-utils (3/2024): một người đóng góp âm thầm gây dựng lòng tin suốt hai năm rồi cài cửa hậu (lối vào bí mật) vào thư viện nén mà dịch vụ SSH trên một số bản Linux dùng. Tháng 9/2025: nhiều gói npm phổ biến bị chiếm qua email lừa người duy trì; cùng tháng, sâu Shai-Hulud tự lây qua hàng trăm gói npm bằng cách đánh cắp token rồi tự phát hành bản nhiễm của các gói khác | Gói phổ biến, người duy trì thật, vẫn có thể bị chiếm |
+| **Hệ thống CI/CD** (dây chuyền tự động kiểm tra, đóng gói và phát hành phần mềm) | tj-actions/changed-files (3/2025): một công cụ GitHub Action được hàng chục nghìn kho mã dùng bị chiếm; các nhãn phiên bản (tag) bị trỏ sang đoạn mã in toàn bộ bí mật của dây chuyền ra màn hình log | Tag có thể bị đổi hướng lén; mật khẩu và khoá trong CI là mục tiêu |
+
+**AI thay đổi gì?** Hai chiêu mới:
+
+- **Tên gói bịa ra** (*slopsquatting*, bài 6.4). Trợ lý lập trình (AI viết code) đôi khi gợi ý cài một gói không hề tồn tại. Các nghiên cứu năm 2024–2025 cho thấy tỉ lệ tên bịa này đáng kể và lặp lại giữa các lần hỏi. Kẻ gian đăng ký sẵn đúng những cái tên đó với mã độc bên trong.
+- **Mã độc dùng chính trợ lý AI trên máy nạn nhân.** Tháng 8/2025, các bản độc của gói Nx (công cụ build phổ biến) có script chạy lúc cài. Script này gọi các công cụ AI dòng lệnh đã cài sẵn trên máy lập trình viên, nhờ chúng lục tìm file chứa khoá và ví tiền mã hoá, rồi đẩy kết quả lên một kho GitHub công khai. Máy của lập trình viên có sẵn khoá đám mây, token Git và một trợ lý AI được phép đọc mọi file: một mục tiêu rất béo bở.
+
+### Cho mọi doanh nghiệp, kể cả không viết phần mềm
+
+- **Liệt kê phần mềm của bên thứ ba đang chạy với quyền cao:** công cụ quản trị từ xa, phần mềm sao lưu, agent EDR (phần mềm bảo vệ cài trên từng máy), công cụ triển khai phần mềm. Chúng chạy với quyền cao nhất (SYSTEM trên Windows, root trên Linux) trên mọi máy, nên chiếm được chúng là chiếm được tất cả. Hãy đối xử với chúng như **Tier 0** (tầng bảo vệ cao nhất, bài 7.2): bảng điều khiển có MFA chống phishing, chỉ truy cập từ máy quản trị riêng, log gửi về SIEM.
+- **Quyền tối thiểu cho nhà cung cấp:** mỗi nhà cung cấp một tài khoản riêng, có MFA, chỉ bật khi đang có việc, có log phiên. Hết hợp đồng thì thu hồi trong ngày (bài 6.3).
+- **Cập nhật theo vòng** (bài 7.1), kể cả bản cập nhật của nhà cung cấp uy tín. Sau mỗi đợt, để EDR và SOC để ý hành vi lạ của chính phần mềm vừa cập nhật.
+- **Tiện ích trình duyệt cũng là chuỗi cung ứng.** Một tiện ích đáng tin có thể bị chiếm và đẩy bản cập nhật đánh cắp phiên đăng nhập. Chỉ cho cài tiện ích trong danh sách đã duyệt.
+- **Điều khoản hợp đồng:** nhà cung cấp phải báo sự cố trong thời hạn rõ ràng, cung cấp SBOM (bài 7.1) khi được yêu cầu, và cho biết họ bảo vệ hệ thống phát hành thế nào.
+
+### Cho đơn vị tự viết phần mềm: phụ thuộc
+
+1. **Khoá phiên bản.** Lưu file lockfile (danh sách ghi chính xác từng thư viện và phiên bản đang dùng) vào kho mã, và khi cài trong CI thì cài đúng theo lockfile: `npm ci` (không phải `npm install`), `pip install --require-hashes -r requirements.txt`.
+2. **Chờ một thời gian trước khi nhận bản mới.** Phần lớn phiên bản độc bị phát hiện và gỡ trong vài giờ tới vài ngày, nên đừng tự động nhận một phiên bản vừa phát hành sáng nay. Renovate có tuỳ chọn `minimumReleaseAge`, pnpm có `minimumReleaseAge`, Dependabot có tuỳ chọn chờ tương tự.
+3. **Chặn script tự chạy khi cài.** Một gói có thể kèm script `postinstall` tự chạy ngay khi bạn cài; script này chạy với quyền của bạn, trên máy có khoá đám mây và token Git. Đặt `ignore-scripts=true` trong `.npmrc` của dự án và chỉ cho phép script của vài gói đã duyệt. Từ bản 10, pnpm mặc định không chạy script của phụ thuộc.
+4. **Kho trung gian:** CI và máy lập trình viên lấy gói qua một kho nội bộ (proxy registry) đứng giữa, để chặn gói chưa duyệt và giữ bản sao phòng khi gói gốc bị gỡ.
+5. **Kiểm tra gói trước khi thêm**, nhất là gói do trợ lý AI gợi ý: có thật không, tạo từ bao giờ, ai duy trì.
+
+```bash
+npm view ten-goi-ai-goi-y name time.created maintainers repository.url
+# npm ERR! 404 Not Found      ← gói không tồn tại: đừng tạo, đừng cài, tìm gói chính thức
+```
+
+Tự đi qua quyết định trước khi thêm một gói:
+
+<DecisionTree
+  client:visible
+  title="Một gói mới sắp được thêm vào dự án"
+  start="exists"
+  nodes={{
+    exists: { q: 'Gói có thật trên kho chính thức, đúng chính tả tên bạn định dùng, và đúng là gói mà tài liệu của dự án gốc chỉ tới không?', options: [{ label: 'Có', next: 'age' }, { label: 'Không, hoặc không chắc', next: 'stop' }] },
+    stop: { result: 'Dừng. Tên do AI bịa hoặc gõ nhầm là đúng chỗ kẻ gian chờ sẵn. Tìm gói từ tài liệu chính thức của dự án, không từ gợi ý của trợ lý.', tone: 'bad' },
+    age: { q: 'Gói, hoặc phiên bản bạn định cài, mới xuất hiện trong vài ngày gần đây?', options: [{ label: 'Có', next: 'wait' }, { label: 'Không', next: 'scripts' }] },
+    wait: { result: 'Chờ. Đặt độ trễ nhận bản mới vài ngày; phần lớn phiên bản độc bị phát hiện và gỡ trong khoảng đó. Nếu gấp, đọc mã và script cài đặt trước khi dùng.', tone: 'warn' },
+    scripts: { q: 'Gói có script chạy lúc cài (postinstall, setup.py chạy mã) không?', options: [{ label: 'Có', next: 'noscripts' }, { label: 'Không', next: 'maint' }] },
+    noscripts: { result: 'Cài với script bị chặn, chỉ cho phép script của gói đã duyệt và đã đọc. Script cài đặt có quyền đọc khoá đám mây, token Git và mọi file của bạn.', tone: 'warn' },
+    maint: { q: 'Gói có người duy trì rõ ràng, lịch sử phát hành đều, được nhiều dự án uy tín dùng?', options: [{ label: 'Có', next: 'ok' }, { label: 'Không', next: 'weigh' }] },
+    ok: { result: 'Thêm vào, khoá phiên bản trong lockfile, và để công cụ quét phụ thuộc theo dõi các CVE về sau.', tone: 'good' },
+    weigh: { result: 'Cân nhắc lại: tự viết vài chục dòng có khi an toàn hơn kéo thêm một gói vô chủ cùng toàn bộ phụ thuộc của nó.', tone: 'warn' },
+  }}
+/>
+
+### Cho đơn vị tự viết phần mềm: bí mật và CI/CD
+
+**Quét bí mật (secret scanning)** để phát hiện mật khẩu, khoá API lỡ nằm trong mã nguồn, ngay trước khi chúng rời khỏi máy: bật tính năng push protection của nền tảng Git (ví dụ push protection của GitHub), và quét lịch sử kho bằng công cụ như gitleaks:
+
+```bash
+gitleaks git -v .          # bản cũ hơn dùng: gitleaks detect --source .
+# Finding: aws_secret_access_key = "wJalr...."   File: config/old/deploy.env   Commit: 3f2a91c
+```
+
+Bí mật đã từng vào lịch sử Git thì coi như đã lộ: **thu hồi và tạo khoá mới trước**, xoá khỏi lịch sử sau.
+
+**Hardening CI/CD** (ví dụ GitHub Actions; nguyên tắc giống nhau trên nền tảng khác):
+
+```yaml
+permissions:
+  contents: read           # token CI mặc định chỉ được đọc
+  id-token: write          # chỉ để xin thông tin đăng nhập tạm thời qua OIDC
+
+jobs:
+  trien-khai:
+    runs-on: ubuntu-latest
+    steps:
+      # Ghim theo SHA đầy đủ của commit, không theo tag: tag có thể bị dời như vụ tj-actions
+      - uses: actions/checkout@<SHA-40-ky-tu-cua-ban-v4>
+      - uses: aws-actions/configure-aws-credentials@<SHA-40-ky-tu>
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/ci-trien-khai   # không có access key nào
+          aws-region: ap-southeast-1
+      - run: npm ci --ignore-scripts
+```
+
+Thêm vài quy tắc:
+
+- **Không chạy workflow có bí mật cho mã từ người ngoài** (pull request từ fork); cẩn thận với kiểu kích hoạt `pull_request_target`.
+- **Bảo vệ nhánh chính:** cần người thứ hai duyệt, kể cả với quản trị viên (bài 6.3).
+- **SBOM và chữ ký cho bản phát hành:** sinh SBOM bằng công cụ như Syft, ký bản phát hành bằng Sigstore để người dùng phía dưới kiểm được nguồn gốc.
+
+### Container
+
+- **Image tối giản**, ghim theo digest (`@sha256:...`) thay vì tag `latest`.
+- **Không chạy bằng root:** thêm `USER 10001` trong Dockerfile.
+- **Không đóng bí mật vào image.** Lớp nào của image cũng đọc lại được, kể cả lớp đã "xoá" file.
+- **Quét image và cấu hình** bằng Trivy (mã nguồn mở):
+
+```bash
+trivy image --severity HIGH,CRITICAL luavang/web:1.4
+trivy config .            # bắt lỗi cấu hình trong Dockerfile và file Kubernetes
+```
+
+- **Trên máy chạy Docker:** không gắn `/var/run/docker.sock` vào container, không dùng `--privileged`. Ai có quyền điều khiển Docker coi như có root trên máy đó, kể cả thành viên nhóm `docker`.
+
+### Kubernetes ở mức nền tảng
+
+- **Không mở API server, kubelet, dashboard ra Internet.**
+- **RBAC tối thiểu.** Mỗi ứng dụng một tài khoản dịch vụ riêng; tắt tự gắn token (`automountServiceAccountToken: false`) cho pod không cần gọi API. Kiểm tra một tài khoản dịch vụ làm được gì:
+
+```bash
+kubectl auth can-i --list -n shop --as=system:serviceaccount:shop:default
+```
+
+- **Pod Security Admission** ở mức `restricted` cho namespace ứng dụng: chặn pod đặc quyền, chạy bằng root, gắn thư mục của máy chủ.
+- **NetworkPolicy chặn mặc định**, chỉ mở luồng cần thiết.
+- **Phát hiện lúc chạy** bằng Falco: shell mở trong container, đọc file nhạy cảm, kết nối ra ngoài lạ. **Đo theo chuẩn CIS** bằng kube-bench.
+
+Pod đạt mức `restricted` cần khai báo như sau:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+**Thử trong lab** (cần Docker và công cụ kind để chạy một cụm Kubernetes nhỏ trên máy):
+
+<Lenh noi="Terminal trên máy lab đã cài Docker và kind" muc="Bật Pod Security Admission mức restricted cho một namespace rồi thử tạo pod đặc quyền để thấy nó bị chặn ngay ở cửa">
+
+<Terminal title="Thử nghiệm Pod Security Admission mức restricted với kind">
+
+```text
+kind create cluster --name lab
+kubectl create namespace shop
+kubectl label namespace shop pod-security.kubernetes.io/enforce=restricted
+
+# Thử tạo một pod đặc quyền trong namespace đó
+kubectl -n shop run thu --image=nginx --overrides='{"spec":{"containers":[{"name":"thu","image":"nginx","securityContext":{"privileged":true}}]}}'
+# Error from server (Forbidden): pods "thu" is forbidden: violates PodSecurity "restricted:latest":
+#   privileged (container "thu" must not set securityContext.privileged=true), ...   (rút gọn)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `kind create cluster --name lab`: dựng nhanh một cụm Kubernetes thử nghiệm gọn trong container Docker.
+- `kubectl label namespace shop pod-security.kubernetes.io/enforce=restricted`: gắn nhãn buộc Kubernetes áp chuẩn bảo mật `restricted` cho mọi pod tạo trong namespace `shop`.
+- `kubectl -n shop run thu --image=nginx --overrides=...`: thử tạo một pod có bật cờ đặc quyền `"privileged":true`.
+
+</div>
+
+<div slot="doc">
+
+- `Error from server (Forbidden): pods "thu" is forbidden: violates PodSecurity "restricted:latest"`: API server từ chối tạo pod ngay lập tức và giải thích rõ cấu hình nào vi phạm chuẩn `restricted`.
+
+</div>
+
+</Lenh>
+
+Pod bị từ chối ngay ở cửa. Sửa dần cấu hình cho tới khi pod được nhận: đó là cách nhanh nhất để hiểu mức `restricted` đòi gì.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Bảo vệ chuỗi cung ứng và hạ tầng container thực chất là kiểm soát lòng tin với mọi thứ không do chính tay bạn viết ra. Mọi phần mềm quản trị từ xa của bên thứ ba chạy quyền cao trên máy chủ phải được đối xử nghiêm ngặt như tài sản Tier 0 với khoá FIDO2, máy quản trị riêng và đẩy log đầy đủ về SIEM; mỗi nhà cung cấp chỉ được cấp tài khoản riêng có thời hạn và thu hồi ngay khi hết việc.
+
+Ở tầng phát triển phần mềm, hãy ghim chặt phiên bản thư viện bằng lockfile, cài đặt độ trễ nhận bản mới để tránh bẫy mã độc vừa phát hành, bật tính năng chặn đẩy nhầm khoá bí mật (`push protection`) và thay thế khoá đám mây dài hạn trong CI/CD bằng cơ chế OIDC ngắn hạn. Cuối cùng, khi đóng gói lên container và Kubernetes, nguyên tắc bất di bất dịch là không chạy tiến trình dưới quyền root, quét lỗ hổng image tự động bằng Trivy trong đường ống build, áp chuẩn Pod Security ở mức `restricted` kèm chính sách mạng chặn mặc định giữa các namespace.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Chuỗi cung ứng và container"
+  storageKey="supply-chain"
+  items={[
+    { label: 'Có danh sách phần mềm bên thứ ba chạy quyền cao trên nhiều máy; bảng điều khiển của chúng được bảo vệ như Tier 0', hint: 'Bài 7.2' },
+    { label: 'Mỗi nhà cung cấp một tài khoản riêng, có MFA, có hạn, có log phiên' },
+    { label: 'Tiện ích trình duyệt chỉ được cài từ danh sách đã duyệt' },
+    { label: 'Lockfile được commit; CI cài đúng lockfile' },
+    { label: 'Có độ trễ nhận bản mới cho phụ thuộc; script cài đặt bị chặn mặc định' },
+    { label: 'Push protection đang bật; đã quét lịch sử repo' },
+    { label: 'CI/CD dùng OIDC thay cho access key; token CI quyền tối thiểu' },
+    { label: 'Action và image được ghim theo SHA hoặc digest' },
+    { label: 'Container không chạy root; image được quét bằng Trivy trong CI' },
+    { label: 'Namespace ứng dụng ở Pod Security mức restricted; có NetworkPolicy chặn mặc định' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Đinh ninh rằng "công ty mình không tự viết phần mềm nên không cần lo về chuỗi cung ứng".** Những vụ tấn công chuỗi cung ứng tàn khốc nhất như Kaseya hay SolarWinds lại đánh trúng các doanh nghiệp thông thường thông qua chính phần mềm quản trị từ xa và giám sát mạng mà họ mua về cài trên mọi máy chủ.
+- **Cấu hình hệ thống tự động nâng cấp mọi thư viện mã nguồn mở lên bản mới nhất ngay giây phút vừa phát hành.** Hầu hết các phiên bản gói bị cài mã độc trên npm hay PyPI đều bị cộng đồng phát hiện và gỡ bỏ trong vòng vài giờ tới vài ngày đầu; quá nhanh nhảu cập nhật tự động mà không có độ trễ chờ (`minimumReleaseAge`) sẽ biến bạn thành nhóm nạn nhân đầu tiên.
+- **Gõ lệnh cài đặt ngay tên thư viện do trợ lý lập trình AI gợi ý mà không kiểm chứng.** Mô hình ngôn ngữ rất hay "bịa" ra những tên gói nghe có vẻ hợp lý nhưng không tồn tại, và kẻ tấn công đã đăng ký sẵn đúng những cái tên đó (*slopsquatting*) để chờ bạn tải về.
+- **Phát hiện lộ khóa API trong kho Git liền vội vàng xóa dòng đó rồi commit đè lên mà quên thu hồi khóa.** Mọi commit cũ vẫn nằm nguyên trong lịch sử Git và trên các bản sao đã nhân bản; bất kỳ khóa nào đã chạm vào Git đều phải được thu hồi và xoay vòng ngay lập tức.
+- **Ghim phiên bản GitHub Action bằng nhãn như `@v4` rồi yên tâm là đã cố định.** Nhãn (tag) trong Git hoàn toàn có thể bị kẻ chiếm quyền kho mã dời trỏ sang một commit độc hại khác (như vụ `tj-actions/changed-files`); chỉ có ghim bằng chuỗi mã băm SHA-1 đầy đủ 40 ký tự mới đảm bảo mã chạy không bị đánh tráo.
+- **Gắn tệp `/var/run/docker.sock` vào bên trong container ứng dụng "để tiện gọi lệnh Docker".** Trao quyền điều khiển socket của Docker cho một container chẳng khác nào trao thẳng quyền `root` trên toàn bộ máy chủ vật lý bên dưới cho bất kỳ ai chiếm được container đó.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao nên đặt độ trễ vài ngày trước khi nhận phiên bản mới của một phụ thuộc?', options: ['Để tiết kiệm băng thông', 'Vì phần lớn phiên bản độc bị phát hiện và gỡ trong vài giờ tới vài ngày; chờ một chút là tránh được', 'Vì bản mới luôn có lỗi'], answer: 1, explain: 'Các vụ như gói npm bị chiếm năm 2025 đều bị gỡ khá nhanh; ai tự động nhận bản mới ngay thì dính.' },
+    { q: 'Trợ lý AI gợi ý cài một gói, nhưng npm view trả về 404. Nên làm gì?', options: ['Tự tạo gói đó', 'Không cài; tên này có thể do AI bịa, và kẻ gian có thể đăng ký nó sau. Tìm gói chính thức từ tài liệu', 'Cài bản gần tên nhất'], answer: 1, explain: 'Đây chính là slopsquatting: tên bịa lặp lại giữa các lần hỏi nên kẻ gian đăng ký sẵn.' },
+    { q: 'Vì sao ghim GitHub Action theo SHA đầy đủ an toàn hơn theo tag?', options: ['SHA ngắn hơn', 'Tag có thể bị dời sang commit khác khi kho bị chiếm; SHA trỏ đúng một commit không đổi', 'Tag không hoạt động'], answer: 1, explain: 'Vụ tj-actions năm 2025: các tag bị trỏ sang mã in bí mật CI ra log.' },
+    { q: 'Công ty không viết phần mềm. Điều nào trong bài vẫn áp dụng?', options: ['Không điều nào', 'Bảo vệ công cụ quản trị từ xa và phần mềm có quyền cao của bên thứ ba như Tier 0, giới hạn quyền nhà cung cấp, cập nhật theo vòng', 'Chỉ phần Kubernetes'], answer: 1, explain: 'Vụ Kaseya năm 2021 đánh vào chính những doanh nghiệp không tự viết phần mềm, qua công cụ của nhà cung cấp dịch vụ IT.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Tấn công chuỗi cung ứng đi qua bốn con đường chính: bản cập nhật chính thức của nhà cung cấp phần mềm, công cụ quản trị từ xa của đối tác IT, các gói thư viện mã nguồn mở và dây chuyền CI/CD.
+- Sự phổ biến của trợ lý lập trình AI mang tới hai rủi ro mới: cài nhầm gói mã độc mang tên do AI bịa ra (*slopsquatting*) và mã độc trong script cài đặt lợi dụng chính công cụ AI trên máy lập trình viên để lục tìm khóa bí mật.
+- Mọi tổ chức đều phải quản lý các phần mềm bên thứ ba có quyền cao nghiêm ngặt như tài sản Tier 0, cấp quyền tối thiểu có thời hạn cho nhà cung cấp và cập nhật theo từng vòng kiểm soát.
+- Với đội ngũ phát triển phần mềm, hãy khóa phiên bản bằng lockfile, đặt độ trễ trước khi nhận bản mới, chặn script tự chạy khi cài, quét bí mật bằng push protection, dùng OIDC thay cho khóa dài hạn và ghim các bước CI/CD theo mã băm SHA đầy đủ.
+- Với môi trường container và Kubernetes, nguyên tắc nền tảng là không chạy quyền `root`, không cấp cờ đặc quyền hay gắn `docker.sock`, quét image bằng Trivy và áp dụng Pod Security Admission mức `restricted` kèm NetworkPolicy.

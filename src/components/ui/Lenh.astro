@@ -1,0 +1,225 @@
+---
+// Thẻ lệnh: bọc một lệnh (hoặc một phiên lệnh) với bối cảnh và lời giải thích để người mới đọc hiểu.
+// Cách dùng trong bài:
+//
+// <Lenh noi="Kali Linux" muc="Tìm các cổng đang mở trên máy mục tiêu">
+//
+// <Terminal> ... lệnh và output ... </Terminal>
+//
+// <div slot="giai">
+// - `nmap`: tên chương trình
+// </div>
+//
+// <div slot="doc">
+// - Dòng `22/tcp open ssh`: ...
+// </div>
+//
+// </Lenh>
+//
+// Quy ước: noi = chạy ở máy/cửa sổ nào (và cần quyền gì), muc = lệnh để làm gì,
+// giai = "Giải nghĩa lệnh" (từng phần của lệnh), doc = "Đọc output" (dòng nào quan trọng, bình thường hay đáng lo).
+interface Props {
+  noi?: string;
+  muc?: string;
+  quyen?: string;
+}
+const { noi, muc, quyen } = Astro.props;
+// noi/muc/quyen là chuỗi thường; chữ nằm giữa hai dấu ` hiển thị như mã thay vì lộ dấu backtick.
+const html = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/`([^`]+)`/g, "<code>$1</code>");
+const hasGiai = Astro.slots.has('giai');
+const hasDoc = Astro.slots.has('doc');
+---
+<section class="lenh">
+  {(noi || muc || quyen) && (
+    <dl class="lenh-ctx">
+      {noi && (<div><dt>Chạy ở</dt><dd set:html={html(noi)} /></div>)}
+      {quyen && (<div><dt>Cần quyền</dt><dd set:html={html(quyen)} /></div>)}
+      {muc && (<div><dt>Để làm gì</dt><dd set:html={html(muc)} /></div>)}
+    </dl>
+  )}
+  <div class="lenh-main"><slot /></div>
+  {hasGiai && (
+    <div class="lenh-sec lenh-giai">
+      <p class="lenh-h">Giải nghĩa lệnh <span class="lenh-tip">· trỏ hoặc chạm vào một mục để tô sáng phần tương ứng trong lệnh</span></p>
+      <slot name="giai" />
+    </div>
+  )}
+  {hasDoc && (
+    <div class="lenh-sec lenh-doc">
+      <p class="lenh-h">Đọc output <span class="lenh-tip">· trỏ hoặc chạm vào một mục để tô sáng dòng tương ứng</span></p>
+      <slot name="doc" />
+    </div>
+  )}
+</section>
+
+<script>
+  // Tô sáng trong khối lệnh/output đúng đoạn mà mục giải nghĩa đang nhắc tới.
+  // Dùng CSS Custom Highlight API: chỉ tô màu, không sửa DOM nên không ảnh hưởng nội dung người học chép lệnh.
+  // Trình duyệt chưa hỗ trợ thì bỏ qua, phần giải nghĩa vẫn đọc bình thường.
+  type Seg = { node: Text; start: number };
+  const W = window as any;
+  const HL_NAME = 'lenh-hl';
+
+  function init() {
+    if (!(W.CSS && W.CSS.highlights) || typeof W.Highlight === 'undefined') return;
+    let pinned: HTMLElement | null = null;
+
+    const clear = () => W.CSS.highlights.delete(HL_NAME);
+    const show = (li: HTMLElement) => {
+      const ranges: Range[] = (li as any)._hl || [];
+      if (!ranges.length) return clear();
+      W.CSS.highlights.set(HL_NAME, new W.Highlight(...ranges));
+      // Lệnh dài phải cuộn ngang thì kéo đoạn được tô vào tầm nhìn.
+      const r = ranges[0];
+      const pre = (r.startContainer.parentElement as HTMLElement | null)?.closest('pre');
+      if (pre) {
+        const a = r.getBoundingClientRect();
+        const b = pre.getBoundingClientRect();
+        if (a.right > b.right - 8 || a.left < b.left + 8) pre.scrollLeft += a.left - b.left - 24;
+      }
+    };
+    const restore = () => (pinned ? show(pinned) : clear());
+    const setPin = (li: HTMLElement | null) => {
+      document.querySelectorAll('.lenh-sec li[aria-pressed="true"]').forEach((e) => e.setAttribute('aria-pressed', 'false'));
+      pinned = li;
+      if (li) li.setAttribute('aria-pressed', 'true');
+    };
+
+    // Một dòng là "dòng lệnh" nếu bắt đầu bằng dấu nhắc (kali@lab:~$ , PS C:\> , # , $ ...).
+    const PROMPT = /^(?:PS [^>]*>|\S*[$#%>])\s/;
+
+    document.querySelectorAll<HTMLElement>('.lenh').forEach((lenh) => {
+      const pres = Array.from(lenh.querySelectorAll<HTMLElement>('.lenh-main pre'));
+      if (!pres.length) return;
+
+      const docs = pres.map((pre) => {
+        const segs: Seg[] = [];
+        let text = '';
+        const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          segs.push({ node: n as Text, start: text.length });
+          text += (n as Text).data;
+        }
+        const cmd: Array<[number, number]> = [];
+        let off = 0;
+        for (const line of text.split('\n')) {
+          if (PROMPT.test(line)) cmd.push([off, off + line.length]);
+          off += line.length + 1;
+        }
+        return { pre, segs, text, cmd };
+      });
+
+      const point = (segs: Seg[], pos: number, isEnd: boolean) => {
+        for (let i = segs.length - 1; i >= 0; i--) {
+          const s = segs[i];
+          const inside = isEnd ? pos > s.start : pos >= s.start;
+          if (inside) return { node: s.node, offset: Math.min(pos - s.start, s.node.data.length) };
+        }
+        return null;
+      };
+
+      // Trả về các đoạn khớp; lines (nếu có) giới hạn chỉ lấy trên những dòng đó, và được bổ sung thêm dòng khớp.
+      const rangesFor = (frag: string, onlyCmd: boolean, lines?: Set<string>, found?: Set<string>) => {
+        const out: Range[] = [];
+        docs.forEach((d, di) => {
+          let from = 0;
+          for (;;) {
+            const i = d.text.indexOf(frag, from);
+            if (i < 0) break;
+            from = i + frag.length;
+            if (onlyCmd && !d.cmd.some(([a, b]) => i >= a && i + frag.length <= b)) continue;
+            const key = di + ':' + (d.text.lastIndexOf('\n', i - 1) + 1);
+            if (lines && !lines.has(key)) continue;
+            const s = point(d.segs, i, false);
+            const e = point(d.segs, i + frag.length, true);
+            if (!s || !e) continue;
+            const r = document.createRange();
+            r.setStart(s.node, s.offset);
+            r.setEnd(e.node, e.offset);
+            out.push(r);
+            found?.add(key);
+          }
+        });
+        return out;
+      };
+
+      let any = false;
+      lenh.querySelectorAll<HTMLElement>('.lenh-sec li').forEach((li) => {
+        const ranges: Range[] = [];
+        // Chỉ lấy `code` thuộc chính mục này, không lấy mục con lồng bên trong.
+        li.querySelectorAll('code').forEach((code) => {
+          if (code.closest('li') !== li) return;
+          const frags = (code.textContent || '')
+            .split(/\s*(?:\.\.\.|…)\s*/)
+            .map((f) => f.trim())
+            .filter((f) => f.length >= 2);
+          // Các đoạn của cùng một mã (vd. `john --wordlist=... hash.txt`) phải nằm trên cùng một dòng.
+          let lines: Set<string> | undefined;
+          for (const f of frags) {
+            const found = new Set<string>();
+            let got = rangesFor(f, true, lines, found);
+            if (!got.length) got = rangesFor(f, false, lines, found);
+            ranges.push(...got);
+            if (!lines && found.size) lines = found;
+          }
+        });
+        if (!ranges.length) return;
+        any = true;
+        (li as any)._hl = ranges;
+        li.classList.add('hl-ok');
+        li.tabIndex = 0;
+        li.setAttribute('role', 'button');
+        li.setAttribute('aria-pressed', 'false');
+        li.addEventListener('mouseenter', () => show(li));
+        li.addEventListener('mouseleave', restore);
+        li.addEventListener('focus', () => show(li));
+        li.addEventListener('blur', restore);
+        li.addEventListener('click', (ev) => {
+          if ((ev.target as HTMLElement).closest('a')) return;
+          setPin(pinned === li ? null : li);
+          show(li);
+        });
+        li.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            setPin(pinned === li ? null : li);
+            show(li);
+          }
+        });
+      });
+      if (any) lenh.classList.add('has-hl');
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+</script>
+
+<style is:global>
+  ::highlight(lenh-hl) { background-color: rgba(255, 196, 40, 0.42); color: #fff; }
+</style>
+
+<style>
+  .lenh { margin: 1.6em 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .lenh-ctx { margin: 0; padding: 10px 16px; display: grid; gap: 4px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+  .lenh-ctx > div { display: flex; gap: 12px; align-items: baseline; }
+  .lenh-ctx dt { flex: 0 0 auto; min-width: 6.4em; white-space: nowrap; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: var(--muted); }
+  .lenh-ctx dd { margin: 0; min-width: 0; }
+  .lenh-tip { display: none; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .lenh.has-hl .lenh-tip { display: inline; }
+  .lenh-sec :global(li.hl-ok) { cursor: pointer; border-radius: 6px; margin-left: -6px; padding: 2px 6px; transition: background 0.12s; }
+  .lenh-sec :global(li.hl-ok:hover), .lenh-sec :global(li.hl-ok:focus-visible) { background: rgba(255, 196, 40, 0.2); outline: none; }
+  .lenh-sec :global(li.hl-ok[aria-pressed='true']) { background: rgba(255, 196, 40, 0.26); box-shadow: inset 3px 0 0 #e0a800; }
+  .lenh-sec :global(li.hl-ok:hover code), .lenh-sec :global(li.hl-ok[aria-pressed='true'] code) { background: rgba(255, 196, 40, 0.4); }
+  .lenh-main { padding: 0 12px; }
+  .lenh-main :global(pre) { margin: 12px 0; overflow-x: auto; }
+  .lenh-main :global(.term-static) { margin: 12px 0; }
+  .lenh-main :global(> p:last-child) { margin-bottom: 12px; }
+  .lenh-sec { padding: 10px 16px 6px; border-top: 1px solid var(--line); font-size: 0.93rem; }
+  .lenh-sec :global(ul), .lenh-sec :global(ol) { margin: 0 0 0.6em; padding-left: 1.3em; }
+  .lenh-sec :global(li) { margin: 0.25em 0; }
+  .lenh-sec :global(p) { margin: 0 0 0.6em; }
+  .lenh-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: var(--muted); margin: 0 0 6px; }
+  .lenh-doc { background: var(--accent-soft); }
+</style>

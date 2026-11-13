@@ -1,0 +1,43 @@
+---
+// Thử thách cuối cấp và danh sách "sẵn sàng sang cấp sau". Dữ liệu ở src/data/level-gates.ts.
+import Checklist from '../sim/Checklist.tsx';
+import { levelGates } from '../../data/level-gates';
+import { levels } from '../../data/levels';
+
+interface Props {
+  level: number;
+  compact?: boolean;
+}
+const { level, compact = false } = Astro.props;
+const gate = levelGates.find((g) => g.level === level);
+const lv = levels.find((l) => l.id === level);
+const next = levels.find((l) => l.id === level + 1);
+---
+{gate && lv && (
+  <section class={`gate ${compact ? 'compact' : ''}`}>
+    <p class="gate-kicker">Thử thách cuối Cấp {lv.id} · không kèm hướng dẫn</p>
+    <p class="gate-task">{gate.challenge}</p>
+    <dl class="gate-facts">
+      <div><dt>Làm trên</dt><dd>{gate.target}</dd></div>
+      <div><dt>Xong khi</dt><dd>{gate.done}</dd></div>
+    </dl>
+    <Checklist
+      client:visible
+      title={next ? `Tự làm được những việc này thì sang Cấp ${next.id}` : 'Tự làm được những việc này là xong lộ trình'}
+      storageKey={`gate-${lv.id}`}
+      items={gate.ready.map((label) => ({ label }))}
+    />
+  </section>
+)}
+
+<style>
+  .gate { border: 1px dashed var(--accent); border-radius: var(--radius); padding: 14px 18px 4px; margin: 28px 0 8px; background: var(--surface); }
+  .gate.compact { margin: 14px 0 0; }
+  .gate-kicker { margin: 0 0 4px; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; color: var(--accent); }
+  .gate-task { margin: 0 0 10px; font-weight: 600; line-height: 1.55; }
+  .gate-facts { margin: 0 0 12px; display: grid; gap: 4px; font-size: 0.92rem; }
+  .gate-facts > div { display: flex; gap: 12px; align-items: baseline; }
+  .gate-facts dt { flex: 0 0 5.4em; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: var(--muted); }
+  .gate-facts dd { margin: 0; }
+  @media (max-width: 520px) { .gate-facts > div { display: grid; gap: 0; } }
+</style>

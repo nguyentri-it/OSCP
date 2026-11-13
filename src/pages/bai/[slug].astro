@@ -1,0 +1,749 @@
+---
+import { render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { getLessons, type Lesson } from '../../lib/lessons';
+import { levels } from '../../data/levels';
+import { url } from '../../lib/url';
+import LevelGate from '../../components/ui/LevelGate.astro';
+
+export async function getStaticPaths() {
+  const lessons = await getLessons();
+  return lessons.map((lesson, i) => ({
+    params: { slug: lesson.id },
+    props: { lesson, prev: lessons[i - 1] ?? null, next: lessons[i + 1] ?? null, all: lessons },
+  }));
+}
+
+interface Props {
+  lesson: Lesson;
+  prev: Lesson | null;
+  next: Lesson | null;
+  all: Lesson[];
+}
+
+const { lesson, prev, next, all } = Astro.props;
+const { Content, headings } = await render(lesson);
+const d = lesson.data;
+const level = levels.find((l) => l.id === d.level)!;
+// Mục lục trong bài: các đề mục cấp 2 và 3, để người học thấy trước cả bài và nhảy tới phần cần.
+const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
+const prereq = (d.prereq ?? [])
+  .map((code) => all.find((l) => l.data.code === code))
+  .filter((l): l is Lesson => Boolean(l));
+const position = all.filter((l) => l.data.level === d.level).findIndex((l) => l.id === lesson.id) + 1;
+const inLevel = all.filter((l) => l.data.level === d.level).length;
+// Câu nhắc lại: lấy câu đầu trong phần "Kiểm tra nhanh" của mỗi bài nên học trước,
+// để người học tự gợi lại kiến thức cũ trước khi đọc bài mới.
+interface QuizQ { q: string; options: string[]; answer: number; explain?: string }
+function quizOf(l: Lesson): QuizQ[] {
+  const m = (l.body ?? '').match(/<Quiz[\s\S]*?questions=\{(\[[\s\S]*?\])\}\s*\/>/);
+  if (!m) return [];
+  try {
+    return new Function('return ' + m[1])() as QuizQ[];
+  } catch {
+    return [];
+  }
+}
+const recall = prereq
+  .flatMap((l) => quizOf(l).slice(0, 1).map((q) => ({ code: l.data.code, q: q.q, a: q.options[q.answer], why: q.explain ?? '' })))
+  .slice(0, 3);
+const isLastInLevel = position === inLevel;
+const lessonMap = Object.fromEntries(
+  all.map((l) => [l.data.code, { href: url(`bai/${l.id}`), title: `${l.data.code} — ${l.data.title}` }]),
+);
+---
+<Base title={`${d.code} ${d.title}`} description={d.summary}>
+  <div class="read-bar" aria-hidden="true"><div class="read-bar-fill"></div></div>
+  <div class="wrap lesson-grid">
+    <aside class="sidebar" aria-label="Danh sách bài">
+      <details open>
+        <summary>Tất cả bài học</summary>
+        {levels.map((lv) => (
+          <div class="side-level">
+            <p class="side-level-name">Cấp {lv.id} · {lv.name}</p>
+            <ul>
+              {all.filter((l) => l.data.level === lv.id).map((l) => (
+                <li>
+                  <a
+                    href={url(`bai/${l.id}`)}
+                    aria-current={l.id === lesson.id ? 'page' : undefined}
+                    data-code={l.data.code}
+                  >
+                    <span class="side-code">{l.data.code}</span> {l.data.title}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </details>
+    </aside>
+
+    <article class="lesson">
+      <p class="crumb"><a href={url('lo-trinh')}>Lộ trình</a> / Cấp {level.id} · {level.name} / Bài {position} trên {inLevel}</p>
+      <h1><span class="code">{d.code}</span> {d.title}</h1>
+      <p class="lead">{d.summary}</p>
+      <p class="meta">
+        <span>Thời lượng gợi ý: {d.duration}</span>
+        {d.updated && <span>· Cập nhật {d.updated.split('-').reverse().join('/')}</span>}
+        {d.status === 'khung' && <span class="badge">Bản khung, đang bổ sung</span>}
+      </p>
+
+      <section class="objectives" aria-label="Mục tiêu bài học">
+        <p class="obj-label">Học xong bài này, bạn sẽ</p>
+        <ul>{d.objectives.map((o) => <li>{o}</li>)}</ul>
+      </section>
+
+      {prereq.length > 0 && (
+        <p class="prereq">
+          <span class="prereq-label">Nên học trước:</span>
+          {prereq.map((l) => (
+            <a href={url(`bai/${l.id}`)} data-code={l.data.code}>{l.data.code} {l.data.title}</a>
+          ))}
+        </p>
+      )}
+
+      {toc.length > 3 && (
+        <details class="toc" open>
+          <summary>Trong bài này <span class="toc-count">{toc.filter((h) => h.depth === 2).length} phần</span></summary>
+          <ol>
+            {toc.map((h) => (
+              <li class={`toc-d${h.depth}`}><a href={`#${h.slug}`}>{h.text}</a></li>
+            ))}
+          </ol>
+        </details>
+      )}
+
+      {recall.length > 0 && (
+        <section class="recall" aria-label="Nhắc lại bài trước">
+          <p class="recall-h">Nhắc lại trước khi học <span>· tự trả lời trong đầu rồi mới bấm xem</span></p>
+          {recall.map((r) => (
+            <details class="hint">
+              <summary>{r.q} <span class="recall-src">từ {r.code}</span></summary>
+              <p><strong>{r.a}.</strong> {r.why}</p>
+            </details>
+          ))}
+        </section>
+      )}
+
+      <div class="phase-bar" role="group" aria-label="Chuyển chặng học">
+        <span class="phase-bar-label">Chặng học:</span>
+        <button type="button" class="phase-btn is-active" data-filter="all">Xem cả bài</button>
+        <button type="button" class="phase-btn" data-filter="theory">1. Lý thuyết</button>
+        <button type="button" class="phase-btn" data-filter="practice">2. Thực hành &amp; Lab</button>
+        <button type="button" class="phase-btn" data-filter="defense">3. Phòng thủ &amp; Bẫy</button>
+        <button type="button" class="phase-btn" data-filter="quiz">4. Kiểm tra</button>
+        <span class="phase-progress" aria-live="polite">0/4 xong</span>
+      </div>
+
+      <div class="prose">
+        <Content />
+      </div>
+
+      <div class="phase-stepper" hidden>
+        <button type="button" class="btn phase-prev">← Chặng trước</button>
+        <button type="button" class="btn primary phase-next">Xong chặng này → Sang chặng tiếp</button>
+      </div>
+
+      <details class="cmd-card" hidden>
+        <summary>Lệnh đã dùng trong bài <span class="cmd-count"></span></summary>
+        <p class="cmd-note">Chữ gạch chân chấm là giá trị mẫu của lab (địa chỉ IP, tên miền). Thay bằng giá trị trong lab của bạn trước khi chạy.</p>
+        <ul class="cmd-list"></ul>
+      </details>
+
+      <div class="done-row">
+        <button class="btn done-btn" type="button" data-code={d.code}>Đánh dấu đã học</button>
+      </div>
+
+      {isLastInLevel && <LevelGate level={d.level} />}
+
+      <nav class="pager" aria-label="Chuyển bài">
+        {prev ? (
+          <a class="pager-link" href={url(`bai/${prev.id}`)}>
+            <span>Bài trước</span>{prev.data.code} {prev.data.title}
+          </a>
+        ) : <span />}
+        {next && (
+          <a class="pager-link next" href={url(`bai/${next.id}`)}>
+            <span>Bài tiếp</span>{next.data.code} {next.data.title}
+          </a>
+        )}
+      </nav>
+    </article>
+  </div>
+</Base>
+
+<script is:inline define:vars={{ lessonMap, currentCode: d.code }}>
+  (function () {
+    function read() {
+      try { return JSON.parse(localStorage.getItem('oscp-done') || '[]'); } catch (e) { return []; }
+    }
+    function write(v) {
+      try { localStorage.setItem('oscp-done', JSON.stringify(v)); } catch (e) {}
+    }
+    const btn = document.querySelector('.done-btn');
+
+    // Thanh tiến độ đọc: cho người học biết đang ở đâu trong một bài dài.
+    const fill = document.querySelector('.read-bar-fill');
+    const body = document.querySelector('.prose');
+    if (fill && body) {
+      let ticking = false;
+      const update = () => {
+        ticking = false;
+        const r = body.getBoundingClientRect();
+        const total = r.height - window.innerHeight * 0.6;
+        const seen = Math.min(Math.max(-r.top + window.innerHeight * 0.4, 0), Math.max(total, 1));
+        fill.style.width = (total > 0 ? (seen / total) * 100 : 100).toFixed(1) + '%';
+      };
+      window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+      update();
+    }
+
+    // Tô sáng mục đang đọc trong mục lục.
+    const tocLinks = [...document.querySelectorAll('.toc a')];
+    if (tocLinks.length && 'IntersectionObserver' in window) {
+      const byId = new Map(tocLinks.map((a) => [decodeURIComponent(a.hash.slice(1)), a]));
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            tocLinks.forEach((a) => a.classList.remove('is-here'));
+            byId.get(e.target.id)?.classList.add('is-here');
+          }
+        });
+      }, { rootMargin: '-70px 0px -70% 0px' });
+      document.querySelectorAll('.prose h2[id], .prose h3[id]').forEach((h) => io.observe(h));
+    }
+    try { localStorage.setItem('oscp-last', JSON.stringify({ code: currentCode, href: location.pathname })); } catch (e) {}
+
+    function paint() {
+      const done = read();
+      document.querySelectorAll('.prereq a[data-code]').forEach((a) => {
+        a.classList.toggle('is-done', done.includes(a.dataset.code));
+      });
+      document.querySelectorAll('.sidebar a[data-code]').forEach((a) => {
+        a.classList.toggle('is-done', done.includes(a.dataset.code));
+      });
+      if (btn) {
+        const on = done.includes(btn.dataset.code);
+        btn.textContent = on ? 'Đã học xong ✓' : 'Đánh dấu đã học';
+        btn.classList.toggle('primary', on);
+      }
+    }
+    btn?.addEventListener('click', () => {
+      const done = read();
+      const c = btn.dataset.code;
+      write(done.includes(c) ? done.filter((x) => x !== c) : [...done, c]);
+      paint();
+    });
+    paint();
+
+
+    // ---- Khối lệnh: nút chép, phân biệt dòng lệnh với output, đánh dấu giá trị mẫu, gom lệnh cuối bài ----
+    (function () {
+      const root = document.querySelector('.prose');
+      if (!root) return;
+      // Dấu nhắc hay gặp trong bài: kali@lab:~$ , C:\> , PS C:\> , ftp> , SQL (...)> , msf6 > , $
+      const PROMPT = /^((?:\*Evil-WinRM\* )?PS(?: [^>]*)?>|[A-Za-z]:\\[^>]*>|[\w.-]+@[\w.-]+:[^$#]*[$#]|(?:ftp|smb: [^>]*|SQL [^>]*|msf\d?[^>]*|meterpreter)\s?>|\$)\s+(\S.*)$/;
+      const KEY = /\[\+\]|VULNERABLE|Pwn3d!|<--|←|⇒|nt authority\\system|uid=0\(root\)/i;
+      const SAMPLE = /\b(?:10|172|192)\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2})?\b|\bmegacorp\.(?:lab|example)\b/g;
+      const clean = (cmd) => cmd.replace(/\s{2,}#\s.*$/, '').trimEnd();
+      const copy = (text, btn, label) => {
+        const ok = () => { btn.textContent = 'Đã chép ✓'; setTimeout(() => { btn.textContent = label; }, 1400); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, () => {});
+      };
+      const all = [];
+      const sampleRanges = [];
+      root.querySelectorAll('pre').forEach((pre) => {
+        if (pre.closest('.sim')) return;
+        const lines = [...pre.querySelectorAll('.line')];
+        const cmds = [];
+        let cont = false;
+        lines.forEach((ln) => {
+          const text = ln.textContent || '';
+          const m = PROMPT.exec(text);
+          if (m) {
+            ln.classList.add('cmd-line');
+            cmds.push(clean(m[2]));
+            cont = /\\\s*$/.test(text);
+          } else if (cont) {
+            // Dòng nối tiếp của một lệnh dài kết thúc bằng dấu \
+            ln.classList.add('cmd-line');
+            cmds[cmds.length - 1] = cmds[cmds.length - 1].replace(/\\\s*$/, '') + text.trim();
+            cont = /\\\s*$/.test(text);
+          } else if (KEY.test(text)) {
+            ln.classList.add('key-line');
+          }
+        });
+        if (cmds.length) pre.classList.add('has-cmd');
+        // Giá trị mẫu: chỉ tô bằng CSS Highlight, không sửa DOM để phần tô sáng của thẻ lệnh vẫn chạy.
+        const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          SAMPLE.lastIndex = 0;
+          let mm;
+          while ((mm = SAMPLE.exec(n.data)) !== null) {
+            const r = document.createRange();
+            r.setStart(n, mm.index);
+            r.setEnd(n, mm.index + mm[0].length);
+            sampleRanges.push(r);
+          }
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'pre-wrap';
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+        const label = cmds.length ? 'Chép lệnh' : 'Chép';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'copy-btn';
+        btn.textContent = label;
+        btn.title = cmds.length ? 'Chỉ chép các dòng lệnh, bỏ dấu nhắc và output' : 'Chép nội dung khối này';
+        btn.addEventListener('click', () => copy(cmds.length ? cmds.join('\n') : (pre.textContent || '').trimEnd(), btn, label));
+        wrap.appendChild(btn);
+        if (pre.closest('.lenh')) cmds.forEach((c) => { if (c.length > 3 && !all.includes(c)) all.push(c); });
+      });
+      if (sampleRanges.length && window.CSS && CSS.highlights && typeof Highlight !== 'undefined') {
+        CSS.highlights.set('lab-sample', new Highlight(...sampleRanges));
+      }
+      const card = document.querySelector('.cmd-card');
+      if (card && all.length >= 3) {
+        const list = card.querySelector('.cmd-list');
+        all.slice(0, 40).forEach((c) => {
+          const li = document.createElement('li');
+          const code = document.createElement('code');
+          code.textContent = c;
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'copy-btn inline';
+          b.textContent = 'Chép';
+          b.addEventListener('click', () => copy(c, b, 'Chép'));
+          li.append(code, b);
+          list.appendChild(li);
+        });
+        card.querySelector('.cmd-count').textContent = '(' + Math.min(all.length, 40) + ')';
+        card.hidden = false;
+      }
+    })();
+
+    // Tự động gắn link cho các tham chiếu "bài x.y" trong thân bài để người học bấm tra cứu ngay.
+    const prose = document.querySelector('.prose');
+    if (prose && lessonMap) {
+      const REF = /([Bb]ài\s+)(\d\.\d(?:(?:\s*,\s*|\s+và\s+|\s+hoặc\s+|\s+lẫn\s+)\d\.\d)*)/g;
+      const SKIP = 'a, pre, code, button, script, style, h1, h2, h3, h4, summary, .sim';
+      const walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n.nodeValue && /[Bb]ài\s+\d\.\d/.test(n.nodeValue) && !n.parentElement?.closest(SKIP)) {
+          nodes.push(n);
+        }
+      }
+      nodes.forEach((node) => {
+        const text = node.nodeValue || '';
+        REF.lastIndex = 0;
+        let last = 0;
+        let m;
+        const frag = document.createDocumentFragment();
+        let changed = false;
+        while ((m = REF.exec(text)) !== null) {
+          if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+          const prefix = m[1];
+          const listStr = m[2];
+          const parts = listStr.split(/(\d\.\d)/);
+          let first = true;
+          parts.forEach((p) => {
+            if (/^\d\.\d$/.test(p)) {
+              const label = (first ? prefix : '') + p;
+              first = false;
+              const target = lessonMap[p];
+              if (target && p !== currentCode) {
+                const a = document.createElement('a');
+                a.href = target.href;
+                a.title = target.title;
+                a.textContent = label;
+                frag.appendChild(a);
+                changed = true;
+              } else {
+                frag.appendChild(document.createTextNode(label));
+              }
+            } else if (p) {
+              frag.appendChild(document.createTextNode(p));
+            }
+          });
+          last = REF.lastIndex;
+        }
+        if (changed) {
+          if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+          node.parentNode?.replaceChild(frag, node);
+        }
+      });
+    }
+
+    // ---- Phân tách các phần trong bài (Lý thuyết / Thực hành & Lab / Phòng thủ / Kiểm tra) ----
+    (function () {
+      const prose = document.querySelector('.prose');
+      if (!prose) return;
+      const h2s = [...prose.children].filter((el) => el.tagName === 'H2');
+      if (!h2s.length) return;
+
+      function classify(title, bodyEl) {
+        const t = title.toLowerCase();
+        if (t.includes('hình dung trước')) return { key: 'intro', group: 'theory', label: 'Mở bài' };
+        if (t.includes('kiểm tra nhanh')) return { key: 'quiz', group: 'quiz', label: 'Kiểm tra' };
+        if (t.includes('ghi nhớ')) return { key: 'summary', group: 'quiz', label: 'Tóm tắt' };
+        if (t.includes('phòng thủ')) return { key: 'defense', group: 'defense', label: 'Phòng thủ' };
+        if (t.includes('lỗi người mới')) return { key: 'pitfalls', group: 'defense', label: 'Bẫy hay gặp' };
+        if (
+          t.includes('thực hành') ||
+          t.includes('bài tập') ||
+          t.includes('tự thử sức') ||
+          t.includes('tự nối') ||
+          t.includes('diễn tập') ||
+          t.includes('quy trình') ||
+          t.includes('mô phỏng')
+        ) {
+          return { key: 'practice', group: 'practice', label: 'Thực hành & Lab' };
+        }
+        if (
+          t.includes('sơ đồ') ||
+          t.includes('mô hình') ||
+          t.includes('luồng') ||
+          bodyEl.querySelector('.cmap-zone, .cmap-node, .seq-actor, .osi-grid')
+        ) {
+          return { key: 'visual', group: 'theory', label: 'Hình dung' };
+        }
+        return { key: 'theory', group: 'theory', label: 'Lý thuyết' };
+      }
+
+      const PHASE_CUES = {
+        intro: 'Đọc nhanh để nắm bức tranh tổng thể trước khi đi vào chi tiết.',
+        visual: 'Quan sát cấu trúc và luồng đi trước khi đọc giải thích chi tiết.',
+        theory: 'Đọc để hiểu cơ chế và bản chất, chưa cần nhớ thuộc lòng lệnh.',
+        practice: 'Chuyển sang thao tác: tự gõ, bấm thử hoặc làm theo từng bước.',
+        defense: 'Đổi góc nhìn phòng thủ: nếu đây là hệ thống của bạn, sẽ phát hiện và chặn ở đâu?',
+        pitfalls: 'Dừng lại đối chiếu những lỗi và hiểu lầm người mới hay mắc.',
+        quiz: 'Tự nghĩ đáp án trong đầu trước khi bấm chọn hoặc mở lời giải.',
+        summary: 'Chốt lại các điểm cốt lõi trước khi sang bài tiếp theo.',
+      };
+
+      const phaseStoreKey = `oscp-phases:${currentCode}`;
+      function readPhaseDone() {
+        try { return JSON.parse(localStorage.getItem(phaseStoreKey) || '[]'); } catch { return []; }
+      }
+      function writePhaseDone(arr) {
+        try { localStorage.setItem(phaseStoreKey, JSON.stringify(arr)); } catch {}
+      }
+
+      const sections = [];
+      h2s.forEach((h2) => {
+        const sec = document.createElement('section');
+        sec.className = 'lesson-phase';
+
+        const head = document.createElement('div');
+        head.className = 'phase-head';
+
+        const badge = document.createElement('span');
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'phase-toggle';
+        toggle.textContent = 'Thu gọn';
+        toggle.setAttribute('aria-expanded', 'true');
+
+        h2.parentNode.insertBefore(sec, h2);
+        head.appendChild(badge);
+        head.appendChild(h2);
+        head.appendChild(toggle);
+        sec.appendChild(head);
+
+        const bodyWrap = document.createElement('div');
+        bodyWrap.className = 'phase-body';
+        while (sec.nextSibling && sec.nextSibling.tagName !== 'H2') {
+          bodyWrap.appendChild(sec.nextSibling);
+        }
+
+        const meta = classify(h2.textContent || '', bodyWrap);
+        sec.dataset.phase = meta.key;
+        sec.dataset.group = meta.group;
+        badge.className = `phase-badge phase-${meta.key}`;
+        badge.textContent = meta.label;
+
+        if (PHASE_CUES[meta.key]) {
+          const cue = document.createElement('p');
+          cue.className = 'phase-cue';
+          cue.textContent = PHASE_CUES[meta.key];
+          sec.appendChild(cue);
+        }
+
+        sec.appendChild(bodyWrap);
+
+        if (bodyWrap.querySelector('.lab-brief, .lenh')) {
+          sec.dataset.hasLab = '1';
+        }
+
+        const foot = document.createElement('div');
+        foot.className = 'phase-foot';
+        const doneBtn = document.createElement('button');
+        doneBtn.type = 'button';
+        doneBtn.className = 'phase-done-btn';
+        doneBtn.dataset.group = meta.group;
+        doneBtn.textContent = 'Đánh dấu xong phần này';
+        foot.appendChild(doneBtn);
+        sec.appendChild(foot);
+
+        toggle.addEventListener('click', () => {
+          const collapsed = sec.classList.toggle('is-collapsed');
+          toggle.textContent = collapsed ? 'Mở ra' : 'Thu gọn';
+          toggle.setAttribute('aria-expanded', String(!collapsed));
+        });
+
+        sections.push(sec);
+      });
+
+      const groups = ['theory', 'practice', 'defense', 'quiz'];
+      const bar = document.querySelector('.phase-bar');
+      const btns = bar ? [...bar.querySelectorAll('.phase-btn')] : [];
+      const progEl = bar?.querySelector('.phase-progress');
+      const stepper = document.querySelector('.phase-stepper');
+      const prevBtn = stepper?.querySelector('.phase-prev');
+      const nextBtn = stepper?.querySelector('.phase-next');
+      let activeFilter = 'all';
+
+      function paintProgress() {
+        const done = readPhaseDone();
+        btns.forEach((b) => {
+          const f = b.dataset.filter;
+          if (f !== 'all') b.classList.toggle('is-phase-done', done.includes(f));
+        });
+        sections.forEach((sec) => {
+          const g = sec.dataset.group;
+          const isDone = g ? done.includes(g) : false;
+          sec.classList.toggle('is-phase-done', isDone);
+          const db = sec.querySelector('.phase-done-btn');
+          if (db) {
+            db.classList.toggle('is-done', isDone);
+            db.textContent = isDone ? 'Đã xong chặng này ✓' : 'Đánh dấu xong phần này';
+          }
+        });
+        if (progEl) progEl.textContent = `${done.filter((g) => groups.includes(g)).length}/4 xong`;
+      }
+
+      sections.forEach((sec) => {
+        const db = sec.querySelector('.phase-done-btn');
+        db?.addEventListener('click', () => {
+          const g = sec.dataset.group;
+          if (!g) return;
+          const done = readPhaseDone();
+          const next = done.includes(g) ? done.filter((x) => x !== g) : [...done, g];
+          writePhaseDone(next);
+          paintProgress();
+        });
+      });
+
+      if ('IntersectionObserver' in window && sections.length) {
+        const phaseIo = new IntersectionObserver(
+          (entries) => {
+            if (activeFilter !== 'all') return;
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                const g = e.target.dataset.group;
+                btns.forEach((b) => b.classList.toggle('is-reading', b.dataset.filter === g));
+              }
+            });
+          },
+          { rootMargin: '-120px 0px -65% 0px' },
+        );
+        sections.forEach((sec) => phaseIo.observe(sec));
+      }
+
+      function applyFilter(filter, scrollTop = false) {
+        activeFilter = filter;
+        btns.forEach((b) => b.classList.toggle('is-active', b.dataset.filter === filter));
+        sections.forEach((sec) => {
+          const show =
+            filter === 'all' ||
+            sec.dataset.group === filter ||
+            (filter === 'practice' && sec.dataset.hasLab === '1');
+          sec.hidden = !show;
+        });
+        if (stepper) {
+          const idx = groups.indexOf(filter);
+          stepper.hidden = idx === -1;
+          if (idx !== -1) {
+            if (prevBtn) prevBtn.disabled = idx === 0;
+            if (nextBtn) {
+              nextBtn.textContent =
+                idx === groups.length - 1
+                  ? 'Hoàn thành chặng cuối ✓'
+                  : 'Xong chặng này → Sang chặng tiếp';
+            }
+          }
+        }
+        if (scrollTop && bar) {
+          bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+
+      btns.forEach((b) => b.addEventListener('click', () => applyFilter(b.dataset.filter)));
+      prevBtn?.addEventListener('click', () => {
+        const idx = groups.indexOf(activeFilter);
+        if (idx > 0) applyFilter(groups[idx - 1], true);
+      });
+      nextBtn?.addEventListener('click', () => {
+        const idx = groups.indexOf(activeFilter);
+        if (idx === -1) return;
+        const done = readPhaseDone();
+        if (!done.includes(activeFilter)) {
+          writePhaseDone([...done, activeFilter]);
+          paintProgress();
+        }
+        if (idx < groups.length - 1) {
+          applyFilter(groups[idx + 1], true);
+        } else {
+          applyFilter('all', true);
+        }
+      });
+
+      paintProgress();
+
+      // Bấm link trong mục lục sẽ tự bỏ lọc và mở phần bị thu gọn để không bị nhảy hụt.
+      document.querySelectorAll('.toc a[href^="#"]').forEach((a) => {
+        a.addEventListener('click', () => {
+          applyFilter('all');
+          const id = decodeURIComponent(a.getAttribute('href').slice(1));
+          const target = document.getElementById(id);
+          const sec = target?.closest('.lesson-phase');
+          if (sec && sec.classList.contains('is-collapsed')) {
+            sec.classList.remove('is-collapsed');
+            const t = sec.querySelector('.phase-toggle');
+            if (t) {
+              t.textContent = 'Thu gọn';
+              t.setAttribute('aria-expanded', 'true');
+            }
+          }
+        });
+      });
+    })();
+  })();
+</script>
+
+<style>
+  .lesson-grid { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 40px; padding-top: 28px; }
+  .sidebar { font-size: 0.88rem; position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 96px); overflow-y: auto; padding-right: 6px; }
+  .sidebar summary { font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+  .side-level-name { font-weight: 600; color: var(--muted); margin: 14px 0 4px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .sidebar ul { list-style: none; padding: 0; margin: 0; }
+  .sidebar li { margin: 0; }
+  .sidebar a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--text); text-decoration: none; line-height: 1.4; }
+  .sidebar a:hover { background: var(--surface-2); }
+  .sidebar a[aria-current='page'] { background: var(--accent-soft); font-weight: 600; }
+  .sidebar a.is-done .side-code { color: var(--good); }
+  .sidebar a.is-done .side-code::after { content: ' ✓'; }
+  .side-code { font-family: var(--mono); color: var(--muted); font-size: 0.8rem; }
+  .lesson { max-width: 760px; min-width: 0; }
+  .crumb { font-size: 0.85rem; color: var(--muted); margin: 0; }
+  .crumb a { color: var(--muted); }
+  .code { font-family: var(--mono); color: var(--accent); font-size: 0.8em; margin-right: 4px; }
+  .lead { font-size: 1.1rem; color: var(--muted); }
+  .meta { font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .badge { background: var(--warn-soft); color: var(--warn); padding: 1px 8px; border-radius: 99px; font-size: 0.78rem; }
+  .objectives { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 18px 4px; margin: 20px 0 8px; }
+  .obj-label { font-weight: 600; margin: 0 0 6px; }
+  .recall { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 12px 16px 6px; margin: 14px 0 8px; background: var(--surface); }
+  .recall-h { margin: 0 0 8px; font-weight: 600; font-size: 0.92rem; }
+  .recall-h span { font-weight: 400; color: var(--muted); }
+  .recall :global(details.hint) { margin: 0 0 8px; }
+  .recall :global(details.hint > summary) { color: var(--text); font-weight: 500; }
+  .recall-src { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); margin-left: 6px; }
+  .cmd-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 10px 16px; margin: 36px 0 0; }
+  .cmd-card summary { cursor: pointer; font-weight: 600; }
+  .cmd-count { color: var(--muted); font-weight: 400; }
+  .cmd-note { font-size: 0.86rem; color: var(--muted); margin: 8px 0; }
+  .cmd-list { list-style: none; margin: 0; padding: 0; }
+  .cmd-list :global(li) { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); margin: 0; }
+  .cmd-list :global(code) { background: none; padding: 0; font-size: 0.82rem; overflow-wrap: anywhere; min-width: 0; }
+  .done-row { margin: 24px 0 16px; }
+  .read-bar { position: sticky; top: 59px; z-index: 4; height: 3px; background: transparent; }
+  .read-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.1s linear; }
+  .prereq { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; font-size: 0.88rem; margin: 14px 0 0; }
+  .prereq-label { color: var(--muted); font-weight: 600; }
+  .prereq a { border: 1px solid var(--line); background: var(--surface); border-radius: 99px; padding: 2px 10px; text-decoration: none; color: var(--text); }
+  .prereq a:hover { border-color: var(--accent); }
+  .prereq a.is-done { border-color: var(--good); color: var(--good); }
+  .prereq a.is-done::after { content: ' ✓'; }
+  .toc { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 10px 16px; margin: 16px 0 8px; font-size: 0.92rem; }
+  .toc summary { cursor: pointer; font-weight: 600; }
+  .toc-count { color: var(--muted); font-weight: 400; font-size: 0.82rem; margin-left: 6px; }
+  .toc ol { list-style: none; margin: 8px 0 2px; padding: 0; columns: 2; column-gap: 28px; }
+  .toc li { margin: 0; break-inside: avoid; }
+  .toc a { display: block; padding: 2px 8px; border-left: 2px solid transparent; color: var(--text); text-decoration: none; line-height: 1.45; }
+  .toc a:hover { color: var(--accent); }
+  .toc a.is-here { border-left-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .toc-d2 a { font-weight: 600; margin-top: 4px; }
+  .toc-d3 a { padding-left: 20px; color: var(--muted); font-size: 0.88rem; }
+  .prose :global(h2), .prose :global(h3) { scroll-margin-top: 76px; }
+  .phase-bar { position: sticky; top: 62px; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 18px 0 12px; padding: 9px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04); }
+  .phase-bar-label { font-size: 0.82rem; font-weight: 600; color: var(--muted); margin-right: 4px; }
+  .phase-btn { font: inherit; font-size: 0.8rem; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+  .phase-btn:hover { border-color: var(--accent); }
+  .phase-btn.is-active { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+  .phase-btn.is-reading:not(.is-active) { border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+  .phase-btn.is-phase-done::after { content: ' ✓'; color: var(--good); font-weight: 700; }
+  .phase-progress { margin-left: auto; font-size: 0.78rem; font-family: var(--mono); color: var(--muted); }
+  .phase-stepper { display: flex; justify-content: space-between; gap: 12px; margin: 20px 0 8px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .prose :global(.lesson-phase) { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin: 44px 0; background: var(--bg); }
+  .prose :global(.lesson-phase[data-phase="intro"]) { background: var(--surface); border-color: var(--line); border-left-color: var(--muted); }
+  .prose :global(.lesson-phase[data-phase="visual"]) { background: var(--surface); border-color: var(--line); border-left: 4px solid var(--accent); }
+  .prose :global(.lesson-phase[data-phase="theory"]) { border-color: transparent; border-left: 3px solid var(--line); padding: 4px 0 4px 18px; border-radius: 0; }
+  .prose :global(.lesson-phase[data-phase="theory"] .phase-body > p),
+  .prose :global(.lesson-phase[data-phase="theory"] .phase-body > ul),
+  .prose :global(.lesson-phase[data-phase="theory"] .phase-body > ol),
+  .prose :global(.lesson-phase[data-phase="intro"] .phase-body > p) { max-width: 65ch; }
+  .prose :global(.lesson-phase[data-phase="practice"]),
+  .prose :global(.lesson-phase[data-has-lab="1"]) { background: var(--surface); border-color: rgba(15, 118, 110, 0.28); border-left: 4px solid var(--accent); }
+  .prose :global(.lesson-phase[data-phase="defense"]) { background: rgba(46, 160, 67, 0.05); border-color: rgba(46, 160, 67, 0.25); border-left: 4px solid var(--good); }
+  .prose :global(.lesson-phase[data-phase="pitfalls"]) { background: var(--warn-soft); border-color: rgba(224, 168, 0, 0.35); border-left: 4px solid var(--warn); }
+  .prose :global(.lesson-phase[data-phase="quiz"]),
+  .prose :global(.lesson-phase[data-phase="summary"]) { background: var(--surface); border-color: rgba(123, 97, 255, 0.28); border-left: 4px solid #7b61ff; }
+  .prose :global(.phase-body > :last-child) { margin-bottom: 0; }
+  .prose :global(.phase-head) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 6px; }
+  .prose :global(.phase-head h2) { margin: 0; flex: 1 1 auto; }
+  .prose :global(.phase-cue) { font-size: 0.86rem; color: var(--muted); font-style: italic; margin: 0 0 14px; }
+  .prose :global(.phase-foot) { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .prose :global(.phase-done-btn) { font: inherit; font-size: 0.78rem; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+  .prose :global(.phase-done-btn:hover) { border-color: var(--accent); color: var(--text); }
+  .prose :global(.phase-done-btn.is-done) { border-color: var(--good); color: var(--good); background: var(--good-soft); font-weight: 600; }
+  .prose :global(.lesson-phase.is-collapsed .phase-cue),
+  .prose :global(.lesson-phase.is-collapsed .phase-foot) { display: none; }
+  .prose :global(.phase-badge) { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 9px; border-radius: 99px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .prose :global(.phase-badge.phase-intro) { background: var(--surface-2); color: var(--text); }
+  .prose :global(.phase-badge.phase-visual) { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .prose :global(.phase-badge.phase-practice) { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .prose :global(.phase-badge.phase-defense) { background: rgba(46, 160, 67, 0.14); color: var(--good); border-color: transparent; }
+  .prose :global(.phase-badge.phase-pitfalls) { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .prose :global(.phase-badge.phase-quiz),
+  .prose :global(.phase-badge.phase-summary) { background: rgba(123, 97, 255, 0.14); color: #7b61ff; border-color: transparent; }
+  .prose :global(.phase-toggle) { font: inherit; font-size: 0.76rem; padding: 2px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+  .prose :global(.phase-toggle:hover) { color: var(--text); border-color: var(--accent); }
+  .prose :global(.lesson-phase.is-collapsed .phase-body) { display: none; }
+  .prose :global(.lesson-phase.is-collapsed) { margin-bottom: 16px; }
+  .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border-top: 1px solid var(--line); padding-top: 20px; }
+  .pager-link { display: block; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; text-decoration: none; color: var(--text); font-size: 0.92rem; line-height: 1.4; }
+  .pager-link:hover { border-color: var(--accent); }
+  .pager-link span { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 2px; }
+  .pager-link.next { text-align: right; }
+  @media (max-width: 900px) {
+    .lesson-grid { grid-template-columns: 1fr; gap: 12px; }
+    .sidebar { position: static; max-height: none; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+    .sidebar details:not([open]) { margin: 0; }
+    .toc ol { columns: 1; }
+  }
+  @media (max-width: 520px) {
+    .pager { grid-template-columns: 1fr; }
+    .pager-link.next { text-align: left; }
+  }
+</style>
+<script is:inline>
+  // Trên màn hình nhỏ, thu gọn danh sách bài để nội dung lên trước.
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    document.querySelector('.sidebar details')?.removeAttribute('open');
+    document.querySelector('.toc')?.removeAttribute('open');
+  }
+</script>

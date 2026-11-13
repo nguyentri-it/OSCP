@@ -1,0 +1,378 @@
+---
+title: "Lab: mồi nhử và ngăn chặn tự động"
+code: "8.5"
+level: 8
+summary: "Bài 8.4 nói mồi nhử cho tín hiệu gần như không thể nhầm và là nhiên liệu cho ngăn chặn tự động. Lab này cho bạn tự làm: cài mồi vào chính lab Wazuh của bài 8.3, viết luật cho từng mồi, nối một mồi với lệnh chặn tự động có hẹn giờ tự gỡ, rồi tự ra đòn và đo bao lâu từ lúc chạm mồi tới lúc bị chặn."
+duration: "150 phút"
+updated: "2026-11-09"
+objectives:
+  - "Cài ba loại mồi vào lab: file mồi trên Linux, tài khoản mồi có thông tin đăng nhập để lộ, file mồi trên Windows"
+  - "Viết luật Wazuh mức cao cho từng mồi và thử bằng wazuh-logtest trước khi tin"
+  - "Nối một mồi với phản ứng tự động có hẹn giờ tự gỡ và danh sách không bao giờ chặn"
+  - "Đo thời gian từ đòn tới lúc phát hiện và lúc chặn, và biết mồi nào không đủ dữ liệu để chặn tự động"
+  - "Tuỳ chọn: tài khoản SPN mồi trên domain controller và khoá đám mây mồi"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Ở bài 8.4 bạn đọc về thỏi vàng giả gắn chuông trong kho tiền: không nhân viên nào có lý do chạm vào nó, nên ai nhấc nó lên thì cửa tự khoá. Hôm nay bạn tự đặt thỏi vàng vào kho của mình, tự đóng vai tên trộm nhấc nó lên, và đứng xem cửa có khoá thật không, khoá sau bao nhiêu giây.
+
+## Kiến thức chính
+
+### Chuẩn bị
+
+Dùng nguyên lab của bài 8.3: Kali, Ubuntu mục tiêu (agent Wazuh, auditd, tài khoản `hocvien`), Windows mục tiêu (agent Wazuh, Sysmon), máy Wazuh. Phần tuỳ chọn cần thêm lab AD ở Cấp 3, với agent Wazuh cài trên domain controller.
+
+<Callout type="warn">
+Chỉ làm trong lab của bạn. Chụp snapshot mọi máy trước khi bắt đầu. Ở bài 2, chính máy Kali của bạn sẽ bị chặn trong 10 phút: đó là kết quả mong muốn, không phải lỗi.
+</Callout>
+
+Bài này có năm mồi. Chỉ một mồi được gắn chặn tự động, vì chỉ riêng nó cho ta biết địa chỉ IP của kẻ chạm vào (đủ để chặn IP đó). Bảng dưới tóm tắt:
+
+| Mồi | Đặt ở đâu | Nguồn log | Luật | Chặn tự động? |
+|---|---|---|---|---|
+| File mồi trên Linux | `/srv/chia-se/ke-toan/` | auditd | 100200 | Không: log không có IP nguồn |
+| Tài khoản mồi `backup-old` | Thông tin đăng nhập để lộ trong file mồi | auth.log (sshd) | 100210 | **Có:** chặn IP nguồn 10 phút |
+| File mồi trên Windows | `C:\ChiaSe\KeToan\` | Security 4663 | 100220 | Không trong lab: cần EDR để cô lập máy |
+| Tài khoản SPN mồi (tuỳ chọn) | AD | Security 4769 trên DC | 100230 | Không trong lab |
+| Khoá đám mây mồi (tuỳ chọn) | File cấu hình trên máy dev | Dịch vụ Canarytokens | — | Không |
+
+Để ý cách các mồi **dẫn tới nhau**: kẻ tấn công lục được file mồi, trong đó có thông tin đăng nhập của tài khoản mồi, và thử dùng nó. Mỗi bước là một tiếng chuông.
+
+## Bài 1: File mồi trên Linux
+
+**Đặt mồi trên Ubuntu mục tiêu.** Nội dung phải trông thật, nhưng không chứa gì thật:
+
+<Lenh noi="Terminal trên máy Ubuntu mục tiêu" muc="Tạo file mồi trông giống ghi chú mật khẩu để quên và gắn luật auditd theo dõi mọi thao tác mở đọc" quyen="Cần quyền sudo">
+<Terminal title="Tạo file mồi và gắn luật auditd theo dõi đọc">
+
+```text
+sudo mkdir -p /srv/chia-se/ke-toan
+sudo tee /srv/chia-se/ke-toan/mat-khau-he-thong.txt > /dev/null <<'EOF'
+# Tai khoan sao luu cu - KHONG XOA (anh Thanh IT)
+backup-old / Sm#2019-q7Lp!vX9wZ   (dang nhap SSH may chu luu tru)
+EOF
+sudo chmod 644 /srv/chia-se/ke-toan/mat-khau-he-thong.txt
+
+# auditd ghi lại mọi lần mở file này để đọc
+echo '-w /srv/chia-se/ke-toan/mat-khau-he-thong.txt -p r -k moi_file' | sudo tee /etc/audit/rules.d/60-moi-nhu.rules
+sudo augenrules --load
+sudo auditctl -l | grep moi_file
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sudo tee /srv/chia-se/ke-toan/mat-khau-he-thong.txt > /dev/null <<'EOF'`: tạo file mồi chứa ghi chú mật khẩu giả trông như do nhân viên IT để quên, dẫn hướng kẻ tấn công sang tài khoản mồi `backup-old`.
+- `-w /srv/chia-se/ke-toan/mat-khau-he-thong.txt -p r -k moi_file`: đặt bẫy ở nhân Linux qua `auditd`, ghi lại mọi hành vi mở đọc (`-p r`) vào file mồi và gắn nhãn `moi_file` để Wazuh dễ bắt.
+- `sudo augenrules --load` và `sudo auditctl -l | grep moi_file`: nạp luật mới vào nhân và kiểm tra chắc chắn luật đã có hiệu lực.
+
+</div>
+
+<div slot="doc">
+
+- Lệnh `sudo auditctl -l | grep moi_file` phải in lại đúng dòng luật `-w /srv/chia-se/ke-toan/mat-khau-he-thong.txt -p r -k moi_file`; nếu trống nghĩa là luật chưa được nạp vào nhân.
+
+</div>
+
+</Lenh>
+
+Agent Wazuh đã đọc `/var/log/audit/audit.log` từ bài 8.3, nên không cần sửa gì thêm trên Ubuntu.
+
+**Viết luật trên máy Wazuh**, thêm vào `/var/ossec/etc/rules/local_rules.xml`:
+
+```xml
+<group name="local,deception,">
+  <rule id="100200" level="14">
+    <if_group>audit</if_group>
+    <field name="audit.key">moi_file</field>
+    <description>MỒI: file mồi bị đọc bởi auid=$(audit.auid) bằng $(audit.exe)</description>
+    <mitre>
+      <id>T1083</id>
+      <id>T1552.001</id>
+    </mitre>
+  </rule>
+</group>
+```
+
+Thử bằng `sudo /var/ossec/bin/wazuh-logtest` với một dòng log auditd thật (tạo bằng cách tự `cat` file mồi trên Ubuntu rồi lấy dòng log đó), thấy khớp `100200` rồi mới `sudo systemctl restart wazuh-manager`.
+
+**Ra đòn.** Từ Kali, SSH vào Ubuntu bằng `hocvien` như bài 8.3, rồi làm đúng việc kẻ tấn công hay làm sau khi vào được: lục tìm mật khẩu.
+
+```bash
+grep -ril "mat khau\|password\|backup" /srv /opt /home 2>/dev/null
+cat /srv/chia-se/ke-toan/mat-khau-he-thong.txt
+```
+
+**Tìm lại:** cảnh báo `100200` mức 14 trên dashboard, kèm `audit.auid` là số hiệu của `hocvien` và `audit.exe` là `/usr/bin/grep` hoặc `/usr/bin/cat`.
+
+**Câu hỏi:** Cảnh báo kêu ở lệnh `grep` hay chỉ ở lệnh `cat`? Nếu `hocvien` đã leo lên root bằng `sudo find` (bài 8.3) rồi mới đọc file, `audit.auid` hiện gì? Phần mềm nào trong doanh nghiệp thật có thể đọc file này một cách hợp lệ?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+`grep -r` mở từng file để đọc nội dung, nên chạm mồi ngay ở bước lục tìm, trước cả `cat`. `auid` là người đăng nhập ban đầu và không đổi khi leo quyền, nên vẫn là `hocvien`: mồi chỉ thẳng vào tài khoản đã bị chiếm.
+
+Phần mềm sao lưu, máy quét chống mã độc, công cụ lập chỉ mục có thể đọc file một cách hợp lệ; liệt kê chúng và loại trừ bằng điều kiện trên `audit.exe` hoặc `audit.auid`, nếu không mồi sẽ kêu oan mỗi đêm (bài 8.4).
+
+</details>
+
+## Bài 2: Tài khoản mồi và chặn tự động
+
+**Đặt mồi trên Ubuntu mục tiêu.** Tài khoản `backup-old` tồn tại nhưng không làm được gì: không có mật khẩu, không có shell, và bị sshd từ chối thẳng. Thông tin đăng nhập trong file mồi là giả.
+
+<Lenh noi="Terminal trên máy Ubuntu mục tiêu" muc="Tạo tài khoản mồi backup-old bị khoá hoàn toàn, chỉ dùng để sinh cảnh báo khi có ai thử đăng nhập SSH" quyen="Cần quyền sudo">
+<Terminal title="Tạo tài khoản mồi backup-old và chặn đăng nhập SSH">
+
+```text
+sudo useradd -M -s /usr/sbin/nologin -c "Sao luu cu - khong xoa" backup-old
+echo "DenyUsers backup-old" | sudo tee /etc/ssh/sshd_config.d/10-moi-nhu.conf
+sudo sshd -t && sudo systemctl reload ssh
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sudo useradd -M -s /usr/sbin/nologin ... backup-old`: tạo tài khoản mồi không có thư mục nhà (`-M`), không có mật khẩu và khoá shell đăng nhập bằng `/usr/sbin/nologin`.
+- `DenyUsers backup-old`: cấm thẳng tài khoản này ở tầng cấu hình SSH để triệt tiêu mọi rủi ro mở tunnel chuyển tiếp cổng.
+- `sudo sshd -t && sudo systemctl reload ssh`: kiểm tra cú pháp cấu hình SSH hợp lệ rồi mới nạp lại dịch vụ.
+
+</div>
+
+<div slot="doc">
+
+- `sudo sshd -t` chạy êm (không in lỗi nào) nghĩa là cấu hình hợp lệ và dịch vụ `ssh` đã được nạp lại an toàn.
+
+</div>
+
+</Lenh>
+
+<Callout type="note">
+Vì sao cần <code>DenyUsers</code> mà không chỉ dựa vào shell <code>nologin</code>? Một tài khoản có mật khẩu thật nhưng shell <code>nologin</code> vẫn có thể dùng SSH để mở tunnel chuyển tiếp cổng (bài 3.3). Mồi mà mở được tunnel thì đã thành lỗ hổng. Điều kiện số 2 của bài 8.4: mồi không có quyền thật.
+</Callout>
+
+**Viết luật**, thêm vào cùng nhóm trong `local_rules.xml`:
+
+```xml
+  <rule id="100210" level="14">
+    <if_group>sshd</if_group>
+    <match>backup-old</match>
+    <description>MỒI: thử đăng nhập SSH bằng tài khoản mồi backup-old từ $(srcip)</description>
+    <mitre>
+      <id>T1078</id>
+      <id>T1110</id>
+    </mitre>
+  </rule>
+```
+
+**Nối với chặn tự động.** Trên máy Wazuh, mở `/var/ossec/etc/ossec.conf`:
+
+1. Kiểm tra đã có khối `<command>` tên `firewall-drop` (bản 4.x có sẵn). Lệnh này thêm luật chặn IP nguồn vào tường lửa của chính máy sinh cảnh báo.
+2. Thêm IP của máy Wazuh vào khối `<global>` có sẵn, để không bao giờ bị chặn: `<white_list>IP-máy-Wazuh</white_list>`. Ở doanh nghiệp, danh sách này gồm máy quản trị, máy quét lỗ hổng, DC.
+3. Thêm khối phản ứng:
+
+```xml
+<active-response>
+  <disabled>no</disabled>
+  <command>firewall-drop</command>
+  <location>local</location>
+  <rules_id>100210</rules_id>
+  <timeout>600</timeout>
+</active-response>
+```
+
+`location local` nghĩa là chạy trên chính agent sinh cảnh báo (Ubuntu mục tiêu). `timeout 600` là **cầu dao đảo ngược**: sau 10 phút luật chặn tự gỡ. Thử luật bằng `wazuh-logtest` với một dòng log sshd có `backup-old`, rồi khởi động lại manager.
+
+**Ra đòn.** Trên Kali, mở hai cửa sổ terminal. Cửa sổ 1: giữ phiên SSH `hocvien` từ bài 1. Cửa sổ 2: ghi lại giờ, rồi dùng thông tin vừa lục được:
+
+```bash
+date +%T
+ssh backup-old@<IP Ubuntu>          # nhập mật khẩu lấy từ file mồi
+```
+
+**Tìm lại và kiểm chứng:**
+
+- Trên dashboard: cảnh báo `100210` kèm IP của Kali, ngay sau đó là cảnh báo của chính Wazuh rằng phản ứng tự động đã chạy.
+- Cửa sổ 1 trên Kali: phiên `hocvien` đứng hình. Mọi kết nối từ Kali tới Ubuntu bị cắt.
+- Trên Ubuntu (đăng nhập từ màn hình máy ảo):
+
+```bash
+sudo iptables -S | grep <IP Kali>
+# -A INPUT -s 10.10.14.7/32 -j DROP
+# -A FORWARD -s 10.10.14.7/32 -j DROP
+sudo tail -n 5 /var/ossec/logs/active-responses.log    # dòng "add" lúc chặn, dòng "delete" sau 10 phút
+```
+
+Chờ 10 phút, thử SSH lại bằng `hocvien`: kết nối trở lại. Đảo ngược đã chạy đúng.
+
+**Câu hỏi:** Từ lúc gõ Enter tới lúc bị chặn mất bao lâu? So với dòng "18 phút (chờ analyst)" trong bảng kiểm thử ở bài 8.4. Nếu kẻ tấn công đã ở trên một máy chủ nội bộ và chạm mồi từ đó, chặn IP máy chủ đó có ổn không?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+Trong lab thường chỉ vài giây: agent gửi log, manager khớp luật, gửi lệnh ngược về agent. Nhanh như vậy là vì tín hiệu gần như không thể nhầm nên không cần người duyệt. Nếu nguồn là một máy chủ nội bộ quan trọng, chặn nó có thể tự làm sập dịch vụ, và kẻ tấn công biết bạn tự chặn có thể cố tình chạm mồi từ máy quan trọng nhất.
+
+Đó là lý do có danh sách không bao giờ chặn, hẹn giờ tự gỡ, và ở doanh nghiệp thật là giới hạn số lần mỗi giờ (bài 8.4). Wazuh không có sẵn giới hạn số lần; thứ đó thường nằm ở nền tảng SOAR. Tuỳ chọn `<repeated_offenders>` của Wazuh thì làm điều ngược lại: tăng thời gian chặn với IP tái phạm.
+
+</details>
+
+## Bài 3: File mồi trên Windows
+
+**Đặt mồi trên Windows mục tiêu** (PowerShell quyền quản trị):
+
+```powershell
+New-Item -ItemType Directory -Force C:\ChiaSe\KeToan | Out-Null
+Set-Content C:\ChiaSe\KeToan\mat-khau-he-thong.txt 'backup-old / Sm#2019-q7Lp!vX9wZ (may chu luu tru)'
+
+# Bật audit truy cập file, rồi đặt SACL ghi lại việc đọc trên đúng file mồi
+auditpol /set /subcategory:"File System" /success:enable
+$f = 'C:\ChiaSe\KeToan\mat-khau-he-thong.txt'
+$acl = Get-Acl $f -Audit
+$rule = New-Object System.Security.AccessControl.FileSystemAuditRule('Everyone', 'ReadData', 'Success')
+$acl.AddAuditRule($rule)
+Set-Acl $f $acl
+```
+
+Bật "File System" không làm log tràn ngập: Windows chỉ ghi 4663 cho những file có SACL, tức là chỉ file mồi.
+
+**Một chỗ hay vấp.** Ở nhiều phiên bản, cấu hình mặc định của agent Wazuh trên Windows có một bộ lọc `<query>` cho kênh Security, loại bỏ vài mã sự kiện ồn, **trong đó có 4663**. Mở `C:\Program Files (x86)\ossec-agent\ossec.conf`, tìm khối có `<location>Security</location>`, xem dòng `<query>`.
+
+Nếu có `EventID != 4663` thì bỏ điều kiện đó, rồi `Restart-Service -Name wazuh`. Đây chính là câu hỏi thứ hai ở bài 8.2: dấu vết có, nhưng nguồn log có đưa nó về không?
+
+**Viết luật:**
+
+```xml
+  <rule id="100220" level="14">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4663$</field>
+    <field name="win.eventdata.objectName" type="pcre2">(?i)\\mat-khau-he-thong\.txt$</field>
+    <description>MỒI: file mồi trên $(win.system.computer) bị mở bởi $(win.eventdata.subjectUserName) qua $(win.eventdata.processName)</description>
+    <mitre>
+      <id>T1552.001</id>
+    </mitre>
+  </rule>
+```
+
+**Ra đòn.** Từ Kali, dùng `impacket-wmiexec` với tài khoản quản trị cục bộ như bài 8.3, rồi chạy `type C:\ChiaSe\KeToan\mat-khau-he-thong.txt`.
+
+**Tìm lại:** cảnh báo `100220`, và ngay trước nó là cảnh báo `100110` của bài 8.3 (shell sinh ra từ `WmiPrvSE.exe`). Hai cảnh báo cùng máy, cách nhau vài giây: một dòng thời gian rất rõ.
+
+**Câu hỏi:** Vì sao bài này không gắn chặn tự động cho mồi Windows? Trong doanh nghiệp thật, hành động tự động hợp lý cho tín hiệu này là gì?
+
+<details class="hint">
+<summary>Gợi ý</summary>
+
+Sự kiện 4663 cho biết tài khoản và tiến trình đã mở file, không cho biết IP nguồn: kẻ tấn công đang ở ngay trên máy đó. Chặn IP là vô nghĩa. Hành động đúng là cô lập máy bằng EDR và vô hiệu tài khoản `subjectUserName`, kèm danh sách máy không tự cô lập (máy chủ trọng yếu thì chỉ khoá tài khoản và báo người).
+
+Hai việc đó cần EDR hoặc SOAR có quyền trên AD, thứ lab này chưa có. Bài học: mỗi tín hiệu chỉ hỗ trợ được những hành động mà dữ liệu của nó cho phép.
+
+</details>
+
+## Bài 4 (tuỳ chọn): Tài khoản SPN mồi trên domain controller
+
+Cần lab AD ở Cấp 3 và agent Wazuh trên DC. Tạo tài khoản `svc-sqlbackup-old` có SPN bằng đúng lệnh ở bài 8.4. Kiểm tra DC đang ghi 4769:
+
+```powershell
+auditpol /get /subcategory:"Kerberos Service Ticket Operations"
+```
+
+Thêm luật:
+
+```xml
+  <rule id="100230" level="15">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4769$</field>
+    <field name="win.eventdata.serviceName" type="pcre2">(?i)^svc-sqlbackup-old$</field>
+    <description>MỒI: xin vé Kerberos cho tài khoản SPN mồi, từ $(win.eventdata.ipAddress)</description>
+    <mitre>
+      <id>T1558.003</id>
+    </mitre>
+  </rule>
+```
+
+Ra đòn bằng Kerberoasting như bài 3.5 (`impacket-GetUserSPNs ... -request`). Luật kêu dù công cụ xin vé RC4 hay AES. Trường `ipAddress` thường có dạng `::ffff:10.10.14.7`; nếu muốn gắn chặn tự động thì phải tách phần IPv4 ra trước.
+
+## Bài 5 (tuỳ chọn): Khoá đám mây mồi
+
+Dịch vụ miễn phí Canarytokens (của Thinkst) tạo được một cặp **AWS access key mồi**: khoá thật, không có quyền gì, và gửi email cảnh báo kèm IP nguồn khi có ai dùng nó. Dịch vụ cần một địa chỉ email để gửi cảnh báo; dùng email lab.
+
+1. Tạo khoá loại AWS API key trên trang Canarytokens.
+2. Đặt nó vào `~/.aws/credentials` của `hocvien` trên Ubuntu, dưới tên hồ sơ `sao-luu-cu`: đúng nơi kẻ tấn công lục tìm sau khi vào máy dev.
+3. Ra đòn: `aws s3 ls --profile sao-luu-cu`. Lệnh trả về lỗi từ chối truy cập; vài phút sau, email cảnh báo tới.
+
+Đây là phiên bản thử nghiệm của "khoá đám mây mồi" ở bài 8.4. Độ trễ vài phút là do dịch vụ đọc log của nhà cung cấp đám mây; với khoá mồi, phát hiện chậm vài phút vẫn rất đáng giá vì gần như không bao giờ báo nhầm.
+
+## Ráp thành dòng thời gian và đo
+
+Sau bài 1 tới bài 3, dòng thời gian trên dashboard trông như sau (minh hoạ):
+
+| Giờ | Máy | Cảnh báo | Ý nghĩa | Phản ứng |
+|---|---|---|---|---|
+| 10:02:11 | Ubuntu | 100200: `grep` đọc file mồi, auid=`hocvien` | Đang lục mật khẩu | Báo động mức cao |
+| 10:03:40 | Ubuntu | 100210: SSH bằng `backup-old` từ 10.10.14.7 | Dùng thông tin vừa lục được | Chặn IP lúc 10:03:42 |
+| 10:13:42 | Ubuntu | Phản ứng tự động: gỡ chặn | Hết hẹn giờ | Analyst xem lại |
+| 10:21:05 | Windows | 100110 rồi 100220: wmiexec, `type` file mồi | Di chuyển ngang, lục mật khẩu | Báo động mức cao |
+
+Ghi lại ba con số cho từng mồi: **giờ ra đòn, giờ cảnh báo, giờ chặn**. Đây là kiểu số liệu mà bảng kiểm thử ở bài 8.4 cần, và là thứ bạn đưa vào báo cáo cho lãnh đạo ở bài 8.8.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Những gì bạn vừa tự tay dựng trong lab chính là phiên bản thu nhỏ của một hệ thống phòng thủ vận hành ở tốc độ máy. Mỗi mồi nhử được cài đặt đều phải đáp ứng đủ ba nguyên tắc: trông thật như một sơ suất của quản trị viên, hoàn toàn không có quyền thật và được nối với một luật cảnh báo độ ưu tiên cao đã thử qua `wazuh-logtest`.
+
+Hơn nữa, các mồi nên được sắp đặt dẫn nối vào nhau — thông tin đọc được ở file mồi lại thúc kẻ tấn công thử đăng nhập vào tài khoản mồi, khiến mỗi bước đi đều gióng lên một hồi chuông.
+
+Bạn chỉ nên gắn phản ứng chặn tự động khi tín hiệu vừa chắc chắn vừa cung cấp đủ dữ liệu hành động (như địa chỉ IP nguồn cho tường lửa), đồng thời luôn đi kèm cầu dao hẹn giờ tự gỡ (`timeout`), danh sách tài sản miễn trừ (`white_list`) và thói quen kiểm tra kỹ bộ lọc nguồn log của agent trước khi nghi ngờ luật trên SIEM.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Lab mồi nhử"
+  storageKey="deception-lab"
+  items={[
+    { label: 'File mồi trên Ubuntu có luật auditd khoá moi_file; luật 100200 kêu khi grep hoặc cat' },
+    { label: 'Tài khoản backup-old không mật khẩu, nologin, nằm trong DenyUsers' },
+    { label: 'Luật 100210 khớp trong wazuh-logtest và kêu khi SSH bằng backup-old' },
+    { label: 'Phản ứng firewall-drop có timeout 600; IP máy Wazuh trong white_list' },
+    { label: 'Đã thấy Kali bị chặn, thấy dòng add và delete trong active-responses.log' },
+    { label: 'Đã bỏ 4663 khỏi bộ lọc query của agent Windows; luật 100220 kêu', hint: 'Câu hỏi thứ hai ở bài 8.2' },
+    { label: 'Đã ghi giờ ra đòn, giờ cảnh báo, giờ chặn cho từng mồi' },
+    { label: 'Tuỳ chọn: luật 100230 kêu khi Kerberoasting, dù vé RC4 hay AES' },
+    { label: 'Tuỳ chọn: email cảnh báo từ khoá AWS mồi đã tới' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Đặt tên file mồi lộ liễu kiểu `honeypot.txt` hoặc viết nội dung đùa cợt bên trong.** Bất kỳ kẻ tấn công con người hay AI agent nào cũng sẽ nhận ra ngay lập tức và lặng lẽ né tránh, làm mất đi cơ hội phát hiện sớm.
+- **Đặt mật khẩu thật cho tài khoản mồi trên Linux và chủ quan tin rằng shell `nologin` là đủ an toàn.** Kẻ tấn công biết mật khẩu vẫn có thể dùng tài khoản đó mở đường hầm chuyển tiếp cổng qua SSH (`ssh -N -L`), biến chính cái bẫy của bạn thành bàn đạp xoay trục vào mạng trong.
+- **Gắn lệnh chặn IP tự động cho mọi loại mồi kể cả những sự kiện chỉ ghi nhận thao tác đọc file cục bộ.** Vì sự kiện đọc file (`auditd` hay Windows 4663) không hề chứa địa chỉ IP nguồn của kẻ tấn công, lệnh chặn tường lửa sẽ thất bại hoặc vô tác dụng.
+- **Bật phản ứng chặn tự động mà quên cấu hình thời gian tự gỡ (`timeout`) và danh sách miễn trừ (`white_list`).** Chỉ cần một lần kẻ tấn công giả mạo hoặc đứng từ máy chủ trọng yếu chạm vào mồi, hệ thống sẽ tự khoá cứng dịch vụ của chính mình mà không tự phục hồi được.
+- **Thấy dashboard im lặng khi mở file mồi trên Windows rồi vội kết luận mình viết sai biểu thức chính quy.** Rất nhiều khi thủ phạm thực sự nằm ở bộ lọc `<query>` mặc định trong file `ossec.conf` của agent Windows đang chủ động loại bỏ sự kiện 4663 ngay từ gốc.
+- **Thực hành xong cả bài lab nhưng quên ghi chép lại mốc giờ ra đòn, giờ lên cảnh báo và giờ tường lửa cắt kết nối.** Không có ba con số đo lường thực tế đó, bạn sẽ không bao giờ chứng minh được tốc độ phản ứng của hệ thống trước ban lãnh đạo.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao trong lab chỉ mồi tài khoản SSH được gắn chặn tự động?', options: ['Vì Wazuh chỉ hỗ trợ SSH', 'Vì đó là tín hiệu vừa gần như không thể nhầm vừa có IP nguồn để chặn; mồi file chỉ cho biết tài khoản và tiến trình trên chính máy đó', 'Vì mồi file không quan trọng'], answer: 1, explain: 'Hành động tự động phải khớp với dữ liệu tín hiệu cung cấp. Mồi file cần cô lập máy và khoá tài khoản, việc của EDR hoặc SOAR.' },
+    { q: 'Tác dụng của timeout 600 trong khối active-response là gì?', options: ['Chờ 10 phút rồi mới chặn', 'Tự gỡ luật chặn sau 10 phút: một cầu dao đảo ngược để chặn nhầm không kéo dài', 'Giới hạn 600 lần chặn'], answer: 1, explain: 'Mọi hành động tự động phải đảo ngược được (bài 8.4). Hẹn giờ tự gỡ là cách đơn giản nhất.' },
+    { q: 'Tài khoản mồi có mật khẩu thật, shell nologin, không có DenyUsers. Rủi ro là gì?', options: ['Không có rủi ro vì không vào được shell', 'Kẻ tấn công vẫn có thể dùng SSH để mở tunnel chuyển tiếp cổng; mồi đã thành lỗ hổng', 'Wazuh không ghi được log'], answer: 1, explain: 'Mồi không được có quyền thật. DenyUsers và không đặt mật khẩu khiến mọi lần thử đều chỉ là tiếng chuông.' },
+    { q: 'Đã đặt SACL và bật audit File System, mở file mồi trên Windows nhưng dashboard không có gì. Nên kiểm tra gì trước?', options: ['Viết lại luật', 'Bộ lọc query của agent Wazuh cho kênh Security có đang loại 4663 không, và sự kiện có trong Event Viewer trên máy không', 'Cài lại Windows'], answer: 1, explain: 'Thứ tự ba câu hỏi ở bài 8.2: có dấu vết trên máy chưa, nguồn log có đưa nó về không, rồi mới tới luật.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Một cái bẫy tốt phải trông thật, hoàn toàn không có quyền thật, luôn có người nghe chuông và được sắp đặt để mồi này dẫn kẻ tấn công bước sang mồi tiếp theo.
+- Mỗi mồi nhử cần một luật cảnh báo mức cao riêng biệt, được kiểm thử kỹ qua `wazuh-logtest` rồi mới kiểm chứng bằng chính đòn tấn công thật trong lab.
+- Chỉ kích hoạt chặn tự động khi tín hiệu vừa chắc chắn vừa cung cấp đủ dữ liệu cho hành động đó, và luôn đính kèm hẹn giờ tự gỡ cùng danh sách tài sản miễn trừ.
+- Khi cảnh báo không nổ, hãy kiểm tra bộ lọc nguồn log trên agent trước khi nghi ngờ cú pháp luật, và luôn bấm giờ từ lúc ra đòn tới lúc chặn để đo chính xác tốc độ phòng thủ.

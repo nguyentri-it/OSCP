@@ -1,0 +1,391 @@
+---
+title: "Mạng máy tính: OSI, IP và subnet"
+code: "1.1"
+level: 1
+summary: "Khi bạn vào được một máy lạ, câu hỏi đầu tiên là mình đang ở đâu trong mạng. Bài này giúp bạn đọc được địa chỉ IP, dải mạng và đường ra ngoài, để biết quét ở đâu và đi tiếp sang máy nào."
+duration: "80 phút + 40 phút bài tập"
+updated: "2026-11-09"
+objectives:
+  - "Giải thích được cách dữ liệu đi qua 7 tầng OSI bằng ví dụ gửi thư, và biết khi gặp lỗi thì hỏi tầng nào"
+  - "Đọc được cấu hình mạng của một máy bằng lệnh thật, và chỉ ra IP của mình, dải mạng và gateway"
+  - "Tự tính được dải địa chỉ của một mạng và kiểm chứng bằng ipcalc"
+  - "Giải thích được ARP và bảng định tuyến làm gì, và vì sao chúng quan trọng khi quét mạng"
+  - "Tự vẽ được bản đồ mạng lab của mình và đề xuất cách chia mạng để kẻ tấn công khó đi từ máy này sang máy khác"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import OsiLayers from '../../components/sim/OsiLayers.tsx';
+import SubnetCalculator from '../../components/sim/SubnetCalculator.tsx';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+
+## Hình dung trước
+
+Gửi một lá thư cần nhiều lớp công việc: bạn viết nội dung, cho vào phong bì, ghi địa chỉ, bưu điện phân loại, xe chở đi. Mỗi lớp chỉ lo đúng việc của mình, và người viết thư không cần biết chuyến xe đi đường nào. Mạng máy tính cũng chia việc thành các tầng như vậy, để mỗi tầng đơn giản và thay thế được.
+
+Vì sao người học pentest phải hiểu điều này? Hãy nghĩ tới lúc bạn chiếm được một máy trong mạng của khách hàng. Việc đầu tiên bạn cần biết không phải là "làm gì tiếp", mà là "mình đang ở đâu": máy này có địa chỉ gì, thuộc dải mạng nào, và xung quanh còn những máy nào bạn với tới được.
+
+Khi lệnh quét báo lỗi lạ, bạn cũng cần biết hỏi đúng chỗ: cáp, địa chỉ, đường đi, hay dịch vụ. Bài này cho bạn ngôn ngữ để đọc bản đồ mạng, và sau bài này bạn sẽ gõ các lệnh mạng gần như mỗi ngày.
+
+## Kiến thức chính
+
+### Mô hình OSI
+
+OSI chia việc truyền dữ liệu thành 7 tầng. Khi gửi, dữ liệu đi từ tầng 7 xuống tầng 1, mỗi tầng bọc thêm phần đầu của mình, giống như bỏ lá thư vào phong bì, rồi bỏ phong bì vào túi bưu kiện. Khi nhận, máy kia bóc ngược từ tầng 1 lên tầng 7.
+
+Bấm vào từng tầng để xem nó làm gì, rồi chuyển sang tab thứ hai để thấy quá trình đóng gói:
+
+<OsiLayers client:visible />
+
+Thực tế người ta hay dùng mô hình TCP/IP gọn hơn (4 tầng), nhưng OSI vẫn là ngôn ngữ chung để chỉ "lỗi này nằm ở tầng mấy". Khi đồng nghiệp nói "ping không thông", bạn biết đó là chuyện ở tầng 3 (địa chỉ và đường đi) chứ chưa phải dịch vụ web hỏng ở tầng 7.
+
+### Địa chỉ IP, phần mạng và phần host
+
+Địa chỉ IPv4 gồm 4 số, mỗi số từ 0 đến 255, ví dụ `192.168.1.10`. Bên trong là 32 bit, chia hai phần: **phần mạng** (máy thuộc mạng nào) và **phần host** (phân biệt máy trong cùng mạng), giống như địa chỉ nhà có tên đường và số nhà. Subnet mask, viết gọn bằng prefix như `/24`, cho biết bao nhiêu bit đầu là phần mạng.
+
+Mỗi mạng có hai địa chỉ đặc biệt không gán cho máy: **địa chỉ mạng** (bit host toàn 0) và **địa chỉ broadcast** (bit host toàn 1). Điều này quan trọng với người quét mạng: khi bạn quét cả dải `/24`, bạn biết chỉ có 254 máy thật cần xét, chứ không phải 256.
+
+Kéo thanh trượt để thấy phần mạng và phần host thay đổi:
+
+<SubnetCalculator client:visible />
+
+## Thực hành: lệnh mạng thật
+
+Ba nhóm lệnh dưới đây là thứ bạn gõ ngay khi ngồi vào một máy mới, dù là máy tấn công của mình hay một máy vừa chiếm được.
+
+Ngoài đời lẫn trong phòng thi OSCP, chúng đều trả lời cùng một câu hỏi: mình đang ở đâu trong mạng, và xung quanh có ai. Ở đây bạn chạy chúng trên máy Kali trong lab của mình (bài 0.2), nên mọi địa chỉ đều thuộc mạng cô lập của bạn.
+
+### Mình đang ở đâu trong mạng?
+
+Đầu tiên, hỏi chính cái máy: nó có địa chỉ gì, và muốn đi ra ngoài thì qua cổng nào. Hai lệnh `ip addr` và `ip route` trả lời hai câu đó, và kết quả của chúng là ba con số bạn sẽ ghi vào sổ tay ngay từ đầu:
+
+<Lenh noi="Terminal trên máy Kali" muc="Biết máy mình đang có địa chỉ IP nào, thuộc mạng nào và đi ra ngoài bằng cổng nào">
+
+<Terminal title="Xem cấu hình mạng của chính mình">
+
+```text
+kali@lab:~$ ip addr
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+    inet 10.10.14.7/24 brd 10.10.14.255 scope global eth0
+       valid_lft forever preferred_lft forever
+
+kali@lab:~$ ip route
+default via 10.10.14.1 dev eth0
+10.10.14.0/24 dev eth0 proto kernel scope link src 10.10.14.7
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ip addr`: liệt kê các card mạng và địa chỉ của từng card. (`ip a` là cách gõ tắt.)
+- `ip route`: in **bảng định tuyến**, tức "muốn gửi gói tới đâu thì đi đường nào".
+
+</div>
+
+<div slot="doc">
+
+- Lệnh `ip addr`:
+  - `eth0`: tên card mạng. Dòng `lo` (nếu có) là card nội bộ `127.0.0.1`, bỏ qua.
+  - `UP,LOWER_UP`: card đang bật và có dây cắm (hoặc máy ảo đã nối mạng). Thấy `DOWN` nghĩa là card tắt.
+  - `inet 10.10.14.7/24`: **đây là thứ cần ghi lại**: địa chỉ IP của bạn là `10.10.14.7`, `/24` cho biết mạng có 256 địa chỉ từ `10.10.14.0` tới `10.10.14.255`.
+  - `brd 10.10.14.255`: địa chỉ broadcast (gửi cho cả mạng). `valid_lft`: thời hạn địa chỉ, `forever` là cấu hình cố định.
+- Lệnh `ip route`:
+  - `default via 10.10.14.1`: **gateway**, tức cổng ra ngoài. Mọi gói không thuộc mạng nội bộ đều gửi tới `10.10.14.1`.
+  - `10.10.14.0/24 dev eth0`: gói tới mạng này thì gửi thẳng qua `eth0`, không cần qua gateway.
+- Không có dòng `inet` hoặc không có `default via`: máy chưa có địa chỉ hoặc chưa có đường ra, kiểm tra lại mạng ảo ở bài 0.2.
+
+</div>
+
+</Lenh>
+
+Ghi lại ba con số này (IP của bạn, mạng, gateway): đây là điểm xuất phát của mọi bài làm. Biết mình ở dải `10.10.14.0/24` thì mới biết nên đi tìm các máy khác ở đâu.
+
+### Máy kia có đang sống không?
+
+Biết dải mạng rồi, câu hỏi tiếp theo rất tự nhiên: trong dải đó có ai không? Cách đơn giản nhất là gõ cửa bằng `ping`, dùng giao thức ICMP ở tầng 3 để hỏi "bạn có đó không". Sau đó nhìn bảng ARP, tức danh sách những máy ở cạnh mà Kali vừa nói chuyện, để thấy chúng bằng địa chỉ phần cứng (MAC):
+
+<Lenh noi="Terminal trên máy Kali" muc="Kiểm tra một máy có đang bật và trả lời không, rồi xem máy nào đang &quot;ở cạnh&quot; mình trong mạng">
+
+<Terminal title="Ping và xem hàng xóm trong mạng">
+
+```text
+kali@lab:~$ ping -c 2 10.10.14.20
+64 bytes from 10.10.14.20: icmp_seq=1 ttl=64 time=0.42 ms
+64 bytes from 10.10.14.20: icmp_seq=2 ttl=64 time=0.39 ms
+
+kali@lab:~$ arp -a
+? (10.10.14.1) at 00:50:56:01:aa:bb [ether] on eth0
+? (10.10.14.20) at 00:0c:29:3d:4e:5f [ether] on eth0
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ping -c 2 10.10.14.20`: gửi 2 gói ICMP (`-c 2` = chỉ 2 lần) tới `10.10.14.20` và chờ trả lời. Không có `-c`, ping chạy mãi, dừng bằng `Ctrl+C`.
+- `arp -a`: in bảng ARP, danh sách "IP nào ứng với địa chỉ MAC nào" của các máy mà Kali vừa nói chuyện trực tiếp. (`-a` = all, hiện tất cả.)
+
+</div>
+
+<div slot="doc">
+
+- Mỗi dòng `64 bytes from ...` là **một lần máy kia đã trả lời**. Có dòng này nghĩa là máy đang bật và đường mạng thông.
+- `time=0.42 ms`: thời gian đi và về. Trong lab dưới 1 ms là bình thường; qua Internet thường vài chục mili giây.
+- `ttl=64`: gợi ý hệ điều hành. Khoảng 64 thường là Linux, khoảng 128 thường là Windows. Chỉ là **gợi ý**, không chắc chắn.
+- Nếu ping im lặng hoặc báo `Destination Host Unreachable`: máy tắt, khác mạng, hoặc firewall chặn ping. Chặn ping không có nghĩa máy không tồn tại.
+- Lệnh `arp -a`: mỗi dòng gồm IP trong ngoặc, rồi địa chỉ MAC (`00:50:56:...`). Dấu `?` ở đầu dòng chỉ là máy chưa biết tên. Dòng đầu thường là gateway. MAC chỉ có tác dụng trong cùng mạng, ra khỏi mạng thì không thấy.
+
+</div>
+
+</Lenh>
+
+
+### Dải mạng này có bao nhiêu máy?
+
+Thỉnh thoảng bạn sẽ gặp một dải lạ hơn `/24`, như `192.168.1.130/26`, và cần biết ngay nó bắt đầu và kết thúc ở đâu, có bao nhiêu máy cần quét. Bạn nên tập tính tay vài lần (thanh trượt ở trên giúp việc đó), nhưng khi làm thật thì để `ipcalc` tính và dùng tay chỉ để kiểm lại:
+
+<Lenh noi="Terminal trên máy Kali (hoặc bất kỳ máy Linux nào có `ipcalc`)" muc="Kiểm tra lại phép tính subnet bạn vừa tính tay">
+
+<Terminal title="ipcalc xác nhận phép tính subnet">
+
+```text
+kali@lab:~$ ipcalc 192.168.1.130/26
+Address:   192.168.1.130        11000000.10101000.00000001.10 000010
+Netmask:   255.255.255.192 = 26
+Network:   192.168.1.128/26     (địa chỉ mạng)
+HostMin:   192.168.1.129
+HostMax:   192.168.1.190
+Broadcast: 192.168.1.191
+Hosts/Net: 62
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ipcalc`: chương trình tính toán mạng. Nếu chưa có, cài bằng `sudo apt install ipcalc`.
+- `192.168.1.130/26`: một địa chỉ IP kèm độ dài mạng. `/26` nghĩa là 26 bit đầu dành cho phần mạng, 6 bit cuối cho phần máy.
+
+</div>
+
+<div slot="doc">
+
+- `Netmask: ... 255.255.255.192 = 26`: cách viết khác của `/26`.
+- `Network: ... 192.168.1.128/26`: **địa chỉ mạng**, tức đầu của dải. Địa chỉ `.130` mà bạn nhập nằm trong mạng này.
+- `HostMin` và `HostMax`: máy đầu tiên và cuối cùng có thể gắn vào mạng (`.129` tới `.190`).
+- `Broadcast`: địa chỉ gửi cho cả mạng (`.191`), không gắn cho máy nào.
+- `Hosts/Net: 62`: số máy tối đa. Luôn bằng tổng địa chỉ trừ 2 (địa chỉ mạng và broadcast): 64 − 2 = 62.
+- Dãy `11000000.10101000...` ở dòng đầu là địa chỉ viết dạng nhị phân; dấu cách chia ranh giới phần mạng và phần máy.
+
+</div>
+
+</Lenh>
+
+<Callout type="note">
+Ở bài 2.2 bạn sẽ đưa chính dải `10.10.14.0/24` vào nmap để quét. Hiểu subnet giúp bạn biết dải đó có 254 máy cần quét, và biết `.0` với `.255` là địa chỉ đặc biệt chứ không phải máy.
+</Callout>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người quản trị mạng của một công ty, hãy tự hỏi: nếu hôm nay một máy tính của nhân viên bị chiếm, kẻ tấn công từ đó với tới được những máy nào? Nếu cả công ty nằm chung một dải phẳng, câu trả lời là "tất cả", vì máy kế toán, máy chủ và máy nhân viên đều nằm cạnh nhau.
+
+Chia mạng thành nhiều subnet nhỏ (network segmentation), đặt tường lửa giữa các nhóm, là cách khiến kẻ tấn công chiếm được máy web vẫn chưa với tới dữ liệu kế toán. Bạn sẽ gặp lại ý này ở bài 3.3 về pivoting, khi chính bạn là người đi từ máy này sang máy khác.
+
+Về phát hiện: lượng lớn gói ARP hoặc ICMP quét cả dải trong vài giây là dấu hiệu có người đang vẽ bản đồ mạng. Bạn vừa làm đúng điều đó bằng `nmap -sn` ở bài 0.2, nên đã biết nó trông ra sao trong nhật ký.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nhầm prefix lớn với mạng lớn.** Nghe `/28` thấy "to hơn" `/24`, nhưng prefix càng lớn thì phần host càng ngắn và mạng càng **nhỏ**. Nhầm chỗ này, bạn sẽ quét thiếu cả dải mà không biết.
+- **Quên địa chỉ mạng và broadcast không dùng cho máy.** Tính dư hai địa chỉ nghe vô hại, nhưng ở bài sau bạn sẽ mất thời gian tìm hai "máy" không hề tồn tại.
+- **Không ghi lại IP của mình và của gateway ngay từ đầu.** Khi làm ba, bốn máy cùng lúc, bạn lẫn lộn đâu là IP máy tấn công, đâu là máy mục tiêu, rồi gõ nhầm địa chỉ vào lệnh. Hậu quả nhẹ thì mất nửa tiếng, nặng thì quét nhầm máy ngoài phạm vi.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Mạng /26 có bao nhiêu địa chỉ dùng được cho máy?', options: ['64', '62', '26'], answer: 1, explain: '/26 chừa 6 bit host → 2^6 = 64 địa chỉ, trừ 2 (mạng và broadcast) còn 62. ipcalc ở trên cũng cho 62.' },
+    { q: 'Kết quả ping cho ttl=64 gợi ý điều gì về máy đích?', options: ['Chắc chắn là Windows', 'Nhiều khả năng là Linux', 'Máy đã tắt'], answer: 1, explain: 'Linux thường khởi đầu TTL 64, Windows thường 128. Đây là gợi ý, không phải bằng chứng chắc chắn.' },
+    { q: 'Lệnh nào cho bạn biết địa chỉ IP và mạng của chính máy mình?', options: ['ping', 'ip addr', 'cat'], answer: 1, explain: '`ip addr` (hoặc ifconfig) hiển thị địa chỉ và prefix của các card mạng.' },
+    { q: '`arp -a` hiển thị ánh xạ gì?', options: ['Tên miền sang IP', 'IP sang địa chỉ MAC trong mạng cục bộ', 'Cổng sang dịch vụ'], answer: 1, explain: 'ARP ánh xạ IP (tầng 3) sang MAC (tầng 2) cho các máy trong cùng mạng cục bộ.' },
+  ]}
+/>
+
+## Bài tập tự làm
+
+<LabBrief
+  ten="Thực hành Mạng: Đo vẽ topo, phân tích Subnet, đoán OS qua TTL và kiểm tra ARP"
+  muctieu="Khởi chạy Kali và Metasploitable 2, xác định cấu hình IP/Routing table, tính toán dải mạng và theo dõi hành vi ánh xạ ARP tầng 2"
+  may="Metasploitable 2"
+  ip="10.10.14.20"
+  kali="10.10.14.7"
+  thoigian="40 phút"
+  xong="Xác định đúng dải mạng 10.10.14.0/24, đoán đúng OS qua TTL=64, và bắt được địa chỉ MAC của Metasploitable trong bảng ARP bằng ip neigh"
+>
+
+1. Trên Kali, chạy lệnh `ip addr` và `ip route` để xác định IP nội bộ, prefix mạng và default gateway.
+2. Đăng nhập vào Metasploitable 2, chạy `ifconfig` và `route -n` để ghi nhận cấu hình tương tự.
+3. So sánh phần mạng (Network ID) giữa hai máy để đảm bảo cả hai nằm cùng broadcast domain `/24`.
+4. Gửi 1 gói tin ping tới máy đích: `ping -c1 10.10.14.20`. Quan sát giá trị `ttl=` nhận được và giải thích vì sao là Linux.
+5. Kiểm tra bảng ánh xạ địa chỉ MAC tầng 2 bằng lệnh `ip neigh`.
+
+<div slot="goiy1">
+  Để biết hai máy có cùng mạng không, đối chiếu 3 octet đầu của IP nếu netmask là <code>255.255.255.0</code> (prefix <code>/24</code>). Ví dụ cả 2 máy cùng bắt đầu bằng <code>10.10.14.x</code>.
+</div>
+
+<div slot="goiy2">
+  Khi ping trong mạng nội bộ, gói tin không qua router nào nên giá trị TTL không bị giảm. TTL=64 là dấu hiệu đặc trưng của kernel Linux, trong khi TTL=128 là Windows.
+</div>
+
+<div slot="loigiai">
+  <p>Lệnh thực hiện và đối chiếu:</p>
+
+```bash
+# 1. Xem cấu hình mạng Kali
+ip -br addr show
+ip route show
+
+# 2. Ping kiểm tra TTL
+ping -c1 10.10.14.20
+
+# 3. Xem bảng ARP
+ip neigh
+```
+</div>
+
+<div slot="kiemtra">
+  <ul>
+    <li><strong>TTL:</strong> Trả về chính xác <code>ttl=64</code> (Metasploitable 2 là Linux).</li>
+    <li><strong>ARP Cache:</strong> Xuất hiện dòng <code>10.10.14.20 dev eth0 lladdr &lt;MAC&gt; REACHABLE</code> chứng minh tầng 2 hoạt động hoàn hảo.</li>
+  </ul>
+</div>
+
+</LabBrief>
+
+Làm trên lab của bạn: Kali và Metasploitable 2 trong cùng mạng cô lập (bài 0.2). Đăng nhập Metasploitable bằng tài khoản mặc định `msfadmin` / `msfadmin` ngay trên cửa sổ máy ảo. Tự làm trước, bí quá mới mở gợi ý. Ghi kết quả vào một file ghi chú: thói quen này theo bạn tới tận phòng thi (bài 4.1).
+
+**Bài 1 — Vẽ bản đồ lab của bạn.** Trên Kali chạy `ip addr` và `ip route`; trên Metasploitable chạy `ifconfig` và `route -n`. Ghi ra: IP và prefix của mỗi máy, địa chỉ mạng, gateway. Hai máy có cùng phần mạng không?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu, để đọc hiểu được cả khi chưa có lab)</summary>
+
+Trên Metasploitable, `ifconfig` và `route -n` (hai lệnh cũ, thay cho `ip addr`/`ip route`) in ra dạng sau:
+
+```text
+msfadmin@metasploitable:~$ ifconfig eth0
+eth0      Link encap:Ethernet  HWaddr 00:0c:29:3d:4e:5f
+          inet addr:10.10.14.20  Bcast:10.10.14.255  Mask:255.255.255.0
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+
+msfadmin@metasploitable:~$ route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+0.0.0.0         10.10.14.1      0.0.0.0         UG    0      0        0 eth0
+10.10.14.0      0.0.0.0         255.255.255.0   U     0      0        0 eth0
+```
+
+Đọc ra: Metasploitable có IP `10.10.14.20/24` (từ `inet addr` và `Mask`), gateway `10.10.14.1` (dòng có cờ `UG` — U là "up", G là "đi qua gateway"). So với Kali ở bài thực hành (`10.10.14.7/24`, cùng gateway `10.10.14.1`): **cùng phần mạng** `10.10.14.0/24`, nên hai máy nói chuyện trực tiếp được, không cần qua router nào khác.
+
+Nếu hai địa chỉ mạng của bạn khác nhau (ví dụ Kali ở `10.10.14.0/24` nhưng Metasploitable lại hiện `192.168.56.0/24`), chúng **không** nói chuyện trực tiếp được — kiểm tra lại cả hai máy đã cắm card mạng vào đúng cùng một mạng Host-only/Internal trong hypervisor chưa (bài 0.2).
+
+</details>
+
+**Bài 2 — Tính tay rồi mới kiểm.** Với `172.16.5.77/27`, tính bằng giấy bút: địa chỉ mạng, broadcast, máy đầu, máy cuối, số máy dùng được. Sau đó mới chạy `ipcalc 172.16.5.77/27` để so.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+Cách tính tay: `/27` chừa 5 bit host, mỗi khối có 2⁵ = 32 địa chỉ: 0–31, 32–63, 64–95, 96–127... Số 77 rơi vào khối 64–95. Vậy: mạng `172.16.5.64`, broadcast `172.16.5.95`, máy đầu `.65`, máy cuối `.94`, 30 máy dùng được (32 − 2).
+
+Kiểm lại bằng `ipcalc` phải khớp từng con số:
+
+```text
+kali@lab:~$ ipcalc 172.16.5.77/27
+Address:   172.16.5.77           10101100.00010000.00000101.010 01101
+Netmask:   255.255.255.224 = 27
+Network:   172.16.5.64/27        10101100.00010000.00000101.010 00000
+HostMin:   172.16.5.65
+HostMax:   172.16.5.94
+Broadcast: 172.16.5.95
+Hosts/Net: 30
+```
+
+Mọi dòng khớp với tính tay ở trên thì đúng. Sai một con số, thường là do nhầm khối 32 địa chỉ (ví dụ tính nhầm 77 rơi vào khối 32–63) — đếm lại các khối từ 0 theo bước 32.
+
+</details>
+
+**Bài 3 — Đoán hệ điều hành qua TTL.** Ping Metasploitable và (nếu đã có) một máy Windows. Ghi giá trị `ttl=` của từng máy. Rồi ping thử một địa chỉ ngoài Internet từ Kali (qua card NAT). TTL nhận được có tròn 64 hay 128 không? Vì sao?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+kali@lab:~$ ping -c1 10.10.14.20          # Metasploitable (Linux)
+64 bytes from 10.10.14.20: icmp_seq=1 ttl=64 time=0.51 ms
+
+kali@lab:~$ ping -c1 10.10.14.60          # máy Windows trong lab
+64 bytes from 10.10.14.60: icmp_seq=1 ttl=128 time=0.63 ms
+
+kali@lab:~$ ping -c1 1.1.1.1              # một máy chủ ngoài Internet, qua card NAT
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=115 time=8.2 ms
+```
+
+Linux xuất phát TTL ở 64, Windows ở 128 — đúng như lý thuyết. Máy ngoài Internet trả về `ttl=115`, **không tròn 64 hay 128**: mỗi router trên đường đi trừ TTL đi 1, nên `115` gợi ý máy đó cũng xuất phát từ 128 (Windows hoặc một thiết bị mạng) và gói tin đã đi qua `128 − 115 = 13` router trước khi tới bạn.
+
+Đây chỉ là **gợi ý**, không phải bằng chứng chắc chắn: quản trị viên có thể tự đổi TTL mặc định của hệ thống.
+
+</details>
+
+**Bài 4 — Xem ARP hoạt động.** Trên Kali chạy `ip neigh`, rồi ping Metasploitable, rồi `ip neigh` lần nữa. Dòng nào mới xuất hiện? Tiếp theo ping một địa chỉ ngoài Internet: bảng ARP có thêm MAC của máy ở xa đó không?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+kali@lab:~$ ip neigh
+10.10.14.1 dev eth0 lladdr 00:50:56:01:aa:bb STALE
+
+kali@lab:~$ ping -c1 10.10.14.20
+64 bytes from 10.10.14.20: icmp_seq=1 ttl=64 time=0.48 ms
+
+kali@lab:~$ ip neigh
+10.10.14.1 dev eth0 lladdr 00:50:56:01:aa:bb STALE
+10.10.14.20 dev eth0 lladdr 00:0c:29:3d:4e:5f REACHABLE   # dòng mới
+```
+
+Sau khi ping Metasploitable, bảng có thêm một dòng cho `10.10.14.20` kèm địa chỉ MAC `00:0c:29:3d:4e:5f` và trạng thái `REACHABLE`: máy bạn đã hỏi "ai giữ IP này" ở tầng 2 (ARP request/reply) và nhận được trả lời.
+
+```text
+kali@lab:~$ ping -c1 1.1.1.1
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=115 time=8.4 ms
+
+kali@lab:~$ ip neigh
+10.10.14.1 dev eth0 lladdr 00:50:56:01:aa:bb REACHABLE
+10.10.14.20 dev eth0 lladdr 00:0c:29:3d:4e:5f STALE
+```
+
+Ping được `1.1.1.1` nhưng bảng ARP **không hề có dòng cho `1.1.1.1`** — bạn chỉ thấy MAC của gateway (`10.10.14.1`), không bao giờ thấy MAC thật của máy chủ ở xa. ARP chỉ hoạt động trong mạng cục bộ; với máy ngoài mạng, gói tin được giao thẳng cho gateway để nó lo tiếp phần còn lại.
+
+</details>
+
+**Bài 5 — Góc phòng thủ: chia mạng.** Một văn phòng nhỏ đang để chung một mạng `10.0.1.0/24`: 20 máy nhân viên, 3 máy chủ web, 2 máy kế toán. Hãy đề xuất cách chia thành các mạng con riêng, ghi rõ địa chỉ và prefix của từng mạng, và nói luồng nào nên đi qua tường lửa.
+
+<details class="hint">
+<summary>Một đáp án hợp lý</summary>
+
+Ví dụ: nhân viên `10.0.1.0/26` (62 máy, đủ chỗ mở rộng), máy chủ web `10.0.1.64/28` (14 máy), kế toán `10.0.1.80/28`. Tường lửa ở giữa: nhân viên được vào web qua cổng 80/443; chỉ vài máy được chỉ định mới vào được kế toán; máy chủ web **không** có đường tới kế toán.
+
+Không có đáp án duy nhất; điều quan trọng là nhóm có mức tin cậy khác nhau thì nằm ở mạng khác nhau, và mọi luồng giữa chúng đều có lý do.
+
+</details>
+
+## Ghi nhớ
+
+- Vào máy nào cũng hỏi trước: mình ở đâu trong mạng? `ip addr` và `ip route` cho bạn IP, dải mạng và gateway, ba con số ghi vào sổ tay đầu tiên.
+- `ping` cho biết một máy có sống không, `arp -a` cho biết ai ở cạnh bạn. Máy không trả lời ping chưa chắc đã không tồn tại, vì tường lửa có thể chặn.
+- Prefix càng lớn thì mạng càng nhỏ, và mỗi mạng mất hai địa chỉ cho địa chỉ mạng và broadcast. Tính subnet đúng là điều kiện để quét đủ, không quét thiếu.
+- OSI là ngôn ngữ để định vị lỗi: trước khi nghi công cụ, hãy hỏi lỗi nằm ở tầng nào.

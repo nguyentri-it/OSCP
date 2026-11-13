@@ -1,0 +1,219 @@
+---
+title: "Nhân sự giả và mối đe doạ từ bên trong"
+code: "6.3"
+level: 6
+summary: "Cửa trước càng chắc, kẻ tấn công càng muốn được mời vào bằng cửa chính: nộp hồ sơ, qua phỏng vấn video, nhận laptop công ty. AI làm ảnh, CV, giọng nói và khuôn mặt giả rẻ đi rất nhiều. Bài này đi qua chiêu ứng viên giả, ba kiểu mối đe doạ nội bộ, và cách giới hạn thiệt hại khi người ở bên trong."
+duration: "70 phút"
+updated: "2026-11-09"
+objectives:
+  - "Nhận diện chiêu ứng viên giả và nhân viên IT làm từ xa mạo danh, và vai trò của AI trong đó"
+  - "Dựng quy trình tuyển dụng, giao thiết bị và trả lương có xác minh, không phụ thuộc việc nhận ra deepfake"
+  - "Phân biệt ba kiểu mối đe doạ nội bộ và dấu hiệu kỹ thuật của từng kiểu"
+  - "Giới hạn thiệt hại bằng quyền tối thiểu, tách nhiệm vụ, thiết bị được quản lý và quy trình nghỉ việc"
+---
+import Callout from '../../components/ui/Callout.astro';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một toà nhà có bảo vệ kiểm tra thẻ rất kỹ ở cửa. Kẻ trộm không cố leo tường nữa: hắn nộp đơn xin làm nhân viên, qua vòng phỏng vấn, và được phát thẻ thật. Từ hôm đó, bảo vệ chào hắn mỗi sáng.
+
+Toàn bộ Cấp 2–3 là chuyện kẻ tấn công cố vào từ bên ngoài. Bài này nói về người **đã ở bên trong**: được tuyển bằng danh tính giả, hoặc là nhân viên thật nhưng lạm dụng quyền mình có. Với họ, MFA, VPN và tường lửa đều đã mở sẵn.
+
+## Kiến thức chính
+
+### Ba kiểu người ở bên trong
+
+| Kiểu | Ví dụ | Khó ở chỗ |
+|---|---|---|
+| **Được tuyển bằng danh tính giả** | Một người dùng hồ sơ, ảnh, giấy tờ của người khác để được nhận làm từ xa, rồi nhận lương, lấy cắp dữ liệu, hoặc mở đường cho kẻ khác vào | Mọi quyền đều được cấp hợp lệ; nhiều tuần sau mới có dấu hiệu |
+| **Nhân viên thật cố ý** | Mang dữ liệu khách hàng đi trước khi nghỉ; bán quyền truy cập cho nhóm tống tiền; sửa mã để lấy tiền | Họ biết hệ thống, biết chỗ nào không ai nhìn |
+| **Nhân viên thật vô ý** | Dán dữ liệu khách hàng vào AI công khai, bị lừa chạy lệnh, chia sẻ file ra ngoài nhầm | Không có ý xấu, nên dấu hiệu lẫn vào công việc hằng ngày |
+
+Kiểu thứ ba được bàn ở bài 2.4, 6.4 và 7.2. Bài này tập trung vào hai kiểu đầu, nhưng các biện pháp giới hạn thiệt hại ở cuối bài dùng được cho cả ba.
+
+Có nhóm tống tiền công khai rao mua quyền truy cập từ nhân viên của doanh nghiệp, hứa chia phần tiền chuộc. Một tài khoản hợp lệ cộng một người sẵn lòng bấm duyệt MFA đáng giá hơn mọi lỗ hổng.
+
+### Ứng viên giả và nhân viên IT làm từ xa mạo danh
+
+Từ năm 2022, FBI đã cảnh báo việc dùng deepfake và thông tin cá nhân bị đánh cắp để ứng tuyển các vị trí làm từ xa, nhất là vị trí có quyền vào dữ liệu và hệ thống.
+
+Từ 2023 tới 2025, các cơ quan Mỹ nhiều lần cảnh báo và truy tố những mạng lưới đưa người làm IT của Triều Tiên vào làm việc từ xa dưới danh tính giả hoặc danh tính "thuê".
+
+Họ dùng các "laptop farm" (nơi đặt hàng loạt laptop công ty, để người ở nước khác điều khiển từ xa) ngay trong nước sở tại, để giả như mình đang ngồi ở đó. Lương được chuyển về nước họ.
+
+Đầu năm 2025, FBI cảnh báo thêm: một số người bị phát hiện và cho nghỉ đã lấy mã nguồn rồi quay lại tống tiền. Các báo cáo năm 2025 cho thấy chiêu này đã lan ra ngoài nước Mỹ, sang cả châu Âu.
+
+Tháng 7/2024, công ty đào tạo bảo mật KnowBe4 công bố họ đã tuyển nhầm một người như vậy. Ảnh hồ sơ là ảnh có sẵn được chỉnh bằng AI, nhưng người này vẫn qua được kiểm tra lý lịch và bốn vòng phỏng vấn video.
+
+Người ta chỉ phát hiện ra nhờ phần mềm bảo mật trên laptop công ty: nó báo động ngay khi người đó bắt đầu cài mã độc lên chiếc máy vừa nhận.
+
+AI giúp chiêu này ở mọi khâu:
+
+- **Hồ sơ:** ảnh chân dung tạo hoặc chỉnh bằng AI; CV và thư xin việc viết riêng cho từng tin tuyển dụng; hồ sơ mạng xã hội nghề nghiệp có lịch sử trông thật.
+- **Phỏng vấn:** công cụ đổi khuôn mặt và giọng nói theo thời gian thực; trợ lý AI nhắc câu trả lời kỹ thuật ngay trong lúc phỏng vấn.
+- **Làm việc:** AI giúp một người làm đủ việc để giữ được nhiều chỗ làm cùng lúc, nên khó bị phát hiện vì làm kém.
+
+### Dấu hiệu theo từng khâu
+
+| Khâu | Dấu hiệu đáng xem kỹ |
+|---|---|
+| Hồ sơ | Ảnh quá chuẩn, không tìm thấy ở đâu khác; lịch sử làm việc không xác minh được; nhiều hồ sơ khác nhau dùng chung email, số điện thoại hay tài khoản Git |
+| Phỏng vấn | Từ chối bật camera hoặc hình ảnh có độ trễ lạ; câu trả lời trôi chảy nhưng không đi sâu được khi hỏi tiếp về chính dự án ghi trong CV |
+| Giao thiết bị | Xin gửi laptop tới một địa chỉ khác với địa chỉ trên giấy tờ, nhất là đổi vào phút chót; xin dùng máy cá nhân thay máy công ty |
+| Trả lương | Tài khoản nhận lương không đứng tên người được tuyển; đổi tài khoản nhận lương nhiều lần |
+| Sau khi vào làm | Laptop công ty có công cụ điều khiển từ xa chưa duyệt hoặc thiết bị điều khiển bàn phím, chuột qua mạng gắn vào; luôn đăng nhập qua VPN hoặc "proxy dân cư" (đi vòng qua đường truyền của một hộ gia đình để giấu vị trí thật); giờ làm việc lệch hẳn múi giờ đã khai |
+
+<Callout type="warn" label="Đừng biến quy trình thành phân biệt đối xử">
+Dấu hiệu ở đây là về <strong>danh tính và hành vi không khớp nhau</strong>, không phải về quốc tịch, giọng nói hay ngoại hình. Một ứng viên thật nói tiếng Việt chưa sõi không phải là dấu hiệu. Một laptop được gửi tới địa chỉ không khớp giấy tờ thì là dấu hiệu, bất kể ứng viên là ai.
+</Callout>
+
+### Quy trình không cần nhận ra deepfake
+
+Bài học giống hệt bài 6.2: **đừng đặt cược vào việc nhận ra hàng giả**. Các mẹo kiểu "bảo ứng viên đưa tay qua mặt" có thể hết tác dụng sau vài bản cập nhật của công cụ đổi mặt. Thay vào đó, đặt các điểm kiểm tra mà kẻ mạo danh không kiểm soát được:
+
+1. **Xác minh giấy tờ tuỳ thân** qua dịch vụ có kiểm tra "người thật đang có mặt" (liveness, bài 6.2), và đối chiếu với đúng người đã phỏng vấn. Với vị trí có quyền cao (quản trị hệ thống, kỹ sư có quyền vào môi trường thật, kế toán duyệt tiền), có ít nhất một lần gặp trực tiếp, hoặc qua một đối tác tại chỗ.
+2. **Gọi người tham chiếu qua số tự tra**, không dùng số ứng viên đưa. Cùng nguyên tắc với gọi lại số đã lưu.
+3. **Laptop chỉ gửi tới địa chỉ khớp giấy tờ**, người nhận ký nhận. Mọi yêu cầu đổi địa chỉ đi qua quy trình xác minh như đổi MFA ở bài 7.4.
+4. **Lương chỉ vào tài khoản ngân hàng đứng tên đúng người.** Đổi tài khoản nhận lương cũng là thao tác nhạy cảm, cần xác minh qua kênh thứ hai.
+5. **Quyền tăng dần trong thời gian thử việc.** Ngày đầu chỉ có quyền đủ làm việc ngày đầu.
+
+So sánh hai cách tuyển:
+
+<SequenceDiagram
+  client:visible
+  title="Một ứng viên giả xin vào vị trí kỹ sư làm từ xa"
+  actors={['Ứng viên giả', 'Tuyển dụng', 'IT', 'SOC']}
+  scenarios={[
+    {
+      name: 'Chỉ dựa vào phỏng vấn video',
+      steps: [
+        { from: 0, to: 1, label: 'hồ sơ đẹp, ảnh AI', note: 'CV khớp từng dòng của tin tuyển dụng. Không ai thử tìm ảnh ở nơi khác.', tone: 'normal' },
+        { from: 1, to: 0, label: '4 vòng phỏng vấn: đậu', note: 'Khuôn mặt được đổi theo thời gian thực, một trợ lý AI nhắc câu trả lời. Người phỏng vấn thấy ứng viên giỏi.', tone: 'bad' },
+        { from: 0, to: 2, label: 'xin gửi laptop tới địa chỉ khác', note: 'Lý do nghe hợp lý: đang ở nhà người thân. Laptop tới một "laptop farm", nơi người khác bật máy và để người ở xa điều khiển.', tone: 'bad' },
+        { from: 2, to: 0, label: 'cấp quyền như mọi kỹ sư', note: 'Vào repo, vào môi trường thật ngay tuần đầu. Không ai so địa chỉ đăng nhập với địa chỉ đã khai.', tone: 'bad' },
+      ],
+    },
+    {
+      name: 'Xác minh danh tính, quyền tăng dần',
+      steps: [
+        { from: 0, to: 1, label: 'hồ sơ đẹp, ảnh AI', note: 'Như kịch bản trên. Tuyển dụng không cần nhận ra ảnh giả.', tone: 'normal' },
+        { from: 1, to: 0, label: 'xác minh danh tính', note: 'Giấy tờ phải khớp với người có kiểm tra người thật; người tham chiếu được gọi qua số tra từ trang chính thức của công ty cũ. Danh tính không khớp hồ sơ.', tone: 'good' },
+        { from: 0, to: 2, label: 'xin gửi laptop tới địa chỉ khác', note: 'Bị từ chối theo quy trình: laptop chỉ gửi tới địa chỉ khớp giấy tờ. Yêu cầu đổi địa chỉ được ghi lại.', tone: 'good' },
+        { from: 0, to: 3, label: 'cài công cụ điều khiển từ xa chưa duyệt', note: 'Nếu vẫn lọt qua: EDR (phần mềm bảo vệ trên máy, tự chặn hành vi lạ) chặn lại và SOC (đội trực giám sát) nhận cảnh báo. Quyền thử việc chưa có repo sản phẩm, nên thiệt hại dừng ở một máy.', tone: 'good' },
+      ],
+    },
+  ]}
+/>
+
+### Giới hạn thiệt hại khi người ở bên trong
+
+Không quy trình tuyển dụng nào chặn được hết, và nhân viên thật cũng có thể đổi ý. Nên thiết kế sao cho **một người đơn lẻ không gây được thiệt hại lớn**:
+
+- **Quyền tối thiểu và quyền có thời hạn.** Quyền vào dữ liệu khách hàng, môi trường thật (hệ thống đang chạy thật, khác với môi trường thử), hệ thống thanh toán chỉ được cấp khi cần, có hạn dùng và có người duyệt, thay vì cấp vĩnh viễn.
+- **Tách nhiệm vụ** (không để một người làm trọn từ đầu đến cuối). Người tạo nhà cung cấp mới không được đồng thời duyệt thanh toán; mã đưa lên môi trường thật cần người thứ hai duyệt; người đặt lại MFA không tự đặt lại cho mình.
+- **Thiết bị được quản lý.** Chặn công cụ điều khiển từ xa chưa duyệt; ghi lại thiết bị USB mới gắn vào (bật audit *Plug and Play*, sự kiện 6416); EDR ở chế độ chặn (bài 7.2).
+- **Ghi log truy cập dữ liệu nhạy cảm** và so với mức bình thường của chính người đó (công nghệ này gọi là UEBA, bài 8.1): tải xuống hàng loạt, truy cập repo ngoài dự án mình làm, chia sẻ file ra ngoài.
+- **Quy trình nghỉ việc chặt chẽ.** Trong ngày cuối, thu hồi mọi thứ: tài khoản, phiên đăng nhập, token API, khoá SSH, quyền đã cấp cho ứng dụng, liên kết chia sẻ ra ngoài. Rà lại hoạt động 30 ngày trước khi nghỉ.
+
+**Rà tài khoản mới có quyền nhạy cảm** (chạy trên máy có AD, chỉ cần quyền đọc, không sửa gì):
+
+```powershell
+# Liệt kê tài khoản mới tạo trong 30 ngày qua mà đã nằm trong nhóm quyền nhạy cảm
+$moc = (Get-Date).AddDays(-30)
+Get-ADUser -Filter 'whenCreated -ge $moc' -Properties whenCreated, MemberOf |
+  Where-Object { $_.MemberOf -match 'Domain Admins|KeToan-Duyet|Dev-MoiTruongThat' } |
+  Select-Object SamAccountName, whenCreated
+```
+
+```text
+SamAccountName   whenCreated
+--------------   -----------
+dev.minh         21/10/2026 09:12:44     ← nhân viên mới 18 ngày đã vào môi trường thật?
+```
+
+Kết quả mẫu là hư cấu. Mỗi dòng in ra cần một câu trả lời: ai duyệt, vì sao, tới bao giờ.
+
+**Luật phát hiện (viết theo định dạng Sigma): công cụ điều khiển từ xa chưa duyệt chạy trên máy công ty**
+
+```yaml
+title: Công cụ điều khiển từ xa chưa được duyệt
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Image|endswith:
+      - '\AnyDesk.exe'
+      - '\TeamViewer.exe'
+      - '\rustdesk.exe'
+      - '\ScreenConnect.ClientService.exe'
+  condition: selection
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1219
+```
+
+Nếu đơn vị đã duyệt một công cụ hỗ trợ từ xa, loại nó ra khỏi danh sách và chỉ cho chạy trên máy của bộ phận hỗ trợ. Kẻ tấn công từ bên ngoài cũng hay cài đúng các công cụ này sau khi vào được (T1219), nên luật có ích cả khi không có ai bên trong.
+
+<Callout type="note" label="Giám sát nhân viên phải đúng luật">
+Ghi log và giám sát trên thiết bị công ty là biện pháp an ninh hợp lý, nhưng phải có chính sách rõ ràng, thông báo cho nhân viên, và tuân theo quy định về bảo vệ dữ liệu cá nhân. Giám sát lén lút vừa có thể trái luật, vừa phá lòng tin. Bàn với bộ phận pháp chế và nhân sự trước khi triển khai.
+</Callout>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Vì người ở bên trong đã bước qua mọi hàng rào tường lửa và MFA ở cổng, phòng thủ trước rủi ro nội gián và nhân sự giả phải dựa vào <strong>xác minh danh tính độc lập và giới hạn bán kính thiệt hại</strong>. Ngay từ khâu tuyển dụng làm việc từ xa, hãy đặt những chốt kiểm tra mà kẻ mạo danh không kiểm soát được: đối chiếu giấy tờ tùy thân có kiểm tra người thật với đúng người dự phỏng vấn, gọi người tham chiếu qua số điện thoại tự tra cứu, chỉ gửi laptop công ty tới địa chỉ khớp trên giấy tờ và chỉ trả lương vào tài khoản ngân hàng đứng đúng tên.
+
+Khi nhân viên bắt đầu làm việc, hãy cấp quyền tăng dần theo giai đoạn thử việc, áp dụng quyền có thời hạn kèm phê duyệt cho các hệ thống nhạy cảm, và <strong>tách nhiệm vụ</strong> để không một cá nhân nào tự làm trọn vẹn một quy trình rủi ro (như vừa tạo nhà cung cấp vừa duyệt chi, hay tự đẩy mã thẳng lên môi trường sản xuất).
+
+Trên laptop công ty, duy trì EDR ở chế độ chặn và cảnh báo ngay khi xuất hiện phần mềm điều khiển từ xa hoặc thiết bị KVM lạ; và khi một người nghỉ việc, hãy thu hồi đồng loạt tài khoản, phiên đăng nhập, khóa SSH, token API lẫn các liên kết chia sẻ ra ngoài ngay trong ngày cuối cùng.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Tuyển dụng và nhân sự an toàn"
+  storageKey="insider-hiring"
+  items={[
+    { label: 'Vị trí có quyền cao phải xác minh giấy tờ có kiểm tra người thật, đối chiếu với người phỏng vấn' },
+    { label: 'Người tham chiếu được gọi qua số tự tra, không dùng số ứng viên đưa' },
+    { label: 'Laptop chỉ gửi tới địa chỉ khớp giấy tờ; đổi địa chỉ phải qua xác minh', hint: 'Bài 7.4' },
+    { label: 'Lương chỉ vào tài khoản đúng tên; đổi tài khoản nhận lương cần xác minh qua kênh thứ hai' },
+    { label: 'Nhân viên mới có quyền tăng dần, quyền nhạy cảm có hạn và có người duyệt' },
+    { label: 'Tách nhiệm vụ cho thanh toán, đưa mã lên môi trường thật, đặt lại MFA' },
+    { label: 'Có cảnh báo cho công cụ điều khiển từ xa chưa duyệt và thiết bị USB mới', hint: 'T1219, sự kiện 6416' },
+    { label: 'Quy trình nghỉ việc thu hồi tài khoản, phiên, token, khoá SSH, quyền ứng dụng, liên kết chia sẻ' },
+    { label: 'Chính sách giám sát đã được pháp chế duyệt và thông báo cho nhân viên' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ rằng rủi ro nội bộ chỉ đến từ "nhân viên cũ bất mãn" mà bỏ qua kịch bản ứng viên giả ngay từ khâu tuyển dụng.** Với các vị trí kỹ sư làm việc từ xa hoàn toàn, kẻ tấn công có tổ chức sẵn sàng nộp hồ sơ giả để được chính công ty cấp phát laptop và tài khoản hợp lệ.
+- **Tin rằng người phỏng vấn dày dạn kinh nghiệm sẽ nhìn ra video deepfake bằng mắt thường.** Các bộ lọc đổi mặt và giọng nói theo thời gian thực tiến bộ từng tháng; chỉ có quy trình xác minh giấy tờ độc lập và kiểm tra chéo địa chỉ nhận thiết bị mới không bị lỗi thời.
+- **Xem việc gửi laptop và đổi tài khoản nhận lương là thủ tục hành chính đơn thuần.** Đổi địa chỉ giao máy vào phút chót sang một địa chỉ trung gian ("laptop farm") chính là mắt xích vật lý quan trọng nhất của các nhóm nhân sự giả; bộ phận nhân sự và IT phải coi đây là một chốt kiểm soát an ninh.
+- **Sao chép nguyên bộ quyền của nhân viên lâu năm cấp luôn cho người mới vào ngày đầu tiên "để khỏi phải xin nhiều lần".** Nếu tuyển nhầm một ứng viên giả như vụ KnowBe4, việc chỉ cấp quyền tối thiểu trong giai đoạn thử việc chính là ranh giới giữ cho sự cố dừng lại ở một chiếc laptop thay vì mất trắng kho mã nguồn.
+- **Chỉ khóa mỗi tài khoản đăng nhập chính khi nhân viên nghỉ việc.** Các token API cá nhân, khóa SSH, quyền ứng dụng OAuth và các đường link chia sẻ tài liệu ra ngoài thường vẫn còn sống nếu không nằm trong checklist thu hồi bắt buộc.
+- **Biến việc cảnh giác thành định kiến về ngoại hình, vùng miền hoặc giọng nói.** Đánh giá theo cảm tính vừa gây phân biệt đối xử với nhân viên thật, vừa dễ bị qua mặt bởi những kẻ mạo danh chuẩn bị kỹ vẻ bề ngoài.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Ứng viên qua bốn vòng phỏng vấn video rất tốt, rồi xin gửi laptop tới một địa chỉ khác với địa chỉ trên giấy tờ. Nên làm gì?', options: ['Gửi luôn vì ứng viên đã qua phỏng vấn', 'Từ chối theo quy trình: laptop chỉ gửi tới địa chỉ khớp giấy tờ; yêu cầu đổi địa chỉ đi qua xác minh', 'Hỏi ứng viên có chắc không'], answer: 1, explain: 'Đổi địa chỉ giao thiết bị là dấu hiệu quen thuộc của mô hình "laptop farm". Điểm kiểm soát là quy trình, không phải cảm giác của người phỏng vấn.' },
+    { q: 'Vì sao không nên dựa vào mẹo nhận ra deepfake khi phỏng vấn?', options: ['Vì phỏng vấn video là bất hợp pháp', 'Vì công cụ đổi mặt tốt lên liên tục; mẹo hôm nay có thể vô dụng tháng sau, còn điểm kiểm tra độc lập thì không', 'Vì deepfake không tồn tại'], answer: 1, explain: 'Giống bài 6.2: đặt điểm chặn mà kẻ mạo danh không kiểm soát được, như giấy tờ có kiểm tra người thật và tham chiếu gọi qua số tự tra.' },
+    { q: 'Biện pháp nào giới hạn thiệt hại tốt nhất nếu một người xấu đã vào được bên trong?', options: ['Đổi mật khẩu Wi-Fi văn phòng', 'Quyền tối thiểu theo thời gian, tách nhiệm vụ, và ghi log truy cập dữ liệu nhạy cảm', 'Cấm làm việc từ xa'], answer: 1, explain: 'Thiết kế sao cho một người đơn lẻ không tự làm trọn một việc rủi ro, và hành vi bất thường để lại dấu.' },
+    { q: 'Ngày cuối của một nhân viên nghỉ việc, việc nào hay bị quên nhất?', options: ['Khoá tài khoản chính', 'Thu hồi token API, khoá SSH, quyền đã cấp cho ứng dụng và liên kết chia sẻ ra ngoài', 'Thu lại thẻ ra vào'], answer: 1, explain: 'Tài khoản chính thường được khoá; các đường vào phụ thì nằm rải rác ở nhiều hệ thống và hay bị bỏ sót.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Mối đe dọa từ bên trong bao gồm cả ba nhóm: ứng viên dùng danh tính giả để xin vào làm từ xa, nhân viên thật cố ý trục lợi, và nhân viên thật vô tình làm lộ dữ liệu.
+- Vì AI giúp làm giả hồ sơ, giọng nói và khuôn mặt trong phỏng vấn trực tuyến rất rẻ, lớp chắn bền vững phải là quy trình xác minh danh tính độc lập ngoài kênh.
+- Khâu giao nhận laptop công ty, kiểm tra tài khoản ngân hàng nhận lương và phê duyệt đổi địa chỉ phải được vận hành như những chốt kiểm soát an ninh thực thụ.
+- Để một cá nhân bên trong không bao giờ gây được thảm họa lớn, hãy kết hợp cấp quyền tối thiểu theo thời gian, tách nhiệm vụ ở các khâu trọng yếu, quản lý chặt thiết bị và thu hồi triệt để mọi token khi nghỉ việc.

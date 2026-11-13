@@ -1,0 +1,295 @@
+---
+title: "Đám mây và SaaS: Microsoft 365, Google Workspace, Azure, GCP"
+code: "7.6"
+level: 7
+summary: "Email, tài liệu, máy chủ và cả mô hình AI của doanh nghiệp giờ nằm trên dịch vụ đám mây. Ở đó ranh giới không còn là tường lửa mà là danh tính: ai là quản trị viên, ứng dụng nào được cấp quyền, khoá nào còn sống, log nào đang bật. Bài này đi qua các việc phải làm trên mọi tenant, kèm chiêu dùng khoá đám mây bị lộ để chạy AI bằng tiền của bạn."
+duration: "95 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu vì sao danh tính là ranh giới chính trên đám mây và SaaS, qua hai vụ việc thật"
+  - "Nắm năm việc tương đương trên Microsoft 365, Google Workspace, AWS, Azure và GCP"
+  - "Rà được quản trị viên, ứng dụng được cấp quyền, chuyển tiếp thư và quy tắc hộp thư trên Microsoft 365"
+  - "Thay khoá dài hạn bằng danh tính tạm thời và chặn hàng loạt ở cấp tổ chức"
+  - "Nhận diện và phát hiện việc khoá đám mây bị dùng để chạy mô hình AI (LLMjacking)"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Công ty bạn thuê văn phòng trong một toà nhà lớn. Chủ toà nhà lo cửa chính, thang máy, camera hành lang. Còn chìa khoá văn phòng, ai được phát chìa, và cái két trong phòng thì bạn lo. Kẻ trộm thông minh không phá cửa toà nhà. Chúng sao một chiếc chìa của bạn, hoặc thuyết phục bạn tự đưa chìa cho chúng.
+
+Đó là **mô hình trách nhiệm chung** ở bài 2.9, áp dụng cho mọi dịch vụ đám mây và SaaS (phần mềm thuê dùng qua mạng như email, Google Workspace, Microsoft 365). Microsoft, Google, Amazon lo hạ tầng. Tài khoản, quyền, ứng dụng được cấp quyền và cấu hình là phần của bạn, và gần như mọi sự cố trên đám mây đều nằm ở phần này.
+
+## Kiến thức chính
+
+### Ranh giới mới là danh tính
+
+Hai vụ việc thật cho thấy kẻ tấn công không cần lỗ hổng phần mềm nào:
+
+- **Tháng 1/2024, Microsoft công bố** nhóm gián điệp Midnight Blizzard đã vào được hệ thống email nội bộ của chính Microsoft. Đường vào: dò mật khẩu hàng loạt vào một **tenant thử nghiệm cũ không có MFA** (tenant là "không gian" riêng của một tổ chức trên nền tảng đám mây). Từ đó chúng lợi dụng một **ứng dụng OAuth thử nghiệm có quyền cao** (OAuth là cách cấp quyền cho một ứng dụng truy cập dữ liệu của bạn mà không cần đưa mật khẩu), tạo thêm ứng dụng mới và cấp cho nó quyền đọc hộp thư, rồi đọc email của một số lãnh đạo.
+- **Năm 2024, Mandiant công bố** một nhóm đã đăng nhập vào khoảng 165 tổ chức dùng dịch vụ dữ liệu đám mây Snowflake, bằng **tên đăng nhập và mật khẩu bị mã độc ăn cắp từ máy nhân viên**, có cái bị lấy từ nhiều năm trước. Các tài khoản đó không bật MFA. Dữ liệu bị lấy rồi dùng để tống tiền.
+
+Điểm chung của cả hai: tài khoản bị bỏ quên, không có MFA, ứng dụng hay khoá có quyền quá rộng, và không ai đọc log. AI làm việc dò mật khẩu, thử thông tin đăng nhập bị lộ và rà cấu hình sai nhanh hơn rất nhiều, nên những cửa mở này bị tìm ra sớm hơn.
+
+<ConceptMap
+  client:visible
+  title="Mô hình Vành đai Danh tính trên Đám mây & SaaS"
+  width={760}
+  height={300}
+  zones={[
+    { label: "Yêu cầu truy cập & danh tính", x: 10, y: 10, w: 235, h: 270 },
+    { label: "Chính sách (Conditional Access)", x: 255, y: 10, w: 250, h: 270 },
+    { label: "Tài nguyên đám mây & ứng dụng", x: 515, y: 10, w: 235, h: 270 },
+  ]}
+  nodes={[
+    { id: 'user', label: '1. Người dùng / Admin', sub: 'Mật khẩu + FIDO2 MFA', x: 127, y: 70, tone: 'accent', detail: 'Tài khoản người thật. Phải bắt buộc MFA kháng lừa đảo (FIDO2) và loại bỏ legacy authentication.' },
+    { id: 'app', label: '2. Ứng dụng OAuth / API', sub: 'Service Principal', x: 127, y: 200, tone: 'warn', detail: 'Ứng dụng bên thứ ba được cấp quyền. Phải rà soát định kỳ và tắt quyền tự duyệt của người dùng.' },
+    { id: 'policy', label: '3. Kiểm soát có điều kiện', sub: 'Conditional Access', x: 380, y: 135, tone: 'accent', detail: 'Đánh giá ngữ cảnh: Thiết bị có hợp chuẩn không (Intune)? IP có rủi ro không? Cấp quyền Just-In-Time (PIM).' },
+    { id: 'm365', label: '4. M365 / Google Apps', sub: 'Hộp thư, Tài liệu, Teams', x: 632, y: 70, detail: 'Chặn chuyển tiếp thư tự động ra ngoài; kích hoạt Unified Audit Log đẩy về SIEM.' },
+    { id: 'cloud', label: '5. Hạ tầng IaaS / AI API', sub: 'Azure, AWS, LLM Key', x: 632, y: 200, tone: 'bad', detail: 'Loại bỏ access key dài hạn; thay bằng Managed Identity để chống rò rỉ mã độc LLMjacking.' },
+  ]}
+  edges={[
+    { from: 'user', to: 'policy' },
+    { from: 'app', to: 'policy' },
+    { from: 'policy', to: 'm365' },
+    { from: 'policy', to: 'cloud' },
+  ]}
+/>
+
+### Năm việc giống nhau trên mọi nền tảng
+
+Mỗi nền tảng gọi tên mỗi thứ một khác, nhưng việc cần làm thì giống nhau. Bảng dưới là bản "dịch" giữa ba nền tảng phổ biến, để bạn biết cần tìm mục nào. Bạn chỉ cần đọc cột của nền tảng mà công ty mình đang dùng:
+
+| Việc | Microsoft 365, Entra ID, Azure | Google Workspace, GCP | AWS |
+|---|---|---|---|
+| Biết ai là quản trị viên tối cao | Global Administrator; Owner ở cấp subscription | Super Admin; Organization Admin | Tài khoản gốc (root); quyền `AdministratorAccess` |
+| Đọc và giữ audit log | Unified Audit Log, log đăng nhập Entra, Activity Log | Audit log trong trang quản trị, Cloud Audit Logs | CloudTrail |
+| Rà ứng dụng được cấp quyền | Ứng dụng doanh nghiệp, quyền OAuth đã đồng ý | Kiểm soát truy cập ứng dụng bên thứ ba qua API | Vai trò cho phép bên ngoài đảm nhận, nhà cung cấp OIDC |
+| Bỏ khoá dài hạn | Client secret, mật khẩu ứng dụng → managed identity | Khoá tài khoản dịch vụ → workload identity federation | Access key IAM → vai trò tạm thời |
+| Chặn hàng loạt ở cấp tổ chức | Conditional Access, Azure Policy | Context-Aware Access, Organization Policy | Service Control Policy (SCP) |
+
+### Microsoft 365 và Entra ID: việc làm ngay
+
+1. **Ít Global Administrator** (quản trị viên toàn quyền). Hai tới bốn người là đủ, cộng hai tài khoản khẩn cấp (*break-glass*, chỉ dùng khi mọi cách khác hỏng) dùng khoá FIDO2, cất kỹ, và có cảnh báo mỗi khi ai đó đăng nhập bằng chúng. Nếu có bản quyền phù hợp, dùng **PIM** (cấp quyền quản trị có thời hạn): quyền chỉ bật khi cần và tự hết hạn.
+2. **MFA cho mọi người và chặn legacy authentication** bằng Conditional Access (bài 7.3). Nếu không có bản quyền cho Conditional Access thì ít nhất hãy bật **Security defaults** (bộ thiết lập an toàn cơ bản miễn phí của Microsoft).
+3. **Không cho người dùng tự đồng ý cấp quyền cho ứng dụng lạ.** Chỉ cho đồng ý với ứng dụng từ nhà phát hành đã xác minh và quyền rủi ro thấp; mọi thứ khác đi qua quy trình quản trị duyệt.
+4. **Chặn tự động chuyển tiếp thư ra ngoài** trong chính sách thư đi. Kẻ chiếm hộp thư hay đặt chuyển tiếp để đọc thư lâu dài.
+5. **Bật audit log (nhật ký ghi lại ai làm gì) và đẩy về SIEM** (hệ thống gom log tập trung, bài 8.1). Log trên nền tảng chỉ được giữ trong một thời gian có hạn; muốn điều tra một vụ nằm im vài tháng thì phải giữ ở nơi khác.
+6. **Dọn tenant thử nghiệm, tài khoản cũ và ứng dụng không dùng.** Bài học Midnight Blizzard.
+
+**Ai đang là Global Administrator?** (dùng Microsoft Graph PowerShell, chỉ cần quyền đọc)
+
+```powershell
+Connect-MgGraph -Scopes 'RoleManagement.Read.Directory','Directory.Read.All'
+$role = Get-MgDirectoryRole | Where-Object DisplayName -eq 'Global Administrator'
+Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id |
+  ForEach-Object { $_.AdditionalProperties.userPrincipalName }
+```
+
+```text
+admin@luavang.example
+it.thanh@luavang.example
+ketoan.lan@luavang.example      ← kế toán là Global Administrator?
+khancap1@luavang.onmicrosoft.com
+```
+
+**Ứng dụng nào đang được cấp quyền đọc, gửi thư hay sửa mọi file?**
+
+<Lenh noi="Microsoft Graph PowerShell với quyền đọc cấu hình thư mục" muc="Tìm các ứng dụng bên thứ ba (OAuth) đã được cấp quyền nhạy cảm trên hộp thư hoặc toàn bộ kho file">
+
+<Terminal title="Rà soát ứng dụng OAuth có quyền đọc/ghi thư và file">
+
+```text
+Get-MgOauth2PermissionGrant -All |
+  Where-Object { $_.Scope -match 'Mail\.ReadWrite|Mail\.Send|Files\.ReadWrite\.All|full_access_as_user' } |
+  ForEach-Object {
+    $app = Get-MgServicePrincipal -ServicePrincipalId $_.ClientId
+    [pscustomobject]@{ UngDung = $app.DisplayName; LoaiDongY = $_.ConsentType; Quyen = $_.Scope.Trim() }
+  }
+
+UngDung              LoaiDongY      Quyen
+-------              ---------      -----
+Ky So Nhanh PDF      Principal      Mail.ReadWrite Files.ReadWrite.All offline_access
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `Get-MgOauth2PermissionGrant -All`: lấy danh sách mọi quyền uỷ thác OAuth đã được người dùng hoặc quản trị viên bấm đồng ý trong tenant.
+- `Where-Object { $_.Scope -match 'Mail\.ReadWrite|Mail\.Send|Files\.ReadWrite\.All|full_access_as_user' }`: lọc những quyền nguy hiểm nhất (đọc/sửa thư, gửi thư, sửa toàn bộ file).
+- `Get-MgServicePrincipal -ServicePrincipalId $_.ClientId`: tra tên hiển thị của ứng dụng tương ứng với mã `ClientId`.
+
+</div>
+
+<div slot="doc">
+
+- `Ky So Nhanh PDF` với quyền `Mail.ReadWrite Files.ReadWrite.All offline_access`: một ứng dụng mang tên "ký PDF" nhưng lại giữ quyền đọc/sửa toàn bộ hộp thư, toàn bộ file và tự làm mới phiên (`offline_access`) — dấu hiệu điển hình của đòn OAuth consent phishing (bài 7.3).
+
+</div>
+
+</Lenh>
+
+Một ứng dụng "ký PDF" mà lại xin quyền đọc và sửa toàn bộ thư, toàn bộ file, kèm quyền tự làm mới phiên khi người dùng không có mặt (`offline_access`): đây đúng là kiểu lừa cấp quyền cho ứng dụng ở bài 7.3. Thu hồi quyền, xoá ứng dụng, rà xem nó đã đọc gì.
+
+**Hộp thư đang chuyển tiếp ra ngoài hoặc có quy tắc tự xoá** (module Exchange Online; với tenant lớn, lệnh này chạy lâu)
+
+```powershell
+Connect-ExchangeOnline
+Get-Mailbox -ResultSize Unlimited |
+  Where-Object { $_.ForwardingSmtpAddress -or $_.ForwardingAddress } |
+  Select-Object UserPrincipalName, ForwardingSmtpAddress
+
+Get-Mailbox -ResultSize Unlimited | ForEach-Object {
+  Get-InboxRule -Mailbox $_.UserPrincipalName |
+    Where-Object { $_.ForwardTo -or $_.RedirectTo -or $_.DeleteMessage }
+} | Select-Object MailboxOwnerId, Name, ForwardTo, RedirectTo, DeleteMessage
+```
+
+### Google Workspace
+
+Cùng các nguyên tắc, khác tên gọi. Đường dẫn trong trang quản trị đổi theo thời gian, nên tìm theo tên mục:
+
+- **Ít Super Admin**, không dùng tài khoản Super Admin cho việc hằng ngày; bắt buộc **xác minh hai bước**, và với quản trị viên thì dùng **khoá bảo mật**.
+- **Kiểm soát truy cập ứng dụng bên thứ ba** (mục API controls): đánh dấu ứng dụng tin cậy, chặn ứng dụng chưa được duyệt xin quyền vào Gmail và Drive.
+- **Tắt tự động chuyển tiếp thư** ra ngoài nếu không cần, và theo dõi cảnh báo khi người dùng tạo quy tắc chuyển tiếp.
+- **Rà mật khẩu ứng dụng** (*app password*) còn sót: chúng đi vòng qua xác minh hai bước.
+- **Trung tâm cảnh báo và audit log**: đăng nhập đáng ngờ, quản trị viên mới, thay đổi chia sẻ Drive ra ngoài. Đẩy về SIEM nếu có.
+
+### Azure, GCP và AWS: cùng một bộ nguyên tắc
+
+- **Tài khoản gốc không dùng hằng ngày**, có MFA bằng khoá phần cứng, không có access key.
+- **Bỏ khoá dài hạn.** Ứng dụng chạy trên đám mây dùng danh tính gắn sẵn (managed identity trên Azure, tài khoản dịch vụ gắn với máy trên GCP, vai trò IAM trên AWS). Hệ thống bên ngoài, như CI/CD (bài 7.7), dùng **liên kết danh tính qua OIDC** để nhận thông tin tạm thời. GCP có hẳn chính sách tổ chức `iam.disableServiceAccountKeyCreation` để cấm tạo khoá tài khoản dịch vụ.
+- **Bắt buộc IMDSv2 trên AWS** (bài 2.9) để SSRF không đọc được thông tin tạm thời của máy ảo.
+- **Audit log bật ở cấp tổ chức**, đẩy về một tài khoản hoặc dự án log riêng mà quản trị viên thường không xoá được.
+- **Chặn ở cấp tổ chức** những thứ không bao giờ nên xảy ra. Ví dụ một SCP trên AWS cấm tắt hay xoá CloudTrail, kể cả với quản trị viên của tài khoản con:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "KhongChoTatNhatKy",
+      "Effect": "Deny",
+      "Action": ["cloudtrail:StopLogging", "cloudtrail:DeleteTrail", "cloudtrail:UpdateTrail"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+**Quét cấu hình sai tự động.** Prowler là công cụ mã nguồn mở quét AWS, Azure, GCP, Kubernetes, và ở các bản mới cả Microsoft 365, theo các chuẩn như CIS. Chạy định kỳ với một danh tính chỉ có quyền đọc:
+
+```bash
+prowler aws --output-formats html        # tương tự: prowler azure, prowler gcp
+# Mỗi kiểm tra có PASS/FAIL, mức độ và cách sửa; xử lý FAIL mức critical và high trước
+```
+
+### Khoá đám mây bị dùng để chạy AI (LLMjacking)
+
+Năm 2024, công ty bảo mật Sysdig đặt tên **LLMjacking** cho một kiểu tấn công mới: kẻ gian lấy được thông tin đăng nhập đám mây (qua lỗ hổng ứng dụng, khoá để lộ trong mã nguồn, mã độc đánh cắp thông tin), rồi dùng nó để **gọi các mô hình AI cao cấp mà nạn nhân trả tiền**. Quyền truy cập đó được bán lại qua các máy chủ trung gian.
+
+Sysdig ước tính nạn nhân có thể phải trả hơn 46.000 USD mỗi ngày nếu mô hình bị gọi ở mức tối đa. Kẻ gian còn dò xem nạn nhân có ghi log lời gọi mô hình không, và **bật thêm quyền dùng mô hình** mà nạn nhân chưa từng bật.
+
+Đầu năm 2025, Microsoft khởi kiện một nhóm dùng thông tin đăng nhập bị đánh cắp của khách hàng Azure OpenAI để vượt qua lớp an toàn và tạo nội dung độc hại. Khoá API của các nhà cung cấp mô hình AI để lộ trên repo công khai cũng bị quét và dùng trong vài phút.
+
+Lớp chặn:
+
+1. **Không để khoá trong mã nguồn.** Bật secret scanning và chặn ngay lúc đẩy mã (bài 7.7).
+2. **Chỉ tài khoản và dự án cần AI mới được dùng dịch vụ AI.** Chặn phần còn lại bằng SCP, Azure Policy, hoặc Organization Policy.
+3. **Cảnh báo chi phí.** Ngân sách và cảnh báo tăng đột biến thường là tín hiệu đầu tiên, nhiều khi trước cả SOC.
+4. **Bật ghi log lời gọi mô hình**, và cảnh báo khi ai đó dò, tắt log hoặc bật thêm quyền dùng mô hình:
+
+**Luật Sigma: danh tính lạ dò hoặc mở quyền dùng mô hình trên AWS Bedrock**
+
+```yaml
+title: Danh tính chưa được duyệt dò, bật quyền hoặc tắt log mô hình AI
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: 'bedrock.amazonaws.com'
+    eventName:
+      - 'ListFoundationModels'
+      - 'GetModelInvocationLoggingConfiguration'
+      - 'DeleteModelInvocationLoggingConfiguration'
+      - 'PutUseCaseForModelAccess'
+  filter_approved:
+    userIdentity.arn|contains: ':role/nhom-ai-'   # vai trò của nhóm AI đã duyệt
+  condition: selection and not filter_approved
+level: high
+tags:
+  - attack.t1496
+```
+
+Tên lời gọi API có thể thay đổi theo thời gian; đối chiếu tài liệu CloudTrail hiện hành của dịch vụ. Ý chính không đổi: **danh tính chưa từng dùng AI bỗng nhiên dò mô hình** là tín hiệu rất mạnh. Trên Azure và GCP, áp cùng ý cho dịch vụ mô hình tương ứng.
+
+<Callout type="note">
+Mục tiêu của kẻ tấn công trong LLMjacking không phải dữ liệu của bạn mà là <strong>hoá đơn của bạn</strong>. Nhưng cùng một khoá đó thường mở được cả kho dữ liệu. Thấy khoá bị dùng để gọi AI thì xử lý như khoá đã lộ hoàn toàn: thu hồi, xoay vòng, rà mọi việc nó đã làm.
+</Callout>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Trên môi trường đám mây và SaaS, <strong>danh tính chính là tường lửa mới</strong>. Hãy giữ số lượng quản trị viên tối cao (Global Administrator, Super Admin, Root) ở mức tối thiểu từ hai tới bốn người, bắt buộc họ dùng khóa FIDO2 chống phishing, kích hoạt quyền quản trị có thời hạn (PIM) và cất kỹ hai tài khoản khẩn cấp (*break-glass*) có gắn cảnh báo tức thì mỗi khi đăng nhập.
+
+Hãy coi <strong>các ứng dụng được cấp quyền OAuth như một lớp danh tính thứ hai</strong>: chặn người dùng tự bấm đồng ý với ứng dụng lạ, rà soát và thu hồi định kỳ các quyền đọc hộp thư hay kho tài liệu không còn dùng.
+
+Với hạ tầng AWS, Azure và GCP, hãy <strong>loại bỏ các khóa truy cập dài hạn</strong> (access key, client secret) để chuyển sang danh tính tạm thời gắn với máy ảo hoặc liên kết qua OIDC cho dây chuyền CI/CD. Đồng thời, bật audit log ở cấp toàn tổ chức, đẩy về một kho lưu trữ biệt lập và dùng chính sách cấp tổ chức (như SCP trên AWS) cấm tuyệt đối việc tắt log.
+
+Cuối cùng, để phòng ngừa <strong>LLMjacking</strong>, hãy khóa quyền gọi các dịch vụ mô hình AI ở những dự án không có nhu cầu, đặt cảnh báo ngân sách theo ngày và đẩy log lời gọi mô hình về SIEM, kết hợp chạy công cụ quét cấu hình sai như Prowler định kỳ.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Rà soát tenant và tài khoản đám mây"
+  storageKey="cloud-saas-review"
+  items={[
+    { label: 'Danh sách quản trị viên tối cao trên mọi nền tảng; không quá bốn người cho mỗi nền tảng' },
+    { label: 'Có hai tài khoản khẩn cấp dùng khoá FIDO2, có cảnh báo khi đăng nhập' },
+    { label: 'MFA cho mọi người, MFA chống phishing cho quản trị viên; legacy authentication đã chặn', hint: 'Bài 7.3' },
+    { label: 'Người dùng không tự đồng ý được với ứng dụng lạ; có quy trình duyệt' },
+    { label: 'Đã rà ứng dụng có quyền đọc thư, gửi thư, sửa mọi file; thu hồi cái không cần' },
+    { label: 'Chuyển tiếp thư tự động ra ngoài bị chặn; có cảnh báo khi tạo quy tắc chuyển tiếp' },
+    { label: 'Đã dọn tenant thử nghiệm, tài khoản cũ, mật khẩu ứng dụng còn sót' },
+    { label: 'Tài khoản gốc không có access key, có MFA phần cứng' },
+    { label: 'Ứng dụng và CI/CD dùng danh tính tạm thời thay cho khoá dài hạn', hint: 'Bài 7.7' },
+    { label: 'Audit log bật ở cấp tổ chức, đẩy về nơi riêng; chính sách tổ chức cấm tắt log' },
+    { label: 'Dịch vụ AI chỉ bật cho dự án cần; có cảnh báo chi phí và log lời gọi mô hình' },
+    { label: 'Prowler hoặc công cụ tương đương chạy định kỳ; FAIL mức cao được xử lý' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ rằng "đã thuê dịch vụ đám mây của Microsoft hay Amazon thì họ lo hết phần bảo mật rồi".** Nhà cung cấp chỉ bảo vệ hạ tầng vật lý và nền tảng; nếu bạn để tài khoản không có MFA hay cấp quyền thừa cho ứng dụng, kẻ tấn công đi vào bằng cửa chính hợp lệ mà nhà cung cấp không thể chặn thay bạn.
+- **Cấp quyền Global Administrator cho hàng chục người "để ai cần cấu hình gì cũng tự làm được ngay".** Mỗi tài khoản toàn quyền là một điểm sập của cả công ty; hầu hết công việc hằng ngày chỉ cần các vai trò quản trị hẹp theo từng dịch vụ hoặc kích hoạt tạm thời qua PIM.
+- **Khóa chặt tenant chính nhưng bỏ quên các tenant thử nghiệm, tài khoản dịch vụ cũ và mật khẩu ứng dụng (*app password*).** Như bài học từ vụ Midnight Blizzard, kẻ tấn công chỉ cần một môi trường thử nghiệm bị lãng quên có kết nối tin cậy với hệ thống thật là đủ làm bàn đạp.
+- **Khi hộp thư nhân viên bị lộ chỉ đổi mỗi mật khẩu mà quên rà ứng dụng OAuth và quy tắc chuyển tiếp thư.** Kẻ gian sau khi vào được hộp thư thường lập tức cài một quy tắc tự động chuyển tiếp thư ra ngoài hoặc cấp quyền `offline_access` cho một ứng dụng của chúng để tiếp tục đọc thư lâu dài bất chấp mật khẩu đã đổi.
+- **Lưu cứng `AWS_SECRET_ACCESS_KEY` trong kho mã nguồn "riêng tư" của công ty.** Kho mã riêng tư thường được nhân bản ra hàng chục laptop của lập trình viên và hệ thống CI/CD; chỉ cần một máy cá nhân nhiễm mã độc ăn cắp thông tin là chiếc khóa sống nhiều năm đó rơi thẳng vào tay kẻ xấu.
+- **Không đặt hạn mức và cảnh báo chi phí đám mây theo thời gian thực.** Với các cuộc tấn công LLMjacking gọi mô hình AI ở tốc độ tối đa, việc đợi tới kỳ hóa đơn cuối tháng mới phát hiện có thể khiến doanh nghiệp mất hàng chục nghìn USD chỉ trong vài ngày.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Bài học chính từ vụ Midnight Blizzard vào hệ thống email của Microsoft năm 2024 là gì?', options: ['Cần thêm tường lửa', 'Tenant thử nghiệm cũ không có MFA và ứng dụng OAuth có quyền cao là cửa vào, không cần lỗ hổng phần mềm', 'Không nên dùng email trên đám mây'], answer: 1, explain: 'Tài khoản bị quên và ứng dụng có quyền quá rộng là những thứ kẻ tấn công tìm đầu tiên.' },
+    { q: 'Một ứng dụng "ký PDF" có quyền Mail.ReadWrite, Files.ReadWrite.All và offline_access. Nên làm gì?', options: ['Để yên vì người dùng đã đồng ý', 'Thu hồi quyền, xoá ứng dụng, rà xem nó đã đọc gì; chặn người dùng tự đồng ý với ứng dụng lạ', 'Đổi mật khẩu của người dùng là đủ'], answer: 1, explain: 'Quyền đã cấp cho ứng dụng không mất khi đổi mật khẩu. Đây là hình mẫu lừa cấp quyền ứng dụng.' },
+    { q: 'Vì sao nên thay access key dài hạn bằng danh tính tạm thời qua OIDC cho CI/CD?', options: ['Vì nhanh hơn', 'Vì không còn khoá sống lâu để lộ ra; thông tin tạm thời tự hết hạn sau vài phút tới vài giờ', 'Vì OIDC miễn phí'], answer: 1, explain: 'Khoá dài hạn là thứ hay lộ nhất trong mã nguồn, log CI và máy dev. Không có khoá thì không có gì để lộ.' },
+    { q: 'LLMjacking là gì?', options: ['Tấn công làm mô hình AI trả lời sai', 'Dùng thông tin đăng nhập đám mây bị đánh cắp để gọi mô hình AI bằng tiền của nạn nhân', 'Đánh cắp trọng số mô hình'], answer: 1, explain: 'Tín hiệu thường thấy: chi phí tăng vọt, danh tính lạ dò mô hình, log lời gọi mô hình bị tắt.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Trên môi trường đám mây và SaaS, ranh giới an ninh không còn nằm ở tường lửa mạng mà nằm ở danh tính: ai nắm quyền quản trị, ứng dụng nào được ủy quyền, khóa nào đang hoạt động và nhật ký nào đang được ghi nhận.
+- Năm trụ cột bảo vệ áp dụng chung cho cả Microsoft 365, Google Workspace, AWS, Azure và GCP gồm: kiểm soát chặt quản trị viên tối cao, lưu trữ audit log độc lập, rà soát quyền ứng dụng OAuth, thay thế khóa dài hạn bằng danh tính tạm thời và áp chính sách chặn ở cấp tổ chức.
+- Với Microsoft 365 và Google Workspace, cần giữ số lượng quản trị viên tối cao tối thiểu, cấm người dùng tự cấp quyền cho ứng dụng chưa xác minh, chặn tự động chuyển tiếp thư ra ngoài và dọn dẹp triệt để các tenant thử nghiệm.
+- Để phòng chống LLMjacking biến khóa đám mây bị lộ thành hóa đơn khổng lồ, hãy tắt quyền gọi dịch vụ AI ở những tài khoản không có nhu cầu, cài cảnh báo chi phí tăng đột biến và giám sát chặt log gọi mô hình.

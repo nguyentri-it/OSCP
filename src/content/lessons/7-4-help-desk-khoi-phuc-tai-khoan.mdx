@@ -1,0 +1,209 @@
+---
+title: "Help desk và khôi phục tài khoản: cửa sau của danh tính"
+code: "7.4"
+level: 7
+summary: "Đường đăng nhập càng chắc, kẻ gian càng chuyển sang đường cấp lại: gọi bộ phận hỗ trợ xin đặt lại mật khẩu hay MFA, giờ có thêm giọng nói giả bằng AI. Cách dựng quy trình xác minh khi cấp lại không dựa vào thông tin ai cũng tra được, và cách phát hiện một lần đặt lại đáng ngờ."
+duration: "70 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu vì sao đường khôi phục tài khoản thường yếu hơn đường đăng nhập"
+  - "Thiết kế quy trình xác minh khi cấp lại mật khẩu, MFA không dựa vào thông tin biết được"
+  - "Phân mức xác minh theo quyền của tài khoản và theo loại yêu cầu"
+  - "Phát hiện lần đặt lại đáng ngờ bằng cách nối log help desk với log danh tính"
+  - "Áp cùng nguyên tắc cho khách hàng internet banking đổi thiết bị"
+---
+import Callout from '../../components/ui/Callout.astro';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Căn hộ của bạn có khoá vân tay rất tốt. Nhưng ban quản lý toà nhà giữ chìa dự phòng, và chỉ cần ai đó gọi điện: "Tôi là chủ căn 1204, tôi làm mất điện thoại và ví, mở cửa giúp tôi", rồi đọc đúng họ tên, ngày sinh, tên vợ... là bảo vệ mở cửa. Khoá vân tay tốt mấy cũng vô nghĩa nếu đường "tôi quên chìa" dễ hơn đường chính.
+
+Bài 7.3 làm chắc đường đăng nhập. Bài này làm chắc đường **cấp lại**.
+
+## Kiến thức chính
+
+### Vì sao đường cấp lại thường yếu hơn
+
+Nhân viên mất điện thoại, quên mật khẩu, khoá bảo mật hỏng: chuyện xảy ra hằng ngày. Ai đó phải cấp lại, và người đó thường là bộ phận hỗ trợ (help desk), làm việc dưới áp lực "xử lý nhanh để người ta còn làm việc".
+
+Nếu help desk xác minh bằng **thông tin biết được** (họ tên, mã nhân viên, ngày sinh, phòng ban, tên quản lý, vài số cuối căn cước), thì kẻ gian cũng biết được: từ mạng xã hội nghề nghiệp, từ dữ liệu bị rò rỉ, từ trang web công ty (thu thập thụ động, bài 2.1).
+
+Vụ MGM Resorts tháng 9/2023 là ví dụ được công bố rộng rãi: nhóm tấn công tìm thông tin một nhân viên trên mạng rồi gọi bộ phận hỗ trợ để được cấp lại quyền truy cập.
+
+Hệ thống của tập đoàn gián đoạn nhiều ngày; báo cáo của chính công ty ước tính thiệt hại khoảng 100 triệu USD. Nhóm này nổi tiếng với đúng một kỹ năng: gọi điện mạo danh nhân viên, xin đặt lại MFA.
+
+**AI thay đổi gì?** Giọng nói tổng hợp bắt chước được giọng một người từ vài đoạn ghi âm công khai; kịch bản cuộc gọi được soạn sẵn theo thông tin trên mạng; cuộc gọi có thể lặp lại hàng loạt. "Nghe đúng giọng anh ấy" không còn là bằng chứng (bài 6.2). Quy trình phải đúng **mà không cần ai nhận ra giọng là giả**.
+
+### Nguyên tắc dựng quy trình cấp lại
+
+1. **Không dùng thông tin biết được làm bằng chứng.** Thứ gì tra được trên mạng hay trong dữ liệu rò rỉ thì không chứng minh được gì.
+2. **Xác minh qua kênh đã đăng ký từ trước, do help desk chủ động khởi tạo.** Gọi lại số trong danh bạ nhân sự, không phải số người gọi đưa. Hoặc gửi yêu cầu duyệt tới một thiết bị đã đăng ký mà người dùng vẫn còn.
+3. **Người thứ hai xác nhận.** Quản lý trực tiếp xác nhận qua kênh nội bộ riêng (cuộc gọi video từ danh bạ nội bộ, hoặc duyệt trong hệ thống), không phải qua cuộc gọi đang diễn ra.
+4. **Xác minh mạnh cho trường hợp rủi ro cao.** Mất hết mọi yếu tố, hoặc tài khoản quyền cao: gặp trực tiếp kèm giấy tờ, hoặc quy trình xác minh từ xa có đối chiếu giấy tờ và kiểm tra người thật (bài 6.2).
+5. **Cấp lại có giới hạn.** Không đọc mật khẩu qua điện thoại. Hãy cấp một **Temporary Access Pass** (mã truy cập tạm thời: dùng một lần, hết hạn nhanh), chỉ đủ để người dùng tự đăng ký lại phương thức đăng nhập của mình, tốt nhất là khoá bảo mật FIDO2.
+6. **Thông báo và theo dõi sau khi cấp lại.** Gửi tới mọi kênh đã đăng ký: "Phương thức đăng nhập của bạn vừa được đặt lại. Không phải bạn? Gọi số nội bộ...". Theo dõi tăng cường vài ngày; tạm chặn thao tác nhạy cảm trong 24 giờ đầu.
+7. **Tách quyền.** Help desk thường **không** được đặt lại cho tài khoản quản trị, người duyệt thanh toán, hay chính các nhân viên help desk khác. Việc đó thuộc một nhóm riêng với quy trình chặt hơn.
+8. **Được phép nói không.** Nhân viên help desk được quy trình bảo vệ khi từ chối một người tự xưng lãnh đạo đang gấp. Hối thúc và đòi bỏ quy trình là dấu hiệu đỏ, không phải lý do để làm nhanh.
+
+So sánh hai cách xử lý cùng một cuộc gọi:
+
+<SequenceDiagram
+  client:visible
+  title={'Cuộc gọi: "Tôi mất điện thoại, cần đặt lại MFA gấp"'}
+  actors={['Người gọi', 'Help desk', 'Nhân viên thật', 'Quản lý trực tiếp']}
+  scenarios={[
+    {
+      name: 'Xác minh bằng thông tin biết được',
+      steps: [
+        { from: 0, to: 1, label: 'xin đặt lại MFA', note: '"Tôi là Lan, phòng thanh toán quốc tế, mất điện thoại ở sân bay, chiều nay phải duyệt lệnh." Giọng nói nghe đúng giọng chị Lan.', tone: 'bad' },
+        { from: 1, to: 0, label: 'hỏi mã NV, ngày sinh', note: 'Người gọi trả lời đúng hết. Tất cả đều tra được: hồ sơ nghề nghiệp công khai, một vụ rò rỉ dữ liệu cũ, trang giới thiệu ban lãnh đạo.', tone: 'bad' },
+        { from: 1, to: 0, label: 'đặt lại, đăng ký máy mới', note: 'Help desk xoá phương thức cũ, cho người gọi đăng ký một điện thoại mới. Không ai báo cho chị Lan thật.', tone: 'bad' },
+        { from: 0, to: 0, label: 'đăng nhập tên Lan', note: 'Có mật khẩu (từ một vụ lộ trước) và MFA mới của chính mình: kẻ gian vào hệ thống thanh toán với quyền của người duyệt lệnh.', tone: 'bad' },
+      ],
+    },
+    {
+      name: 'Gọi lại và người thứ hai',
+      steps: [
+        { from: 0, to: 1, label: 'xin đặt lại MFA', note: 'Cùng cuộc gọi, cùng giọng, cùng lời hối thúc.' },
+        { from: 1, to: 1, label: 'quyền cao → chặt', note: 'Người duyệt thanh toán thuộc nhóm quyền cao: help desk không tự đặt lại được. Báo người gọi: "Tôi sẽ gọi lại số trong danh bạ nhân sự và cần quản lý của chị xác nhận."', tone: 'good' },
+        { from: 1, to: 2, label: 'gọi số trong danh bạ', note: 'Chị Lan thật nghe máy, đang ngồi ở văn phòng, điện thoại vẫn trong tay. "Tôi không hề gọi."', tone: 'good' },
+        { from: 1, to: 3, label: 'báo SOC và quản lý', note: 'Không cấp gì. SOC được báo ngay: có người đang mạo danh, và có thể đang gọi mạo danh những người khác trong phòng thanh toán.', tone: 'good' },
+      ],
+    },
+  ]}
+/>
+
+Trường hợp thật (chị Lan mất điện thoại thật): cuộc gọi lại không ai nghe, nên quản lý trực tiếp xác nhận qua cuộc gọi video từ danh bạ nội bộ. Vì là tài khoản quyền cao, chị đến gặp trực tiếp nhóm quản trị danh tính để nhận Temporary Access Pass, đăng ký khoá FIDO2 mới. Chậm hơn vài giờ, nhưng đó là cái giá đúng cho quyền duyệt lệnh chuyển tiền.
+
+### Phân mức theo loại yêu cầu
+
+Không phải yêu cầu nào cũng cần cùng một mức. Tự đi qua quy tắc xử lý:
+
+<DecisionTree
+  client:visible
+  title="Help desk nhận một yêu cầu cấp lại"
+  start="loai"
+  nodes={{
+    loai: { q: 'Người gọi xin gì?', options: [
+      { label: 'Đặt lại mật khẩu (vẫn còn MFA)', next: 'pw' },
+      { label: 'Mở khoá tài khoản bị khoá', next: 'unlock' },
+      { label: 'Đặt lại MFA, đăng ký thiết bị mới', next: 'mfa' },
+    ] },
+    pw: { result: 'Không cần help desk can thiệp. Hướng người dùng tới trang tự đặt lại mật khẩu, nơi đòi xác thực bằng phương thức MFA hiện có. Help desk không bao giờ đọc hay đặt mật khẩu hộ qua điện thoại.', tone: 'good' },
+    unlock: { q: 'Người dùng còn xác nhận được trên thiết bị MFA đã đăng ký không?', options: [
+      { label: 'Còn', next: 'unlockOk' },
+      { label: 'Không, mất cả thiết bị', next: 'mfa' },
+    ] },
+    unlockOk: { result: 'Gửi yêu cầu duyệt tới thiết bị đã đăng ký; người dùng xác nhận trên đó thì mở khoá. Ghi ticket. Đồng thời xem vì sao tài khoản bị khoá: có thể đang có người dò mật khẩu.', tone: 'good' },
+    mfa: { q: 'Tài khoản thuộc nhóm quyền cao (quản trị, duyệt thanh toán, chính help desk)?', options: [
+      { label: 'Có', next: 'high' },
+      { label: 'Không', next: 'callback' },
+    ] },
+    high: { result: 'Help desk không tự đặt lại. Chuyển nhóm quản trị danh tính: xác minh trực tiếp với giấy tờ hoặc hai người duyệt, rồi cấp Temporary Access Pass dùng một lần, chỉ để đăng ký khoá FIDO2 mới.', tone: 'warn' },
+    callback: { q: 'Đã gọi lại số trong danh bạ nhân sự VÀ quản lý trực tiếp đã xác nhận qua kênh nội bộ chưa?', options: [
+      { label: 'Rồi, cả hai xác nhận', next: 'ok' },
+      { label: 'Người thật nói không hề gọi', next: 'stop' },
+      { label: 'Người gọi từ chối, đòi làm gấp', next: 'stop2' },
+    ] },
+    ok: { result: 'Cấp Temporary Access Pass, dùng một lần, hạn ngắn. Gửi thông báo tới mọi kênh đã đăng ký. Tạm chặn thao tác nhạy cảm 24 giờ, theo dõi tăng cường vài ngày. Ghi ticket kèm cách đã xác minh.', tone: 'good' },
+    stop: { result: 'Dừng, không cấp gì. Báo SOC ngay: có người đang mạo danh nhân viên này và có thể đang gọi mạo danh người khác. Cảnh báo cả nhóm help desk.', tone: 'bad' },
+    stop2: { result: 'Dừng. Hối thúc và đòi bỏ quy trình là dấu hiệu đỏ. Quy trình tồn tại để bảo vệ chính nhân viên help desk khi họ nói không. Ghi lại cuộc gọi và báo SOC.', tone: 'bad' },
+  }}
+/>
+
+### Phát hiện một lần đặt lại đáng ngờ
+
+Quy trình có thể bị làm sai, nên vẫn cần lớp phát hiện. Ý tưởng chính: **nối log của help desk với log của hệ thống danh tính**.
+
+| Tín hiệu | Vì sao đáng ngờ |
+|---|---|
+| Phương thức MFA bị đặt lại mà **không có ticket** help desk tương ứng | Ai đó có quyền quản trị danh tính tự làm, hoặc quy trình bị bỏ qua |
+| MFA mới được đăng ký, rồi trong vòng một giờ có đăng nhập từ thiết bị hoặc IP chưa từng thấy | Đúng chuỗi sau một cuộc gọi mạo danh thành công |
+| Sau khi đặt lại: tạo quy tắc hộp thư, cấp quyền ứng dụng, truy cập hệ thống thanh toán | Kẻ gian tận dụng phiên mới ngay (bài 7.3) |
+| Nhiều yêu cầu đặt lại cho cùng một phòng ban trong một ngày | Một chiến dịch đang gọi lần lượt từng người |
+| Cùng một số gọi đến, hoặc cùng một kịch bản, cho nhiều nhân viên khác nhau | Một người gọi đang mạo danh nhiều người |
+
+**Truy vấn mẫu: tìm người vừa đặt lại MFA rồi đăng nhập từ thiết bị hoặc nơi lạ trong vòng một giờ** (viết bằng ngôn ngữ truy vấn KQL; tên bảng và cột sẽ khác tuỳ hệ thống của bạn)
+
+```text
+let DatLai = NhatKyDanhTinh
+  | where HanhDong in ("Đặt lại phương thức MFA", "Đăng ký phương thức MFA")
+  | project NguoiDung, ThoiDiemDatLai = TimeGenerated;
+DatLai
+| join kind=inner (NhatKyDangNhap | where KetQua == "Thành công") on NguoiDung
+| where TimeGenerated between (ThoiDiemDatLai .. ThoiDiemDatLai + 1h)
+| where ThietBiMoi == true or IPMoi == true
+| project NguoiDung, ThoiDiemDatLai, TimeGenerated, IP, ThietBi
+```
+
+Ghép thêm danh sách ticket (phiếu yêu cầu) của help desk: lần đặt lại nào có ticket ghi rõ "đã gọi lại, quản lý xác nhận" thì hạ mức báo động; không có ticket thì nâng mức lên.
+
+### Cùng nguyên tắc cho khách hàng
+
+Khách hàng internet banking cũng "mất điện thoại". Kẻ gian cũng gọi tổng đài, hoặc chiếm số điện thoại của khách bằng cách xin nhà mạng cấp lại SIM (*SIM swap*) để nhận được mã SMS. Vì vậy:
+
+- **Đổi thiết bị không chỉ dựa vào mã SMS** hay câu hỏi bảo mật. Dùng xác minh khuôn mặt có kiểm tra người thật, đối chiếu với căn cước gắn chip (bài 6.2).
+- **Có thời gian chờ** sau khi đổi thiết bị trước khi cho chuyển tiền lớn, và **thông báo qua kênh cũ** (thiết bị cũ, email) để khách thật kịp phản ứng.
+- **Tổng đài viên không có nút "kích hoạt thiết bị mới"** chỉ dựa vào trả lời câu hỏi qua điện thoại.
+- **Theo dõi chuỗi rủi ro:** đổi thiết bị → đổi số điện thoại hoặc email → thêm người thụ hưởng mới → chuyển tiền, trong thời gian ngắn, là chuỗi chiếm tài khoản kinh điển (bài 6.2).
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Đường khôi phục tài khoản bắt buộc phải được thiết kế <strong>chắc chắn ngang ngửa đường đăng nhập chính</strong>, bởi kẻ tấn công luôn chọn cánh cửa nào dễ mở hơn. Nguyên tắc đầu tiên là loại bỏ hoàn toàn việc xác minh bằng những thông tin tĩnh có thể tra cứu (ngày sinh, mã nhân viên, số căn cước); thay vào đó, bộ phận help desk phải chủ động gọi lại vào số điện thoại trong danh bạ nhân sự kết hợp yêu cầu người quản lý trực tiếp xác nhận qua một kênh nội bộ độc lập.
+
+Hãy phân mức xác minh theo quyền hạn: tài khoản quản trị, kế toán duyệt chi và chính nhân viên help desk tuyệt đối không được đặt lại qua một cuộc gọi thông thường mà phải xác minh trực tiếp hoặc qua hai người phê duyệt.
+
+Khi cấp lại quyền truy cập, chỉ cấp mã tạm dùng một lần (Temporary Access Pass) có thời hạn ngắn để người dùng tự đăng ký lại khóa FIDO2, đồng thời bắn thông báo tới mọi kênh liên lạc của chủ tài khoản và tạm khóa các thao tác nhạy cảm trong 24 giờ đầu. Cuối cùng, hãy <strong>nối log hệ thống ticket của help desk với log hệ thống danh tính</strong> tại SIEM để bắt ngay những ca đặt lại MFA không có phiếu yêu cầu hợp lệ hoặc vừa đặt lại đã đăng nhập từ thiết bị lạ.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Rà soát quy trình cấp lại"
+  storageKey="account-recovery"
+  items={[
+    { label: 'Quy trình cấp lại không dùng thông tin biết được (ngày sinh, mã NV...) làm bằng chứng' },
+    { label: 'Help desk gọi lại qua số trong danh bạ nhân sự, không dùng số người gọi đưa' },
+    { label: 'Đặt lại MFA cần quản lý trực tiếp xác nhận qua kênh nội bộ riêng' },
+    { label: 'Tài khoản quyền cao chỉ được đặt lại bởi nhóm riêng, gặp trực tiếp hoặc hai người duyệt' },
+    { label: 'Cấp lại bằng Temporary Access Pass dùng một lần, không đọc mật khẩu qua điện thoại' },
+    { label: 'Mỗi lần đặt lại đều gửi thông báo tới mọi kênh đã đăng ký' },
+    { label: 'Thao tác nhạy cảm bị tạm chặn trong 24 giờ sau khi đặt lại' },
+    { label: 'Có cảnh báo: đặt lại MFA không có ticket; đăng nhập lạ trong một giờ sau đặt lại' },
+    { label: 'Nhân viên help desk được đào tạo và được bảo vệ khi từ chối yêu cầu hối thúc' },
+    { label: 'Khách hàng đổi thiết bị phải qua xác minh khuôn mặt, có thời gian chờ và thông báo qua kênh cũ' },
+    { label: 'Đã diễn tập gọi mạo danh help desk trong năm qua (có phép bằng văn bản)' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Trang bị khóa FIDO2 tối tân cho cổng đăng nhập nhưng lại cho phép help desk gỡ MFA chỉ sau ba câu hỏi cá nhân qua điện thoại.** Giống như lắp cửa thép chống đạn nhưng lại dặn bảo vệ ai đọc đúng tên chủ nhà thì đưa chìa khóa sơ cua, đây chính là kịch bản đã làm sập hệ thống của nhiều tập đoàn lớn như vụ MGM Resorts.
+- **Gọi lại để xác minh nhưng lại bấm gọi vào đúng số điện thoại mà người ở đầu dây bên kia vừa đọc cho mình.** Khi kẻ mạo danh tự cung cấp số liên lạc với lý do "đang mượn máy đồng nghiệp", cuộc gọi lại của bạn chỉ nối máy về đúng tay đồng bọn của chúng.
+- **Cho phép nhân viên help desk thông thường đặt lại mật khẩu và MFA cho cả tài khoản quản trị viên hệ thống.** Nhóm quyền cao là mục tiêu giá trị nhất và thường bị thúc ép dưới danh nghĩa "sự cố khẩn cấp"; nếu không tách quyền kỹ thuật ngay trong hệ thống, một nhân viên trực tổng đài bị áp lực hoàn toàn có thể mở toang cánh cửa Tier 0.
+- **Tin vào tai nghe của nhân viên hỗ trợ vì "nghe đúng giọng vị lãnh đạo đó".** Công nghệ nhại giọng bằng AI chỉ cần vài giây âm thanh công khai để tạo ra giọng nói giống hệt kèm tiếng ồn sân bay phía sau; quy trình xác minh không bao giờ được dựa vào việc nhận diện giọng nói.
+- **Đặt lại phương thức MFA âm thầm mà không gửi cảnh báo tự động tới các kênh liên lạc cũ của nhân viên.** Nếu chủ tài khoản thật đang ngồi làm việc mà nhận được tin nhắn "Thiết bị MFA của bạn vừa được thay đổi", họ sẽ báo động ngay lập tức trước khi kẻ gian kịp rút dữ liệu.
+- **Trách phạt nhân viên help desk khi họ làm đúng quy trình xác minh khiến một lãnh đạo phải chờ thêm 15 phút.** Một lần khiển trách như vậy sẽ dạy toàn bộ đội hỗ trợ rằng "gặp sếp hối thúc thì cứ bỏ qua quy trình cho yên thân" — đúng tâm lý mà kẻ tấn công xã hội luôn khai thác.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao hỏi ngày sinh, mã nhân viên, tên quản lý không phải là xác minh tốt?', options: ['Vì nhân viên hay quên các thông tin đó', 'Vì đó là thông tin biết được: tra được trên mạng hoặc trong dữ liệu rò rỉ, kẻ gian cũng trả lời đúng', 'Vì hỏi lâu'], answer: 1, explain: 'Bằng chứng phải là thứ kẻ gian không có: kênh đã đăng ký từ trước, người thứ hai xác nhận, hoặc gặp trực tiếp.' },
+    { q: 'Người gọi đưa một số điện thoại và bảo "gọi lại số này để xác minh". Nên làm gì?', options: ['Gọi lại số đó', 'Gọi lại số trong danh bạ nhân sự, không dùng số người gọi đưa', 'Bỏ qua bước gọi lại cho nhanh'], answer: 1, explain: 'Số do người gọi đưa có thể là của chính kẻ gian. Kênh xác minh phải do help desk chọn và khởi tạo.' },
+    { q: 'Sau khi đặt lại MFA cho một nhân viên, tín hiệu nào đáng cảnh báo nhất?', options: ['Nhân viên đăng nhập từ máy quen ở văn phòng vào sáng hôm sau', 'Trong vòng một giờ có đăng nhập từ thiết bị và IP chưa từng thấy, rồi tạo quy tắc chuyển tiếp email', 'Nhân viên đổi ảnh đại diện'], answer: 1, explain: 'Đó là chuỗi điển hình sau một cuộc gọi mạo danh thành công.' },
+    { q: 'Cách cấp lại nào hợp lý nhất cho một người duyệt thanh toán mất khoá FIDO2?', options: ['Help desk đọc mật khẩu tạm qua điện thoại', 'Nhóm quản trị danh tính xác minh trực tiếp, cấp Temporary Access Pass dùng một lần để tự đăng ký khoá mới, rồi thông báo mọi kênh', 'Tắt MFA cho tài khoản đó một tuần'], answer: 1, explain: 'Tài khoản quyền cao cần xác minh mạnh nhất, và lần cấp lại chỉ đủ để đăng ký lại phương thức chống lừa đảo.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Luồng khôi phục tài khoản và đặt lại MFA thường là mắt xích yếu nhất trong hệ thống danh tính; cổng đăng nhập càng chặt thì kẻ tấn công càng dồn sức đánh vào bộ phận hỗ trợ.
+- Mọi thông tin tĩnh có thể tra cứu trên mạng và cả giọng nói qua điện thoại đều không còn là bằng chứng xác thực đáng tin cậy trước các công cụ thu thập và giả giọng bằng AI.
+- Quy trình cấp lại an toàn bắt buộc phải chủ động gọi lại qua số trong danh bạ nhân sự, có quản lý trực tiếp xác nhận độc lập, và yêu cầu gặp trực tiếp hoặc hai người duyệt đối với nhóm tài khoản đặc quyền.
+- Chỉ cấp quyền truy cập lại qua mã tạm dùng một lần (Temporary Access Pass), bắn thông báo tới mọi kênh đã đăng ký, tạm khóa thao tác nhạy cảm và đối chiếu chéo log ticket help desk với log đặt lại MFA tại SOC.

@@ -1,0 +1,226 @@
+---
+title: "Thư giả, tên miền nhái và chia sẻ tình báo"
+code: "7.5"
+level: 7
+summary: "Email cho phép người gửi tự khai địa chỉ của mình. SPF, DKIM và DMARC biến lời tự khai thành thứ kiểm chứng được cho tên miền của bạn; tên miền nhái thì cần một lớp khác. Và vì kẻ gian nhắm nhiều ngân hàng cùng lúc, chia sẻ tình báo giúp ngân hàng sau chặn được trước khi bị đánh."
+duration: "85 phút"
+updated: "2026-11-09"
+objectives:
+  - "Phân biệt địa chỉ envelope và địa chỉ hiển thị của một lá thư"
+  - "Giải thích cơ chế SPF, DKIM, DMARC và khái niệm khớp tên miền (alignment)"
+  - "Lập lộ trình đưa DMARC từ p=none lên p=reject mà không chặn nhầm thư thật"
+  - "Phát hiện tên miền nhái bằng biến thể tên miền, log Certificate Transparency và cờ tên miền mới đăng ký"
+  - "Biết chia sẻ tình báo mối đe doạ giữa các ngân hàng: chia sẻ gì, qua đâu, theo quy tắc nào"
+---
+import Callout from '../../components/ui/Callout.astro';
+import EmailAuthLab from '../../components/sim/EmailAuthLab.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Khi gửi thư qua bưu điện, bạn tự viết địa chỉ người gửi ở góc phong bì. Bưu điện không kiểm tra. Ai cũng có thể viết "Ngân hàng Sao Mai, 1 Nguyễn Huệ" lên phong bì của mình.
+
+Email được thiết kế từ thời mạng chỉ có vài trường đại học tin nhau, và mang đúng điểm yếu đó: địa chỉ người gửi là chữ do người gửi tự khai.
+
+Bài 2.4 và 8.7 dạy nhận diện thư lừa đảo bằng mắt, kể cả dấu hiệu "tên miền đăng ký 3 ngày trước". Bài này dạy cơ chế bên dưới: làm sao để máy, không phải con người, nói được "thư này không phải của Sao Mai".
+
+## Kiến thức chính
+
+### Một lá thư có hai địa chỉ người gửi
+
+- **Địa chỉ envelope** ("địa chỉ trên phong bì", gửi đi bằng lệnh `MAIL FROM` và hiện trong dòng `Return-Path` của phần đầu thư): máy chủ thư dùng nó để gửi thư báo lỗi khi không giao được. Người dùng hầu như không thấy.
+- **Địa chỉ hiển thị** (dòng `From` trong phần đầu thư, gọi là header): thứ mà ứng dụng thư hiện ra cho người dùng đọc, giống tên người gửi viết bên trong lá thư.
+
+Hai địa chỉ này có thể khác nhau hoàn toàn, và kẻ gian khai thác đúng khoảng cách đó.
+
+### Ba bản ghi DNS chống giả mạo
+
+Tên miền nào cũng có thể đăng ký vài dòng "ghi chú công khai" trong DNS (hệ thống tra tên miền, bài 1.3), gọi là bản ghi TXT. Máy chủ thư nhận sẽ tra các dòng này để quyết định có tin lá thư hay không. Ba dòng ví dụ của Sao Mai:
+
+```text
+saomai.example.                TXT  "v=spf1 ip4:203.0.113.10 include:_spf.dichvuthu.example -all"
+s1._domainkey.saomai.example.  TXT  "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A..."
+_dmarc.saomai.example.         TXT  "v=DMARC1; p=reject; rua=mailto:dmarc-baocao@saomai.example"
+```
+
+**SPF** (Sender Policy Framework): giống một danh sách "những máy chủ được phép gửi thư nhân danh tên miền này". Máy nhận so IP của máy vừa gửi thư với danh sách đó. `-all` ở cuối nghĩa là "mọi IP khác đều không được phép". SPF chỉ xét **địa chỉ envelope**.
+- Điểm yếu: chỉ kiểm tra địa chỉ envelope, **không** kiểm tra địa chỉ hiển thị (cái người dùng nhìn thấy). Và nó hỏng khi thư bị chuyển tiếp, vì máy chuyển tiếp có IP khác.
+
+**DKIM** (DomainKeys Identified Mail): giống một con dấu niêm phong. Máy chủ gửi "ký" lên phần đầu và nội dung thư bằng một khoá bí mật; khoá công khai tương ứng được đặt trong DNS. Máy nhận kiểm chữ ký để biết hai điều: thư không bị sửa trên đường đi, và đúng là do bên giữ khoá của tên miền `d=` (tên miền ghi trong chữ ký) ký.
+- Ưu điểm: sống sót qua chuyển tiếp nếu nội dung không bị sửa.
+- Điểm yếu: tự nó không nói gì về địa chỉ hiển thị. Kẻ gian ký thư bằng tên miền của chính chúng thì chữ ký vẫn "pass" (hợp lệ), dù thư đang giả danh người khác.
+
+**DMARC** (Domain-based Message Authentication, Reporting and Conformance): bước nối SPF và DKIM với **địa chỉ hiển thị**, tức đòi "người ký/người gửi hợp lệ phải đúng là tên miền mà người dùng đang nhìn thấy". Một thư đạt DMARC khi có **ít nhất một** trong hai điều kiện:
+- SPF pass **và** tên miền envelope **khớp** với tên miền hiển thị; hoặc
+- DKIM pass **và** tên miền ký `d=` **khớp** với tên miền hiển thị.
+
+"Khớp" (*alignment*) nghĩa là cùng một tên miền gốc của tổ chức: `bounce.saomai.example` khớp với `saomai.example`, còn `gui-thu.example` thì không. Bản ghi DMARC còn nói bên nhận nên làm gì với thư trượt (`p=none` chỉ quan sát, `p=quarantine` cho vào thư rác, `p=reject` từ chối) và gửi báo cáo tổng hợp về đâu (`rua=`).
+
+### Thử tự tay
+
+Đổi chính sách DMARC và đi qua cả bảy lá thư. Đặc biệt so sánh thư 3 với thư 4, và thư 4 với thư 7:
+
+<EmailAuthLab client:visible />
+
+Bốn điều rút ra:
+
+1. **SPF hay DKIM "pass" một mình chưa nói gì về địa chỉ hiển thị** (thư 4). Chỉ DMARC, với yêu cầu khớp tên miền, mới bảo vệ thứ người dùng nhìn thấy.
+2. **DKIM cứu thư thật bị chuyển tiếp** (thư 5): SPF trượt nhưng DKIM vẫn pass và khớp.
+3. **p=none không chặn gì** (thư 3 và 4 vẫn tới hộp thư), và **bật p=reject vội** thì chặn nhầm thư thật từ nguồn chưa khai báo (thư 6).
+4. **DMARC bất lực trước tên miền nhái** (thư 7): kẻ gian sở hữu tên miền đó và cấu hình đúng hết. Cần lớp khác, xem phần tên miền nhái bên dưới.
+
+### Đưa DMARC lên p=reject an toàn
+
+1. **Kiểm kê mọi nguồn gửi thư hợp lệ** mang tên miền ngân hàng: máy chủ thư, hệ thống gửi sao kê và OTP, dịch vụ gửi bản tin, hệ thống tuyển dụng, phần mềm chăm sóc khách hàng... Thường nhiều hơn mọi người nghĩ.
+2. **Cấu hình SPF và DKIM cho từng nguồn**, ký DKIM bằng tên miền ngân hàng để khớp. Dùng khoá DKIM 2048 bit, có lịch xoay khoá.
+3. **Bật `p=none` kèm `rua=`** để nhận báo cáo tổng hợp từ các bên nhận. Đọc báo cáo vài tuần: nguồn nào đang gửi thư mang tên miền của bạn mà trượt DMARC? Là nguồn hợp lệ bị quên, hay kẻ giả mạo?
+4. **Lên `p=quarantine`**, có thể áp dần theo tỉ lệ, theo dõi khiếu nại thư thật bị lạc.
+5. **Lên `p=reject`**, và tiếp tục đọc báo cáo: mỗi khi có phòng ban đăng ký dịch vụ gửi thư mới, quy trình phải có bước cấu hình SPF, DKIM trước khi dùng.
+
+**Tên miền không dùng để gửi thư** (tên miền dự phòng, tên miền chiến dịch cũ) cũng cần bảo vệ, vì kẻ gian sẽ chọn tên miền nào không có DMARC:
+
+```text
+saomai-cu.example.          TXT  "v=spf1 -all"
+_dmarc.saomai-cu.example.   TXT  "v=DMARC1; p=reject"
+```
+
+Từ năm 2024, Google và Yahoo yêu cầu người gửi thư số lượng lớn tới hộp thư của họ phải có SPF, DKIM và DMARC. Với ngân hàng gửi hàng triệu thư sao kê, đây không còn là việc "nên làm".
+
+### Đọc kết quả xác thực trong header
+
+Khi nhân viên báo cáo một thư đáng ngờ, người phân tích mở header và tìm dòng `Authentication-Results` do máy chủ thư của chính mình ghi:
+
+```text
+Authentication-Results: mx.saomai.example;
+  spf=pass smtp.mailfrom=gui-thu.example;
+  dkim=pass header.d=gui-thu.example;
+  dmarc=fail (p=REJECT) header.from=saomai.example
+From: "Phòng Kiểm toán nội bộ" <kiemtoan@saomai.example>
+Return-Path: <bounce@gui-thu.example>
+```
+
+Đọc ra: SPF và DKIM đều pass, nhưng cho `gui-thu.example`; địa chỉ hiển thị là `saomai.example`; không khớp nên DMARC trượt. Nếu thư này vẫn vào được hộp thư, câu hỏi tiếp theo là: cổng thư của chính ngân hàng có đang tôn trọng kết quả DMARC không, hay có ngoại lệ nào cho thư "nội bộ" đi vòng từ ngoài vào?
+
+Thêm hai lớp đơn giản mà hiệu quả ở cổng thư:
+
+- **Nhãn "thư từ bên ngoài"** chèn vào đầu mọi thư đến từ ngoài tổ chức.
+- **Cảnh báo trùng tên hiển thị:** thư từ ngoài mà tên hiển thị trùng tên một lãnh đạo hay một phòng ban nội bộ ("Phòng Kiểm toán nội bộ") thì gắn cờ riêng. Đây là đòn của thư mạo danh lãnh đạo (bài 6.2).
+
+### Tên miền nhái
+
+DMARC bảo vệ đúng tên miền của bạn, và chỉ tên miền đó. Kẻ gian không cần giả `saomai.example` nếu đăng ký được một tên trông đủ giống:
+
+| Kiểu nhái | Ví dụ |
+|---|---|
+| Gõ nhầm, thêm bớt ký tự | `saomaii.example`, `samai.example` |
+| Ký tự trông giống nhau | `saornai.example` (`rn` thay `m`), `sa0mai.example` |
+| Thêm từ nghe chính thức | `saomai-xacthuc.example`, `saomai-hotro.example` |
+| Đổi đuôi tên miền | `saomai.test` thay cho `saomai.example` |
+| Ký tự Unicode giống hệt (homoglyph) | chữ `а` Kirin thay chữ `a` Latin; trình duyệt đôi khi hiện dạng `xn--...` |
+| Tên miền phụ đánh lừa | `saomai.example.dang-nhap-an-toan.example`: tên miền thật là phần cuối |
+
+**Phát hiện và xử lý:**
+
+1. **Tự sinh biến thể tên miền của mình và theo dõi xem cái nào đã được đăng ký.** Công cụ mã nguồn mở như `dnstwist` làm việc này (chạy cho tên miền của chính đơn vị bạn). Tên miền nhái **có bản ghi MX** (nhận và gửi thư được) là ưu tiên cao: nó đang được chuẩn bị cho email.
+
+   ```text
+   $ dnstwist --registered saomai.example          (minh hoạ, rút gọn)
+   addition       saomaii.example         198.51.100.23   MX:mail.saomaii.example
+   homoglyph      saornai.example         203.0.113.77
+   hyphenation    sao-mai.example         198.51.100.40   MX:mx.sao-mai.example
+   dictionary     saomai-xacthuc.example  198.51.100.90   MX:mx.saomai-xacthuc.example
+   ```
+
+2. **Theo dõi log Certificate Transparency**. Trang lừa đảo cần chứng chỉ TLS để có ổ khoá trên trình duyệt, và mọi chứng chỉ công khai đều được ghi vào nhật ký. Chính crt.sh mà bài 2.1 dùng để thu thập thông tin, ở đây dùng để phòng thủ: theo dõi mọi chứng chỉ mới có chứa tên thương hiệu của bạn, thường thấy trang giả **trước khi** email lừa đảo đầu tiên được gửi.
+3. **Gắn cờ hoặc chặn tên miền mới đăng ký** ở cổng thư và proxy web (ví dụ dưới 30 ngày tuổi). Tên miền lừa đảo thường được dùng ngay sau khi đăng ký; đó là lý do dấu hiệu "tên miền đăng ký 3 ngày trước" ở bài 8.7 đáng tin.
+4. **Đăng ký phòng thủ** vài biến thể quan trọng nhất (gõ nhầm phổ biến, đuôi tên miền chính).
+5. **Gỡ bỏ** (*takedown*): báo nhà đăng ký tên miền, nhà cung cấp hosting, và cơ quan chức năng về an toàn thông tin theo quy định hiện hành; giữ bằng chứng (ảnh chụp, header thư, chứng chỉ).
+6. **Chặn ngay trong nhà** khi phát hiện: thêm vào danh sách chặn của DNS nội bộ, proxy, cổng thư; và **chia sẻ** cho các ngân hàng khác (phần dưới).
+
+### Chia sẻ tình báo giữa các ngân hàng
+
+Một nhóm lừa đảo nhắm Sao Mai hôm nay thường dùng cùng hạ tầng, cùng mẫu thư để nhắm ngân hàng khác ngày mai. Ngân hàng bị đánh trước có thể giúp các ngân hàng sau chặn trước.
+
+**Chia sẻ gì**, từ ngắn hạn tới dài hạn:
+
+- **Chỉ báo kỹ thuật** (*indicators*): tên miền nhái, IP, mã băm file độc hại, địa chỉ ví, tài khoản mule nhận tiền. Có ích ngay nhưng hết giá trị nhanh vì kẻ gian đổi hạ tầng.
+- **Mẫu và kịch bản:** mẫu email lừa đảo, kịch bản gọi điện mạo danh help desk (bài 7.4), lời dẫn dụ khách hàng.
+- **Cách thức hoạt động** (TTP, theo ATT&CK): ví dụ "gọi help desk xin đặt lại MFA, rồi tạo quy tắc chuyển tiếp email". Thay đổi chậm nhất, giá trị lâu nhất.
+
+**Qua đâu:** các tổ chức chia sẻ trong ngành tài chính (ví dụ FS-ISAC ở quy mô quốc tế), và mạng lưới ứng cứu sự cố quốc gia và của ngành ngân hàng.
+
+Để các hệ thống tự trao đổi chỉ báo với nhau, dùng nền tảng mã nguồn mở **MISP** với định dạng chuẩn STIX, TAXII. Ở Việt Nam, Ngân hàng Nhà nước vận hành hệ thống SIMO để các ngân hàng chia sẻ thông tin tài khoản nghi gian lận; khi làm thật, đối chiếu cơ chế chia sẻ hiện hành của ngành.
+
+**Theo quy tắc nào:** **Traffic Light Protocol** (TLP) ghi rõ thông tin được truyền tới đâu:
+
+| Nhãn | Được chia sẻ cho |
+|---|---|
+| TLP:RED | Chỉ những người có mặt trong cuộc trao đổi, không truyền tiếp |
+| TLP:AMBER+STRICT | Chỉ trong tổ chức của người nhận |
+| TLP:AMBER | Trong tổ chức người nhận và khách hàng của họ, theo nhu cầu cần biết |
+| TLP:GREEN | Trong cộng đồng (ví dụ các ngân hàng thành viên), không đăng công khai |
+| TLP:CLEAR | Công khai được |
+
+Hai nguyên tắc nữa. Một: **không chia sẻ dữ liệu cá nhân của khách hàng** khi không có cơ sở pháp lý (bài 8.6 nhắc Luật Bảo vệ dữ liệu cá nhân). Hai: **nhận về rồi phải dùng được**. Chỉ báo nhận được nên tự động đi vào danh sách chặn của DNS, proxy, cổng thư, kèm thời hạn hết hiệu lực, và được dùng để tìm ngược trong log vài tuần trước (bài 8.2).
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Bảo vệ thương hiệu và hộp thư doanh nghiệp đòi hỏi kết hợp xác thực kỹ thuật cho tên miền thật lẫn săn tìm chủ động các tên miền nhái.
+
+Với tên miền chính thức của đơn vị, hãy <strong>cấu hình đầy đủ SPF và ký DKIM cho mọi nguồn gửi thư hợp lệ</strong>, sau đó đưa chính sách DMARC tiến dần từ `p=none` (để đọc báo cáo `rua=` và rà hết các dịch vụ gửi thư còn sót) lên `p=quarantine` rồi khóa chặt ở `p=reject`; riêng những tên miền phụ hoặc tên miền dự phòng không bao giờ gửi thư thì đặt ngay `v=spf1 -all` và `p=reject` từ ngày đầu.
+
+Ở chiều nhận thư, cổng email của công ty phải thực thi nghiêm kết quả DMARC, tự động gắn nhãn cảnh báo cho thư đến từ bên ngoài và gắn cờ đỏ khi tên hiển thị trùng với tên lãnh đạo nội bộ. Vì DMARC không chặn được các tên miền nhái do kẻ gian tự mua, hãy <strong>chủ động quét biến thể tên miền (`dnstwist`) và theo dõi sổ cái Certificate Transparency</strong> để phát hiện trang giả ngay lúc chúng vừa xin chứng chỉ HTTPS, đồng thời chặn hoặc gắn cờ các tên miền mới đăng ký dưới 30 ngày tuổi.
+
+Cuối cùng, hãy tham gia mạng lưới <strong>chia sẻ tình báo theo chuẩn TLP</strong> trong ngành để biến danh sách tên miền lừa đảo và phương thức tấn công (TTP) vừa bắt được ở đơn vị này thành lá chắn tự động cho các đơn vị bạn.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Rà soát chống thư giả và tên miền nhái"
+  storageKey="email-lookalike"
+  items={[
+    { label: 'Đã kiểm kê mọi hệ thống, dịch vụ gửi thư mang tên miền ngân hàng' },
+    { label: 'Mỗi nguồn gửi có SPF và ký DKIM bằng tên miền ngân hàng (khoá 2048 bit, có lịch xoay)' },
+    { label: 'DMARC của tên miền chính ở p=reject, báo cáo rua= được đọc định kỳ' },
+    { label: 'Tên miền không gửi thư có v=spf1 -all và DMARC p=reject' },
+    { label: 'Cổng thư tôn trọng kết quả DMARC, không có ngoại lệ cho thư "nội bộ" đi vòng từ ngoài' },
+    { label: 'Thư từ ngoài có nhãn; tên hiển thị trùng lãnh đạo được gắn cờ riêng' },
+    { label: 'Theo dõi biến thể tên miền và log Certificate Transparency có tên thương hiệu', hint: 'dnstwist, crt.sh' },
+    { label: 'Tên miền mới đăng ký bị gắn cờ hoặc chặn ở cổng thư và proxy' },
+    { label: 'Có quy trình gỡ bỏ tên miền nhái kèm thu thập bằng chứng' },
+    { label: 'Tham gia ít nhất một kênh chia sẻ tình báo của ngành; thông tin gắn nhãn TLP' },
+    { label: 'Chỉ báo nhận được tự động vào danh sách chặn, có thời hạn hết hiệu lực' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Cấu hình mỗi bản ghi SPF rồi yên tâm rằng không ai giả mạo được địa chỉ email công ty nữa.** SPF chỉ kiểm tra địa chỉ trên "vỏ phong bì" (`Return-Path`) chứ không hề nhìn vào dòng `From` hiển thị trên màn hình người nhận; không có DMARC yêu cầu khớp tên miền thì kẻ gian vẫn mạo danh dòng hiển thị dễ dàng.
+- **Bật DMARC ở chế độ `p=none` suốt nhiều năm liền vì sợ chặn nhầm thư.** Chế độ `p=none` chỉ dùng để thu thập báo cáo quan sát chứ hoàn toàn không chặn bất kỳ lá thư giả mạo nào; dừng lại ở đó nghĩa là cánh cửa giả mạo vẫn mở nguyên.
+- **Nhảy thẳng lên `p=reject` ngay ngày đầu tiên mà chưa kiểm kê hết các nguồn gửi thư hợp lệ.** Các phòng Marketing, Nhân sự hay Chăm sóc khách hàng thường thuê những dịch vụ gửi thư bên thứ ba; bật `reject` khi chưa khai báo SPF/DKIM cho các dịch vụ đó sẽ làm thư thông báo và sao kê thật của công ty bị từ chối hàng loạt.
+- **Chỉ bảo vệ tên miền chính mà bỏ quên các tên miền phụ hoặc tên miền chiến dịch cũ không dùng gửi thư.** Kẻ tấn công sẽ quét và chọn đúng những tên miền dự phòng chưa có bản ghi DMARC của bạn để phát tán thư lừa đảo.
+- **Tưởng rằng DMARC `p=reject` sẽ chặn được cả những lá thư gửi từ tên miền nhái như `saomai-xacthuc.example`.** DMARC chỉ có quyền phán xét đúng tên miền bạn sở hữu; với tên miền nhái do kẻ gian tự đăng ký, chúng có thể cấu hình SPF, DKIM và DMARC đạt chuẩn 100%, nên bắt buộc phải dùng lớp giám sát biến thể tên miền và chặn tên miền mới.
+- **Chia sẻ tình báo chỉ gửi mỗi danh sách địa chỉ IP thô mà thiếu mất kịch bản và cách thức hoạt động (TTP).** Địa chỉ IP có thể bị kẻ gian thay mới sau vài giờ, trong khi mô tả kịch bản ("giả danh phòng kiểm toán gửi link AiTM kèm gọi điện hối thúc") giúp các đơn vị bạn săn tìm và phòng ngừa bền vững hơn nhiều.
+- **Chuyển tiếp nguyên vẹn email hoặc log chứa thông tin cá nhân của khách hàng sang đơn vị khác khi chưa làm sạch dữ liệu.** Chia sẻ tình báo phải tuân thủ nghiêm quy định bảo vệ dữ liệu cá nhân và luôn gắn nhãn phân loại TLP rõ ràng.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Một thư có SPF pass và DKIM pass, nhưng cả hai đều cho tên miền gui-thu.example, trong khi địa chỉ hiển thị là saomai.example. Kết quả DMARC?', options: ['Pass, vì SPF và DKIM đều pass', 'Fail, vì không kiểm tra nào vừa pass vừa khớp với tên miền hiển thị', 'Không xác định'], answer: 1, explain: 'DMARC đòi khớp tên miền với địa chỉ hiển thị. Pass cho một tên miền khác không chứng minh gì về saomai.example.' },
+    { q: 'Vì sao thư thật bị chuyển tiếp vẫn có thể đạt DMARC?', options: ['Vì chuyển tiếp không làm đổi IP', 'Vì chữ ký DKIM vẫn hợp lệ nếu nội dung không bị sửa, và d= khớp với tên miền hiển thị', 'Vì DMARC bỏ qua thư chuyển tiếp'], answer: 1, explain: 'SPF trượt do IP máy chuyển tiếp khác, nhưng chỉ cần một trong hai (DKIM) pass và khớp.' },
+    { q: 'p=none có tác dụng gì?', options: ['Chặn mọi thư giả', 'Chỉ quan sát: bên nhận vẫn giao thư, nhưng gửi báo cáo về để chủ tên miền tìm các nguồn gửi', 'Tắt DKIM'], answer: 1, explain: 'p=none là bước đầu để thu báo cáo, không phải đích đến.' },
+    { q: 'DMARC p=reject của saomai.example có chặn được thư từ saomai-xacthuc.example không?', options: ['Có', 'Không, đó là tên miền khác do kẻ gian sở hữu; cần phát hiện tên miền nhái và gắn cờ tên miền mới đăng ký', 'Có, nếu bật cả SPF'], answer: 1, explain: 'DMARC chỉ bảo vệ tên miền của bạn. Tên miền nhái cần các lớp khác.' },
+    { q: 'Thông tin nào trong tình báo chia sẻ giữ giá trị lâu nhất?', options: ['Danh sách IP', 'Mã băm file', 'Cách thức hoạt động (TTP), ví dụ "gọi help desk xin đặt lại MFA rồi tạo quy tắc chuyển tiếp email"'], answer: 2, explain: 'Kẻ gian đổi IP và file rất nhanh, nhưng đổi cách làm việc thì chậm.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Mỗi lá thư điện tử luôn có hai địa chỉ người gửi tách biệt: địa chỉ envelope trên "phong bì" (nơi SPF kiểm tra) và địa chỉ hiển thị `From` (thứ người nhận thực sự nhìn thấy).
+- SPF kiểm tra IP máy gửi, DKIM kiểm tra chữ ký số niêm phong thư, còn DMARC là mảnh ghép bắt buộc ít nhất một trong hai cơ chế trên vừa hợp lệ vừa phải **khớp tên miền** với địa chỉ hiển thị.
+- Lộ trình triển khai DMARC an toàn đi từ `p=none` (đọc báo cáo để bổ sung đủ các nguồn gửi thật), nâng lên `p=quarantine` rồi khóa ở `p=reject`; riêng tên miền không gửi thư thì áp `p=reject` ngay lập tức.
+- Vì tên miền nhái nằm ngoài phạm vi của DMARC, cần chủ động theo dõi biến thể tên miền, giám sát nhật ký Certificate Transparency, gắn cờ tên miền mới đăng ký và chia sẻ tình báo theo chuẩn TLP (ưu tiên chia sẻ TTP bên cạnh các chỉ báo kỹ thuật ngắn hạn).

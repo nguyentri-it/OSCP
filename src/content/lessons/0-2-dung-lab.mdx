@@ -1,0 +1,353 @@
+---
+title: "Dựng lab an toàn"
+code: "0.2"
+level: 0
+summary: "Bạn cần một nơi để làm hỏng đồ mà không hại ai. Bài này dựng cho bạn sân tập đó: vài máy ảo trong một mạng tách biệt, đủ để gõ thử mọi lệnh của lộ trình mà không đụng tới hệ thống thật."
+duration: "75 phút"
+updated: "2026-11-09"
+prereq: ["0.1"]
+objectives:
+  - "Giải thích được máy ảo là gì và vì sao mọi buổi thực hành nên diễn ra trong máy ảo"
+  - "Chọn đúng kiểu mạng ảo để máy mục tiêu cố tình để lỗi không lộ ra mạng nhà bạn"
+  - "Dùng snapshot để quay lại trạng thái sạch mỗi khi lỡ làm hỏng máy"
+  - "Tự dựng được lab gồm một máy tấn công và ít nhất một máy mục tiêu, rồi chứng minh hai máy thấy nhau"
+  - "Biết máy mục tiêu nào (Metasploitable 2, DVWA, Juice Shop, Windows bản đánh giá) dùng cho cấp nào, để cài đúng lúc cần"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Học lái xe thì ra sân tập, không ra đường quốc lộ. Người mới có thể đạp nhầm ga, tông vào cọc, thậm chí lật xe, và vì sân tập không có người đi đường nên chẳng ai bị hại. Lab (phòng thí nghiệm) trong bảo mật cũng là một sân tập như thế: một khu riêng, có làm hỏng gì thì chỉ hỏng trong đó, xoá đi làm lại trong vài phút.
+
+Đây cũng là lý do mọi lệnh tấn công ở các cấp sau chỉ được gõ vào máy của chính bạn (bài 0.1). Trong kỳ thi OSCP, OffSec dựng sẵn cho bạn một mạng lạ để tấn công; ở nhà, bạn tự dựng một phiên bản thu nhỏ của nó.
+
+Bài này dẫn bạn từng bước: máy ảo là gì, nối chúng vào mạng nào cho an toàn, và cài máy nào vào đúng lúc cần. Không cần dựng hết ngay hôm nay, chỉ cần hai máy là đủ để bắt đầu Cấp 1.
+
+## Kiến thức chính
+
+### Máy ảo
+
+Máy ảo (virtual machine) là một chiếc máy tính giả chạy bên trong máy thật. Phần mềm quản lý máy ảo gọi là *hypervisor*, ví dụ VirtualBox (miễn phí) hoặc VMware Workstation. Máy thật gọi là *host*, máy ảo gọi là *guest*.
+
+Cấu hình tối thiểu nên có: RAM 8 GB (16 GB thì thoải mái hơn), ổ cứng trống 80 GB, CPU hỗ trợ ảo hoá và đã bật trong BIOS.
+
+### Máy tấn công và máy mục tiêu
+
+- **Máy tấn công:** thường là Kali Linux, một bản Linux cài sẵn nhiều công cụ kiểm thử. OffSec, đơn vị tổ chức thi OSCP, cũng là đơn vị phát triển Kali.
+- **Máy mục tiêu:** máy cố tình để lỗi, dùng để luyện tập. Có nhiều máy loại này được chia sẻ công khai cho mục đích học.
+
+### Cách đọc một khối lệnh trong web này
+
+Từ đây trở đi bạn sẽ gặp rất nhiều khối lệnh. Mỗi khối có cùng một cấu trúc để bạn không phải đoán:
+
+1. **Chạy ở:** lệnh gõ ở máy nào, cửa sổ nào (Kali, PowerShell trên Windows, máy mục tiêu...) và có cần quyền quản trị không.
+2. **Để làm gì:** một câu nói mục đích, để bạn biết vì sao phải gõ lệnh này.
+3. **Khung đen:** chính lệnh và output mẫu.
+4. **Giải nghĩa lệnh:** từng mảnh của lệnh nghĩa là gì.
+5. **Đọc output:** dòng nào quan trọng, dòng nào bình thường, dòng nào là cảnh báo.
+
+Trong khung đen có vài quy ước:
+
+| Bạn thấy | Nghĩa là |
+|---|---|
+| `kali@lab:~$ lệnh` | Dấu nhắc của Linux. **Chỉ gõ phần sau dấu `$`**, đừng gõ cả `kali@lab:~$`. Dấu `$` là người dùng thường, dấu `#` là root (quyền cao nhất) |
+| `PS C:\> lệnh` | Dấu nhắc của PowerShell trên Windows. Chỉ gõ phần sau dấu `>` |
+| Dòng không có dấu nhắc | Output: kết quả máy in ra sau khi bạn bấm Enter |
+| Dòng bắt đầu bằng `#` (hoặc có `# ...` ở cuối dòng) | Lời chú thích của bài. Không gõ, và máy cũng không in ra |
+| `<IP-muc-tieu>`, `10.10.14.30` | Địa chỉ mẫu trong lab. Thay bằng địa chỉ máy mục tiêu **của bạn** |
+| `...` trong output | Bài đã cắt bớt cho gọn. Máy thật in dài hơn |
+| `-p`, `--min-rate` | Tuỳ chọn (cờ) của lệnh. Một gạch cho dạng ngắn, hai gạch cho dạng dài |
+| `lệnh1 \| lệnh2` | Ống dẫn: output của lệnh 1 trở thành đầu vào của lệnh 2 |
+| `2>/dev/null` | Vứt các thông báo lỗi đi cho đỡ rối màn hình |
+
+Hai thói quen giúp học nhanh nhất: (1) **tự gõ lại**, đừng sao chép, vì gõ mới nhớ; (2) **đọc output trước khi chạy lệnh tiếp**, và tự hỏi "dòng nào cho mình biết điều gì?". Output mà bạn không hiểu thì đừng bỏ qua: tra từng từ lạ trong mục Thuật ngữ.
+
+### Máy mục tiêu cụ thể để bắt đầu
+
+Từ Cấp 1 trở đi, mỗi bài có lệnh mẫu. Đọc lệnh thôi thì chóng quên; gõ lệnh vào một máy thật trong lab thì nhớ lâu. Dưới đây là các máy mục tiêu miễn phí, phát hành công khai cho mục đích học, và bài nào dùng máy nào:
+
+| Máy mục tiêu | Là gì | Dùng nhiều ở bài | Ghi chú |
+|---|---|---|---|
+| **Metasploitable 2** | Máy Linux cũ do Rapid7 phát hành, cố tình chạy hàng chục dịch vụ có lỗi (FTP, SSH, SMB, web, cơ sở dữ liệu) | 1.1–1.4, 2.2, 2.5–2.7, 3.1 | Máy đầu tiên nên cài. Rất dễ bị chiếm, nên **tuyệt đối chỉ để trong mạng cô lập** |
+| **DVWA** | Ứng dụng web PHP cố tình để lỗi, có bốn mức khó (Low → Impossible) | 2.3, 2.8 | Chạy bằng Docker theo hướng dẫn trong repo chính thức; mức Impossible cho xem mã đã sửa đúng |
+| **OWASP Juice Shop** | Cửa hàng web hiện đại (Node.js) cố tình để lỗi, có bảng điểm thử thách | 2.3, 2.8 | Chạy bằng Docker, xem lệnh bên dưới |
+| **Windows bản đánh giá** | Windows 10/11 Enterprise và Windows Server bản dùng thử miễn phí (thường 90–180 ngày) từ Microsoft Evaluation Center | 1.5, 3.2, 3.4, 3.5, 3.9 | Tự dựng một máy chủ làm Domain Controller và một máy trạm để có lab AD ở Cấp 3 |
+| **Máy VulnHub** | Máy ảo dựng sẵn do cộng đồng chia sẻ, tải về chạy offline (ví dụ loạt Kioptrix cho người mới) | Cấp 2–3, 5.1 | Kiểm tra checksum, chỉ để trong mạng cô lập |
+
+Không cần cài hết ngay. Lộ trình gợi ý theo cấp:
+
+- **Cấp 1:** Kali + Metasploitable 2. Đủ để gõ mọi lệnh mạng, Linux và script.
+- **Cấp 2:** thêm DVWA hoặc Juice Shop cho phần web.
+- **Cấp 3:** thêm một máy Windows, rồi một lab AD nhỏ (một DC, một máy trạm).
+- **Cấp 7:** Docker trên Kali hoặc một máy Linux riêng, để thử quét ảnh container và một cụm Kubernetes nhỏ bằng kind (bài 7.7).
+- **Cấp 8:** thêm một máy giám sát (Wazuh, bài 8.3) để tự thấy log của chính các đòn bạn đã học, rồi cài mồi nhử và ngăn chặn tự động lên chính lab đó (bài 8.5).
+
+Máy mục tiêu nào cũng phải cài như một máy ảo riêng, trừ các ứng dụng web luyện tập: chúng nhẹ, chạy được trong một "hộp" Docker ngay trên máy Kali. Ta thử với Juice Shop để thấy một ứng dụng cố tình có lỗi trông như thế nào.
+
+Điều cần để ý nhất ở lệnh sau không phải chuyện chạy được, mà là chuyện nó chỉ mở cho **chính máy bạn** thấy, vì một trang web đầy lỗ hổng mà lộ ra cả mạng nhà thì vô tình bạn vừa dựng một cái bẫy ngay trong nhà mình:
+
+<Lenh noi="Cửa sổ terminal trên máy Kali (đã cài Docker)" muc="Bật một trang web luyện tập cố tình có lỗi, chỉ mở cho chính máy này, để lát nữa có thứ mà thử">
+
+<Terminal title="Juice Shop chỉ mở trên 127.0.0.1, máy khác trong mạng không chạm được">
+
+```text
+kali@lab:~$ docker run --rm -p 127.0.0.1:3000:3000 bkimminich/juice-shop
+info: Server listening on port 3000
+# Mở trình duyệt trên chính máy Kali: http://127.0.0.1:3000
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `docker run`: bảo Docker chạy một "hộp" (container) từ một ảnh dựng sẵn.
+- `--rm`: tắt hộp là xoá luôn, không để rác lại trong máy.
+- `-p 127.0.0.1:3000:3000`: nối cổng 3000 trong hộp ra cổng 3000 trên máy bạn. Phần `127.0.0.1:` đầu tiên là điều quan trọng: chỉ chính máy này vào được. Viết `-p 3000:3000` thì cổng mở cho **cả mạng** thấy.
+- `bkimminich/juice-shop`: tên ảnh cần chạy. Lần đầu Docker tự tải về, nên có thể chờ một lúc.
+
+</div>
+
+<div slot="doc">
+
+- Lệnh **không trả lại dấu nhắc `$`**. Đó là bình thường: Juice Shop đang chạy ngay trong cửa sổ này. Muốn tắt, bấm `Ctrl+C`.
+- Dòng `Server listening on port 3000` nghĩa là đã sẵn sàng. Mở trình duyệt vào địa chỉ ở dòng ghi chú (dòng bắt đầu bằng `#` chỉ là lời chú thích của bài này, không phải output thật).
+- Nếu báo `permission denied` với Docker: thêm `sudo` ở đầu lệnh. Nếu báo `port is already allocated`: cổng 3000 đang bị chương trình khác dùng, đổi thành `3001:3000`.
+
+</div>
+
+</Lenh>
+
+Chú ý phần `127.0.0.1:` trước số cổng. Viết `-p 3000:3000` thì Docker mở cổng trên **mọi** card mạng, và một ứng dụng cố tình để lỗi bỗng nằm trong mạng nhà bạn.
+
+<Callout type="warn">
+Về RAM: Kali cần khoảng 4 GB, Metasploitable 2 chỉ cần 512 MB, mỗi máy Windows cần 2–4 GB, Wazuh cần 4–8 GB. Máy 16 GB chạy thoải mái Kali + Metasploitable + một máy Windows; lab AD đầy đủ và Wazuh thì bật luân phiên, không cần bật tất cả cùng lúc.
+</Callout>
+
+### Chọn kiểu mạng ảo
+
+| Kiểu mạng | Máy ảo ra Internet? | Máy khác trong mạng nhà thấy máy ảo? | Dùng khi |
+|---|---|---|---|
+| NAT | Có | Không | Cần cập nhật, tải phần mềm cho máy tấn công |
+| Host-only / Internal | Không | Không | Chạy máy mục tiêu cố tình để lỗi |
+| Bridged | Có | Có | Hạn chế dùng cho lab, vì máy lỗi sẽ lộ ra mạng nhà |
+
+Nguyên tắc: máy mục tiêu luôn nằm trong mạng cô lập.
+
+### Snapshot
+
+Snapshot là ảnh chụp trạng thái máy ảo tại một thời điểm. Trước khi thử nghiệm, chụp một snapshot. Làm hỏng thì quay lại snapshot, mất vài giây thay vì cài lại từ đầu.
+
+## Sơ đồ: lab của bạn trông thế nào
+
+<ConceptMap
+  client:visible
+  title="Lab tối thiểu"
+  width={640}
+  height={330}
+  zones={[
+    { label: "Máy tính thật (host)", x: 10, y: 10, w: 620, h: 310 },
+    { label: "Mạng ảo cô lập", x: 255, y: 150, w: 368, h: 160 },
+  ]}
+  nodes={[
+    { id: 'hv', label: 'Hypervisor', sub: 'VirtualBox / VMware', x: 110, y: 90, detail: 'Phần mềm tạo và chạy các máy ảo. Nó cũng tạo ra các mạng ảo để máy ảo nói chuyện với nhau.' },
+    { id: 'net', label: 'Internet', x: 537, y: 70, tone: 'muted', detail: 'Chỉ máy tấn công được ra Internet (qua NAT) để cập nhật. Máy mục tiêu không có đường ra.' },
+    { id: 'kali', label: 'Máy tấn công', sub: 'Kali Linux', x: 345, y: 240, tone: 'accent', detail: 'Có hai card mạng: một card NAT để ra Internet, một card nối vào mạng cô lập để làm bài.' },
+    { id: 't1', label: 'Mục tiêu 1', sub: 'Metasploitable 2', x: 537, y: 200, tone: 'warn', detail: 'Máy Linux cố tình để lỗi, dùng suốt Cấp 1–2. Chỉ nối vào mạng cô lập, không bao giờ để Bridged.' },
+    { id: 't2', label: 'Mục tiêu 2', sub: 'Windows bản đánh giá', x: 537, y: 275, tone: 'warn', detail: 'Máy Windows dùng cho bài 1.5 và các bài về Windows, Active Directory ở Cấp 3.' },
+  ]}
+  edges={[
+    { from: 'hv', to: 'kali' },
+    { from: 'kali', to: 'net', label: 'NAT', dashed: true },
+    { from: 'kali', to: 't1' },
+    { from: 'kali', to: 't2' },
+  ]}
+/>
+
+<Checklist
+  client:visible
+  title="Việc cần làm để dựng lab"
+  storageKey="lab-setup"
+  items={[
+    { label: 'Bật ảo hoá (VT-x / AMD-V) trong BIOS', hint: 'Nếu máy ảo báo lỗi không khởi động được, thường là do chưa bật.' },
+    { label: 'Cài VirtualBox hoặc VMware' },
+    { label: 'Tải Kali Linux từ trang chính thức và kiểm tra checksum' },
+    { label: 'Tạo một mạng Host-only hoặc Internal' },
+    { label: 'Cài máy tấn công với 2 card mạng: NAT và mạng cô lập' },
+    { label: 'Cài ít nhất một máy mục tiêu, chỉ nối vào mạng cô lập', hint: 'Bắt đầu với Metasploitable 2; thêm DVWA/Juice Shop khi tới Cấp 2.' },
+    { label: 'Chụp snapshot cho mọi máy sau khi cài xong' },
+    { label: 'Từ máy tấn công, kiểm tra thấy được máy mục tiêu', hint: 'Bài 1.1 sẽ giải thích chi tiết địa chỉ IP.' },
+  ]}
+/>
+
+## Thực hành: kiểm tra và xác minh lab
+
+Các bước cài cụ thể khác nhau tuỳ phần mềm ảo hoá bạn chọn, và trang chính thức của VirtualBox hay VMware hướng dẫn rất rõ, nên bài này không lặp lại. Thay vào đó là hai việc ai cũng phải làm, bất kể dùng phần mềm nào: tin được file mình tải về trước khi cài, và chứng minh sau khi cài xong là hai máy thật sự thấy nhau.
+
+### Bước 1: Tin được file đã tải
+
+Kali, Metasploitable hay ISO của Windows đều là file vài GB tải qua Internet. Nếu ai đó đánh tráo file (trên một trang nhái, hoặc giữa đường tải), bạn sẽ cài thẳng một hệ điều hành có cửa hậu vào chính máy tấn công của mình, chỗ bạn gõ mọi mật khẩu.
+
+Nhà phát hành vì thế công bố kèm một **hash** (chuỗi dấu vân tay) của file gốc. Bạn tính lại hash trên file của mình và so hai chuỗi với nhau:
+
+<Lenh noi="Terminal, trong thư mục chứa file ISO vừa tải" muc="Tính 'dấu vân tay' của file để so với giá trị nhà phát hành công bố">
+
+<Terminal title="So khớp checksum của file ISO/OVA">
+
+```text
+kali@lab:~$ sha256sum kali-linux-2024.1-installer-amd64.iso
+a1b2c3d4...  kali-linux-2024.1-installer-amd64.iso
+# So chuỗi này với giá trị SHA256 công bố trên trang chính thức. Khác nhau = không dùng.
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sha256sum`: chương trình tính **hash** (chuỗi dấu vân tay) của một file bằng thuật toán SHA-256. Cùng file thì luôn ra cùng chuỗi; đổi một bit thôi là ra chuỗi hoàn toàn khác.
+- `kali-linux-2024.1-installer-amd64.iso`: tên file cần tính. Gõ đúng tên file bạn đã tải (dùng phím Tab để máy tự điền tên).
+
+</div>
+
+<div slot="doc">
+
+- Output gồm **chuỗi hex dài 64 ký tự** rồi tới tên file (bài ghi `a1b2c3d4...` cho ngắn; máy thật in đủ 64 ký tự).
+- Mở trang tải Kali chính thức, tìm giá trị SHA256 của đúng file này và **so từng ký tự đầu và cuối**. Giống nhau: file nguyên vẹn. Khác nhau: tải lỗi hoặc file bị sửa, **xoá đi tải lại**, đừng cài.
+- Máy chạy Windows dùng lệnh tương đương: `Get-FileHash tên-file -Algorithm SHA256`.
+
+</div>
+
+</Lenh>
+
+### Bước 2: Chứng minh hai máy thấy nhau
+
+Sau khi cài xong cả hai máy, người mới hay bật máy lên rồi mặc định "chắc là nối mạng rồi". Tới bài sau, lệnh quét báo không thấy gì, và bạn không biết lỗi nằm ở lệnh hay ở mạng.
+
+Hãy kiểm tra ngay bây giờ bằng ba lệnh đơn giản (bài 1.1 sẽ giải thích kỹ từng khái niệm mạng, giờ bạn chỉ cần biết kết quả nên trông ra sao): xem Kali có địa chỉ trong mạng cô lập chưa, gõ cửa thử máy mục tiêu, rồi hỏi cả dải xem máy nào đang sống.
+
+<Lenh noi="Terminal trên máy Kali, khi máy mục tiêu đã bật" muc="Chứng minh hai máy trong mạng cô lập nói chuyện được với nhau">
+
+<Terminal title="Từ máy Kali, xác nhận thấy mục tiêu trong mạng cô lập">
+
+```text
+kali@lab:~$ ip addr show eth1        # card nối vào mạng cô lập
+    inet 10.10.14.7/24 ... eth1
+
+kali@lab:~$ ping -c2 10.10.14.20     # máy mục tiêu
+64 bytes from 10.10.14.20: icmp_seq=1 ttl=64 time=0.5 ms
+
+kali@lab:~$ nmap -sn 10.10.14.0/24   # quét xem có máy nào sống
+Nmap scan report for 10.10.14.20     # mục tiêu đã sẵn sàng
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ip addr show eth1`: xem địa chỉ IP của card mạng tên `eth1`. Tên card trên máy bạn có thể khác (`eth0`, `ens33`...): chạy `ip addr` không kèm tên để xem tất cả.
+- `ping -c2 10.10.14.20`: gửi 2 gói thử (`-c2` = count 2) tới máy có IP `10.10.14.20`. Không có `-c`, ping chạy mãi tới khi bấm `Ctrl+C`.
+- `nmap -sn 10.10.14.0/24`: hỏi "máy nào trong cả dải 10.10.14.0 đến 10.10.14.255 đang bật?" mà **không quét cổng** (`-sn`). `/24` nghĩa là 256 địa chỉ (bài 1.1).
+
+</div>
+
+<div slot="doc">
+
+- Dòng `inet 10.10.14.7/24`: Kali có địa chỉ `10.10.14.7` trong mạng cô lập. Nếu card này **không có dòng `inet`**, nó chưa được gán địa chỉ: kiểm tra Kali đã gắn card đó vào đúng mạng cô lập chưa.
+- Dòng `64 bytes from ...`: máy mục tiêu **đã trả lời**. `time=0.5 ms` là thời gian khứ hồi, càng nhỏ càng tốt; trong lab chỉ vài phần mười mili giây là bình thường. Nếu thấy `Destination Host Unreachable` hoặc `100% packet loss`, máy mục tiêu chưa bật hoặc khác mạng.
+- Dòng `Nmap scan report for 10.10.14.20`: nmap tìm thấy máy đang sống. Cuối output còn dòng `Nmap done: 256 IP addresses (1 host up)` cho biết tổng số máy tìm thấy (bài rút gọn bớt).
+
+</div>
+
+</Lenh>
+
+Nếu ping được và nmap thấy máy mục tiêu, lab của bạn đã hoạt động. Nếu không: kiểm tra hai máy có cùng một mạng cô lập không, và máy mục tiêu đã bật chưa.
+
+<LabBrief
+  ten="Thực hành nghiệm thu: Kiểm tra cô lập và kết nối mạng giữa Kali và Metasploitable 2"
+  muctieu="Khởi động 2 máy ảo, xác minh dải IP Host-Only 10.10.14.0/24, chứng minh ping và nmap thành công mà không để lộ mạng ra ngoài"
+  may="Metasploitable 2"
+  ip="10.10.14.20"
+  kali="10.10.14.7"
+  thoigian="25 phút"
+  xong="Kali gửi 2 gói ping tới 10.10.14.20 với thời gian dưới 1ms, nmap -sn phát hiện host up, máy thật host không bị ảnh hưởng"
+>
+
+1. Bật máy Kali Linux và máy Metasploitable 2 trong phần mềm ảo hóa (VirtualBox hoặc VMware).
+2. Kiểm tra cài đặt mạng của cả hai máy ảo: card mạng nội bộ phải cùng trỏ vào một mạng Host-only / Internal (dải `10.10.14.0/24`).
+3. Mở terminal trên Kali, kiểm tra IP của card mạng nội bộ bằng `ip addr`.
+4. Gửi 2 gói ping thử tới IP của máy Metasploitable 2: `ping -c2 10.10.14.20`.
+5. Quét nhanh kiểm tra máy có đang sống: `nmap -sn 10.10.14.0/24`.
+6. Chụp một **snapshot** sạch cho cả 2 máy ảo với tên nhãn `Baseline-Clean`.
+
+<div slot="goiy1">
+  Nếu gõ `ping` mà thấy <code>Destination Host Unreachable</code> hoặc <code>100% packet loss</code>, hãy vào phần Network Settings của VirtualBox/VMware để kiểm tra xem hai máy có đang chọn cùng tên mạng Host-only Adapter (ví dụ <code>vboxnet0</code> hoặc <code>VMnet1</code>) hay không.
+</div>
+
+<div slot="goiy2">
+  Trên Metasploitable 2, đăng nhập với tài khoản <code>msfadmin / msfadmin</code> và gõ lệnh <code>ifconfig</code> để xem máy đích đã nhận đúng IP trong dải <code>10.10.14.x</code> hay chưa. Nếu chưa có IP, chạy <code>sudo dhclient eth0</code>.
+</div>
+
+<div slot="loigiai">
+  <p>Quy trình kiểm tra trọn vẹn từ terminal Kali:</p>
+
+```bash
+# 1. Xác nhận IP card nội bộ (ví dụ eth1)
+ip -br addr show eth1
+
+# 2. Ping kiểm tra thông mạng
+ping -c2 10.10.14.20
+
+# 3. Quét nhận diện máy sống
+nmap -sn 10.10.14.20
+```
+
+  <p>Khi nmap báo <code>Host is up</code>, bạn đã có một phòng lab an toàn 100% để sẵn sàng bước vào Cấp 1.</p>
+</div>
+
+<div slot="kiemtra">
+  <ul>
+    <li><strong>Dấu hiệu đạt chuẩn:</strong> Lệnh ping trả về <code>0% packet loss</code> và độ trễ <code>time=0.4 ms - 0.8 ms</code>. Nmap kết thúc với dòng <code>1 host up</code>.</li>
+    <li><strong>Lỗi thường gặp:</strong> Chọn nhầm chế độ <code>Bridged Adapter</code> khiến Metasploitable 2 nhận IP cùng dải router Wi-Fi nhà bạn (ví dụ <code>192.168.1.x</code>). Khắc phục: Đổi ngay về <code>Host-only Adapter</code> trong phần thiết lập máy ảo.</li>
+  </ul>
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hãy nhìn bài này từ phía người quản trị mạng nhà bạn. Máy mục tiêu được thiết kế để có lỗ hổng, nên nếu để nó ở chế độ Bridged thì bất kỳ thiết bị nào trong nhà, kể cả chiếc điện thoại hay máy tính của người khác đã lỡ nhiễm mã độc, đều thấy và tấn công được nó, rồi từ đó đi tiếp vào máy thật của bạn.
+
+Đây cũng là bài học mà doanh nghiệp trả giá đắt: một máy thử nghiệm quên cô lập, đầy lỗi, nối cùng mạng với máy chứa dữ liệu thật. Cô lập mạng là biện pháp phòng thủ đầu tiên bạn tự áp dụng cho chính mình, và là nguyên tắc bạn sẽ gặp lại ở bài 7.2 khi cứng hoá hệ thống.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Tải file máy ảo từ nguồn lạ cho nhanh.** Cái giá là máy tấn công chứa sẵn cửa hậu, và bạn không bao giờ biết. Chỉ tải từ trang chính thức và so checksum như ở Bước 1.
+- **Không chụp snapshot.** Ai cũng nghĩ "để thử xong rồi tính" cho tới lúc lỡ tay làm hỏng, và mất cả buổi chiều cài lại từ đầu thay vì vài giây khôi phục.
+- **Cấp quá ít RAM cho máy tấn công.** Máy chạy chậm, công cụ treo, và bạn tưởng đó là lỗi của lệnh nên đi tìm lỗi ở sai chỗ cả giờ đồng hồ.
+- **Chạy ứng dụng web cố tình để lỗi bằng Docker với `-p 3000:3000`.** Vô tình mở nó ra cả mạng nhà. Luôn ghi rõ `127.0.0.1:`.
+- **Đọc hết Cấp 1–3 mà không gõ thử vào máy nào.** Đọc lệnh mà không chạy thì nhớ rất ngắn, và tới lúc cần trong phòng thi thì tay không nhớ gì. Cài Metasploitable 2 ngay từ đầu.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Máy mục tiêu cố tình để lỗi nên dùng kiểu mạng nào?', options: ['Bridged', 'Host-only hoặc Internal', 'Kiểu nào cũng được'], answer: 1, explain: 'Mạng cô lập giữ máy lỗi tránh xa mạng thật của bạn.' },
+    { q: 'Snapshot dùng để làm gì?', options: ['Chụp màn hình máy ảo', 'Lưu trạng thái máy ảo để quay lại sau', 'Tăng tốc máy ảo'], answer: 1, explain: 'Snapshot cho phép quay lại đúng trạng thái lúc chụp.' },
+    { q: 'Máy thật đang chạy hypervisor gọi là gì?', options: ['Guest', 'Host', 'Server'], answer: 1, explain: 'Máy thật là host, máy ảo chạy bên trong là guest.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Lab không cần đắt hay đầy đủ ngay từ đầu: một máy tấn công, một máy mục tiêu, và một mạng cô lập là đã đủ để bắt đầu. Cài thêm máy mới khi tới cấp cần nó.
+- Cô lập mạng là quy tắc không có ngoại lệ: máy cố tình để lỗi không bao giờ được nằm ở chế độ Bridged hay mở cổng ra cả mạng nhà.
+- Chụp snapshot trước khi thử bất cứ thứ gì. Đó là nút "hoàn tác" của bạn, và nó biến một sai lầm tốn cả buổi thành một sai lầm tốn vài giây.
+- Đừng giả định lab hoạt động, hãy kiểm chứng bằng ping và nmap ngay sau khi cài. Lỗi mạng phát hiện sớm thì rẻ, phát hiện giữa bài khác thì rất khó dò ra.

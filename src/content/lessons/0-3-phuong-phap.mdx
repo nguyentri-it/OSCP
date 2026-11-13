@@ -1,0 +1,190 @@
+---
+title: "Tư duy và phương pháp"
+code: "0.3"
+level: 0
+summary: "Pentest không phải gõ lệnh ngẫu hứng mà là một quy trình lặp có thứ tự. Bài này cho bạn khung bảy giai đoạn và thói quen ghi chép để không bị lạc khi bế tắc lúc ba giờ sáng."
+duration: "40 phút"
+updated: "2026-11-09"
+prereq: ["0.2"]
+objectives:
+  - "Kể và sắp xếp đúng bảy giai đoạn của một đợt pentest, và nói được mỗi giai đoạn trả lời câu hỏi gì"
+  - "Giải thích được vì sao người làm lâu năm dành phần lớn thời gian cho thu thập và liệt kê, và vì sao bế tắc thì phải quay lại đó"
+  - "Dựng được một trang ghi chú theo mẫu cố định cho mỗi máy mục tiêu, và giữ nó cập nhật trong lúc làm"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Thám tử không phá cửa ngay khi tới hiện trường. Họ đứng ngoài quan sát, hỏi hàng xóm, chụp ảnh, ghi chép từng chi tiết nhỏ, rồi mới đưa ra giả thuyết về chuyện gì đã xảy ra. Người ngoài nhìn vào thấy họ "chẳng làm gì" trong nhiều giờ, nhưng chính những giờ đó quyết định họ có bắt đúng người hay không.
+
+Pentest cũng vậy. Phim ảnh hay cho thấy cảnh hacker gõ phím vài phút là vào được hệ thống, còn trong thực tế phần "tấn công" chỉ chiếm một phần nhỏ thời gian. Phần lớn là tìm hiểu mục tiêu có gì, chạy dịch vụ gì, và ghi chép lại để không bỏ sót.
+
+Trong bài thi OSCP 24 giờ, người nắm được quy trình này không hoảng khi bị kẹt, vì họ luôn biết mình đang ở bước nào và bước tiếp theo là gì. Bài này đưa cho bạn cái khung đó, trước khi các cấp sau đi vào từng kỹ thuật.
+
+## Kiến thức chính
+
+### Bảy giai đoạn, và mỗi giai đoạn trả lời một câu hỏi
+
+Hãy đọc danh sách dưới đây như bảy câu hỏi nối tiếp nhau, mỗi câu dựa trên câu trả lời của câu trước:
+
+1. **Thống nhất phạm vi.** "Tôi được phép thử cái gì?" Đã nói ở bài 0.1.
+2. **Thu thập thông tin.** "Mục tiêu này là ai, có những gì công khai?" (bài 2.1).
+3. **Liệt kê (enumeration).** "Cụ thể máy nào đang bật, chạy dịch vụ gì, phiên bản nào?" Hỏi dò từng máy để lập danh sách chi tiết (bài 2.2).
+4. **Xác định lỗ hổng.** "Trong danh sách đó, dịch vụ nào có điểm yếu?"
+5. **Khai thác.** "Điểm yếu đó có thật không?" Chứng minh nó, trong phạm vi cho phép.
+6. **Sau khai thác.** "Từ chỗ đã vào được, kẻ tấn công thật sẽ đi tiếp được tới đâu?"
+7. **Báo cáo.** "Khách hàng cần biết gì để sửa?" Ghi lại tất cả và đề xuất cách sửa.
+
+Đây không phải đường thẳng. Thường bạn sẽ quay lại bước liệt kê nhiều lần: mỗi lần vào được một máy, bạn lại có chỗ đứng mới để nhìn thấy thêm máy khác, và vòng lặp bắt đầu lại.
+
+### Liệt kê là phần quan trọng nhất
+
+Người làm OSCP lâu năm hay nói: "Bế tắc thì quay lại liệt kê." Nghe thì đơn giản, nhưng ngược với phản xạ của người mới.
+
+Khi kẹt, người mới thường tìm công cụ mạnh hơn hoặc tìm một kỹ thuật cao siêu hơn, trong khi nguyên nhân thật gần như luôn là bỏ sót một thông tin nhỏ ở bước trước: một cổng chưa quét hết, một thư mục web chưa dò, một dòng trong file cấu hình chưa đọc kỹ.
+
+Trong bài thi, đó là khác biệt giữa một người mất sáu tiếng vì chắc chắn "máy này không có lỗi" và một người nhìn lại bản ghi chú của mình, thấy một dịch vụ chưa ai đụng tới, và vào được trong mười phút.
+
+### Ghi chép
+
+Ghi chép nghe có vẻ là việc phụ, nhưng nó là thứ giữ bạn khỏi lạc, và khi viết báo cáo thì đó là nguyên liệu. Chọn một công cụ ghi chú bạn thích (Obsidian, CherryTree, Joplin hoặc chỉ là file Markdown). Mỗi máy mục tiêu một trang, chia mục cố định để lúc mệt cũng không phải nghĩ nên ghi vào đâu:
+
+```text
+# 10.0.0.5
+## Dịch vụ tìm thấy
+## Thông tin đáng chú ý
+## Đã thử (và kết quả)
+## Bằng chứng (ảnh chụp màn hình, thời gian)
+## Hướng tiếp theo
+```
+
+Mục "Đã thử" giúp bạn khỏi làm lại cùng một việc ba lần lúc 3 giờ sáng, và cũng là thứ trả lời câu "mình đã loại trừ những gì rồi?" khi bế tắc. Còn mục "Bằng chứng" để dành cho báo cáo: chụp ngay lúc làm, vì tới khi cần mà máy đã được khôi phục thì bạn không tái hiện lại được.
+
+Một trang ghi chú thật, khi đang làm dở, trông như thế này. Đừng chú ý chi tiết kỹ thuật (bạn sẽ học dần ở các bài sau), chỉ nhìn cách các mục nối nhau: dịch vụ nào dẫn tới thông tin nào, thông tin nào dẫn tới việc đã thử, và việc đó dẫn tới bước tiếp theo:
+
+<Terminal title="Ghi chú một máy đang làm dở (Markdown)">
+
+```text
+# 10.10.14.30  (Linux)
+## Dịch vụ
+- 22  OpenSSH 7.6p1
+- 80  Apache 2.4.29  → /admin (401), /backup (301)
+- 445 Samba 4.7.6   → share "backups" đọc được (null session)
+
+## Thông tin đáng chú ý
+- enum4linux: user jdoe, svc_backup
+- config.php trong share backups: db_pass = "S3cr3t!2024"
+
+## Đã thử
+- [x] hydra SSH với db_pass → svc_backup đăng nhập ĐƯỢC
+- [ ] searchsploit samba 4.7 → chưa thử
+
+## Hướng tiếp theo
+- vào bằng svc_backup, chạy sudo -l + linpeas
+```
+
+</Terminal>
+
+Mỗi dòng có đánh dấu `[x]`/`[ ]` để biết đã thử gì. Để ý dòng `[ ] searchsploit samba 4.7`: đó là một việc đã nghĩ tới nhưng chưa làm, và nó nằm sẵn trên trang chứ không nằm trong đầu. Khi bế tắc, đọc lại chính trang này thường tìm ra chỗ còn bỏ sót.
+
+## Sơ đồ: vòng lặp pentest
+
+<ConceptMap
+  client:visible
+  title="Các giai đoạn của một đợt pentest"
+  width={640}
+  height={300}
+  nodes={[
+    { id: 'scope', label: '1. Phạm vi', x: 90, y: 60, detail: 'Thống nhất được thử gì, khi nào, cấm gì. Không có bước này thì không có các bước sau.' },
+    { id: 'recon', label: '2. Thu thập', x: 320, y: 60, detail: 'Tìm thông tin công khai về mục tiêu: tên miền, nhân sự, công nghệ đang dùng. Bài 2.1.' },
+    { id: 'enum', label: '3. Liệt kê', x: 550, y: 60, tone: 'accent', detail: 'Tìm máy đang chạy, dịch vụ, phiên bản. Bước tốn thời gian nhất và quan trọng nhất. Bài 2.2.' },
+    { id: 'vuln', label: '4. Tìm lỗ hổng', x: 550, y: 160, detail: 'Từ dịch vụ và phiên bản, tìm điểm yếu đã biết hoặc cấu hình sai. Bài 2.3 đến 2.6.' },
+    { id: 'exploit', label: '5. Khai thác', x: 320, y: 160, tone: 'warn', detail: 'Chứng minh lỗ hổng là thật, trong phạm vi cho phép và với ít rủi ro nhất cho hệ thống.' },
+    { id: 'post', label: '6. Sau khai thác', x: 90, y: 160, detail: 'Đánh giá từ chỗ đã vào được, kẻ tấn công thật đi tiếp được tới đâu. Cấp 3.' },
+    { id: 'report', label: '7. Báo cáo', x: 320, y: 255, tone: 'accent', detail: 'Ghi lại mọi phát hiện, bằng chứng và cách khắc phục. Bài 4.1.' },
+  ]}
+  edges={[
+    { from: 'scope', to: 'recon' },
+    { from: 'recon', to: 'enum' },
+    { from: 'enum', to: 'vuln' },
+    { from: 'vuln', to: 'exploit' },
+    { from: 'exploit', to: 'post' },
+    { from: 'post', to: 'enum', label: 'quay lại', dashed: true },
+    { from: 'post', to: 'report' },
+  ]}
+/>
+
+## Mô phỏng: Ra quyết định khi bế tắc lúc 3 giờ sáng
+
+<DecisionTree
+  client:visible
+  title="Xử lý tình huống bế tắc trong phòng thi"
+  start="stuck"
+  nodes={{
+    stuck: {
+      q: 'Bạn đã dành 3 tiếng trên một máy mục tiêu nhưng chưa tìm ra lỗ hổng để lấy shell. Bạn nên làm gì tiếp theo?',
+      options: [
+        { label: 'Chạy brute-force mật khẩu SSH bằng từ điển rockyou.txt cả đêm', next: 'brute' },
+        { label: 'Tải một exploit 0-day chưa rõ cơ chế trên GitHub về chạy thử', next: 'sketchy' },
+        { label: 'Mở lại trang ghi chú, rà soát xem còn cổng hoặc dịch vụ nào chưa quét kỹ', next: 'check_notes' },
+      ],
+    },
+    brute: {
+      result: 'Sai lầm thường gặp! Brute-force diện rộng trong OSCP tốn hàng giờ mà hiếm khi là con đường cố ý của đề thi. Bạn vừa mất thời gian quý báu mà không thu được thông tin mới.',
+      tone: 'bad',
+    },
+    sketchy: {
+      result: 'Rất nguy hiểm! Chạy exploit lạ không rõ nguồn gốc có thể làm sập dịch vụ máy thi, vi phạm quy chế hoặc làm hỏng môi trường mà không tái hiện được.',
+      tone: 'bad',
+    },
+    check_notes: {
+      q: 'Xem lại ghi chú: Cổng 80 và 445 đã quét xong, nhưng cổng 8080 (HTTP-Alt) bạn mới chỉ quét bằng nmap cơ bản, chưa dò tìm thư mục ẩn. Hành động tiếp theo?',
+      options: [
+        { label: 'Bỏ qua cổng 8080, chuyển ngay sang máy khác', next: 'skip' },
+        { label: 'Dùng ffuf/gobuster quét sâu danh mục ẩn và API endpoint trên cổng 8080', next: 'enum_deep' },
+      ],
+    },
+    skip: {
+      result: 'Chuyển máy là chiến thuật tốt khi bạn ĐÃ THẬT SỰ quét hết. Nhưng ở đây bạn vẫn còn dịch vụ chưa liệt kê kỹ! Bỏ qua lúc này sẽ khiến bạn mang tâm lý hoang mang sang máy mới.',
+      tone: 'warn',
+    },
+    enum_deep: {
+      result: 'Chính xác! Đúng quy tắc vàng: "Bế tắc thì quay lại liệt kê". Thường chỉ sau 5 phút quét sâu thư mục ẩn, bạn sẽ tìm ra một trang quản trị hoặc file backup lộ thông tin đăng nhập.',
+      tone: 'good',
+    },
+  }}
+/>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người bảo vệ, hãy dùng chính bảy giai đoạn này làm bản đồ phòng thủ: kẻ tấn công cần đi qua từng bước, nên mỗi bước là một chỗ bạn có thể chặn hoặc ít nhất phát hiện. Chặn càng sớm càng rẻ. Nếu kẻ tấn công không biết bạn chạy phiên bản phần mềm nào (bước thu thập) và không thấy những cổng bạn không dùng (bước liệt kê), thì họ không còn đủ thông tin để đi tới bước khai thác. Ngược lại, nếu bạn chỉ canh ở bước cuối, khi họ đã vào được, thì bạn đã trả giá cao nhất.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Thấy một dịch vụ là lao vào thử ngay.** Cảm giác "có chỗ để thử rồi!" rất khó cưỡng, nhưng người mới thường đào một hướng cả buổi mà bỏ quên ba dịch vụ khác dễ hơn. Liệt kê hết rồi mới chọn hướng.
+- **Không ghi lại những gì đã thử.** Đến giờ thứ mười, bạn không nhớ đã thử mật khẩu nào, và lặp lại đúng việc đã thất bại ba lần, mất cả tiếng vô ích.
+- **Không chụp bằng chứng ngay lúc làm.** Tới khi viết báo cáo thì máy đã khôi phục, và bạn không tái hiện lại được. Với kỳ thi OSCP, thiếu bằng chứng nghĩa là điểm của máy đó có thể không được tính.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Bạn bị bế tắc ở một máy. Lời khuyên phổ biến nhất là gì?', options: ['Đổi sang công cụ mạnh hơn', 'Quay lại bước liệt kê', 'Bỏ máy đó luôn'], answer: 1, explain: 'Bế tắc thường do bỏ sót thông tin ở bước liệt kê.' },
+    { q: 'Giai đoạn nào bắt buộc phải có trước tiên?', options: ['Thu thập thông tin', 'Thống nhất phạm vi', 'Liệt kê'], answer: 1, explain: 'Chưa có phạm vi và sự cho phép thì chưa được làm gì.' },
+    { q: 'Mục "Đã thử" trong ghi chú có tác dụng chính là gì?', options: ['Để khoe với đồng nghiệp', 'Tránh lặp lại công việc và làm tư liệu cho báo cáo', 'Không có tác dụng'], answer: 1, explain: 'Ghi lại những gì đã thử giúp tiết kiệm thời gian và dễ viết báo cáo.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Pentest là chuỗi bảy câu hỏi nối tiếp (phạm vi, thu thập, liệt kê, tìm lỗ hổng, khai thác, sau khai thác, báo cáo), và bạn thường phải quay lại vòng lặp nhiều lần chứ không đi một mạch.
+- Khi kẹt, đừng đổi công cụ, hãy quay lại liệt kê: gần như luôn có một thông tin bạn bỏ sót ở đó.
+- Ghi chép theo mẫu cố định ngay từ máy đầu tiên, và ghi cả những việc đã thử lẫn việc chưa thử. Trang ghi chú là bộ nhớ của bạn lúc mệt.
+- Chụp bằng chứng ngay lúc làm, vì lúc viết báo cáo sẽ không còn cơ hội làm lại.

@@ -1,0 +1,559 @@
+---
+title: "Windows căn bản"
+code: "1.5"
+level: 1
+summary: "Phần lớn máy tính trong doanh nghiệp chạy Windows, và cách nó quản lý người dùng, dịch vụ và quyền khác Linux khá nhiều. Bài này dạy bạn đọc một máy Windows lạ: tôi là ai, máy này chạy gì, và chỗ nào có thể leo lên quyền cao hơn."
+duration: "75 phút + 50 phút bài tập"
+updated: "2026-11-09"
+prereq: ["1.4"]
+objectives:
+  - "Phân biệt được người dùng thường, Administrator, SYSTEM và tài khoản dịch vụ, và nói được cái nào là đích đến của leo thang"
+  - "Liệt kê một máy Windows bằng whoami, net, systeminfo để biết mình là ai và máy này là bản nào"
+  - "Đọc được danh sách đặc quyền của token và nhận ra đặc quyền nào cho phép leo thang"
+  - "Tra được cấu hình dịch vụ và các chương trình tự chạy bằng sc và reg"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+
+## Hình dung trước
+
+Nếu Linux giống căn nhà gọn gàng, mọi thứ là file đặt ngoài tủ, thì Windows giống toà nhà văn phòng lớn: có phòng nhân sự quản lý thẻ ra vào, có hệ thống trung tâm điều khiển mọi cửa, và mỗi bộ phận có một chìa khoá riêng. Cách bố trí đó mạnh, nhưng cũng nhiều chỗ để cấu hình sai.
+
+Lý do bạn phải học Windows rất thực tế. Phần lớn máy tính doanh nghiệp chạy Windows, và ở các cấp sau bạn sẽ tấn công cả một mạng Windows (Active Directory, bài 3.4). Trong phòng thi OSCP bạn chắc chắn gặp Windows, nhất là cả cụm máy Active Directory.
+
+Bài này cho bạn những lệnh đầu tiên khi ngồi vào một máy Windows lạ: tôi là ai, đang có quyền gì, máy này là bản nào. Chúng là phần mở đầu của mọi lần leo thang quyền ở bài 3.2.
+
+## Kiến thức chính
+
+### Người dùng, nhóm, và các tài khoản quyền cao
+
+Trước hết bạn cần biết "các bậc thang" của Windows, vì mục tiêu của leo thang là leo lên bậc cao nhất:
+
+- **Administrator** — quản trị máy, tương tự root bên Linux.
+- **SYSTEM** — tài khoản hệ điều hành dùng để chạy thành phần lõi; quyền còn cao hơn Administrator. Nhiều lần "leo thang đặc quyền" trên Windows chính là trở thành SYSTEM.
+- **Nhóm Administrators** — thành viên có quyền quản trị.
+
+### Dịch vụ và registry
+
+**Dịch vụ** là chương trình chạy ngầm dưới một tài khoản; dịch vụ chạy quyền SYSTEM mà cấu hình sai là con đường chiếm quyền (bài 3.2).
+
+**Registry** là cơ sở dữ liệu cấu hình trung tâm: thiết lập hệ thống, phần mềm tự chạy khi khởi động, đôi khi cả mật khẩu lưu sẵn. Đây là hai nơi bạn sẽ liên tục kiểm tra, vì cấu hình sai ở đây là nguồn leo thang phổ biến nhất trên Windows.
+
+### Ai có quyền gì
+
+<ConceptMap
+  client:visible
+  title="Các mức tài khoản trên một máy Windows"
+  width={640}
+  height={374}
+  nodes={[
+    { id: 'system', label: 'SYSTEM', x: 320, y: 40, tone: 'warn', detail: 'Tài khoản của hệ điều hành. Quyền cao nhất trên máy. Đích đến của leo thang đặc quyền.' },
+    { id: 'admin', label: 'Administrator', x: 320, y: 192, tone: 'accent', detail: 'Quản trị máy: cài phần mềm, đổi cấu hình, đọc dữ liệu mọi người dùng.' },
+    { id: 'user', label: 'Người dùng thường', x: 150, y: 334, detail: 'Làm việc trong phạm vi của mình. Điểm khởi đầu sau khi chiếm một tài khoản.' },
+    { id: 'svc', label: 'Tài khoản dịch vụ', x: 490, y: 334, detail: 'Chạy một dịch vụ. Quyền tuỳ cấu hình; cấu hình sai có thể bị lợi dụng để leo thang.' },
+  ]}
+  edges={[
+    { from: 'user', to: 'admin', label: 'leo thang', dashed: true },
+    { from: 'svc', to: 'admin', label: 'leo thang', dashed: true },
+    { from: 'admin', to: 'system', label: 'leo thang', dashed: true },
+  ]}
+/>
+
+## Thực hành: liệt kê một máy Windows
+
+Giả sử bạn vừa vào được một máy Windows, qua RDP hoặc một shell nhận được sau khi khai thác. Bốn câu hỏi dưới đây theo thứ tự tự nhiên: tôi là ai, ai khác ở đây, máy này là bản nào, và có gì đang chạy ngầm. Tất cả chạy trên máy Windows trong lab của bạn (bài 0.2).
+
+### 1. Tôi là ai và có đặc quyền gì?
+
+Câu hỏi đầu tiên luôn là câu này, vì mọi quyết định sau phụ thuộc vào nó: bạn đang là người dùng thường hay đã cao hơn, và tài khoản đó có "đặc quyền" nào đặc biệt không. Một số đặc quyền (như `SeImpersonatePrivilege`) nghe vô hại nhưng thực ra là đường tắt lên SYSTEM:
+
+<Lenh noi="cmd (Command Prompt) trên máy Windows của lab" muc="Biết mình đang đăng nhập bằng tài khoản nào và tài khoản đó có những đặc quyền nào">
+
+<Terminal title="whoami /priv — đặc quyền của token hiện tại">
+
+```text
+C:\> whoami
+megacorp\jdoe
+
+C:\> whoami /priv
+Privilege Name                Description                     State
+============================= =============================== ========
+SeImpersonatePrivilege        Impersonate a client after auth Enabled   <-- đáng chú ý
+SeChangeNotifyPrivilege       Bypass traverse checking        Enabled
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `whoami`: in tên tài khoản hiện tại, dạng `MIỀN\tên` (`megacorp\jdoe`). Máy không thuộc domain thì phần trước là tên máy.
+- `whoami /priv`: in danh sách **đặc quyền** (privilege) gắn với phiên đăng nhập hiện tại. `/priv` là một tuỳ chọn trong kiểu Windows (dùng dấu `/`, không dùng `-`).
+- Dấu `C:\>` ở đầu dòng là dấu nhắc của cmd, **không gõ**.
+
+</div>
+
+<div slot="doc">
+
+- Cột `Privilege Name`: tên đặc quyền. Cột `State`: `Enabled` là đang bật, `Disabled` là có nhưng chưa bật (vẫn có thể bật được).
+- `SeChangeNotifyPrivilege` xuất hiện ở hầu hết tài khoản, **bình thường**, bỏ qua.
+- `SeImpersonatePrivilege` ở trạng thái `Enabled` **đáng chú ý nhất**: đặc quyền này cho phép mượn danh tính của tiến trình khác, và là đường nổi tiếng đi lên SYSTEM (bài 3.2). Mũi tên `<--` là chú thích của bài.
+- Mẹo: tài khoản người dùng thường chỉ có vài dòng; tài khoản quản trị chạy ở mức cao có hàng chục dòng.
+
+</div>
+
+</Lenh>
+
+Luôn đọc kỹ danh sách này sau khi vào được một máy.
+
+### 2. Trên máy này còn ai, và ai là quản trị?
+
+Biết mình là ai rồi, bạn cần biết cả máy: có những tài khoản nào, và ai thuộc nhóm quản trị. Tên các tài khoản quản trị là thứ bạn ghi vào sổ tay, vì chiếm được một trong số đó là leo thang xong:
+
+<Lenh noi="cmd trên máy Windows của lab" muc="Liệt kê các tài khoản có trên máy và xem ai thuộc nhóm quản trị">
+
+<Terminal title="net user và net localgroup">
+
+```text
+C:\> net user
+User accounts for \\WEB01
+-------------------------------------------------------------
+Administrator   jdoe            svc_backup      Guest
+
+C:\> net localgroup administrators
+Members
+-------------------------------------------------------------
+Administrator
+megacorp\domain admins
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `net user`: liệt kê tất cả tài khoản người dùng **cục bộ** trên máy này.
+- `net localgroup administrators`: liệt kê thành viên của nhóm **Administrators** (nhóm quản trị của máy).
+- Muốn xem một tài khoản cụ thể: `net user tên-tài-khoản`.
+
+</div>
+
+<div slot="doc">
+
+- `User accounts for \\WEB01`: tên máy là `WEB01`. Các tên bên dưới là các tài khoản, xếp thành cột.
+- `Administrator`, `Guest`: tài khoản mặc định của Windows. `jdoe` là người dùng thật; `svc_backup` có tiền tố `svc_` là **tài khoản dịch vụ** (chạy chương trình nền), hay có mật khẩu yếu hoặc quyền lớn.
+- Dưới `Members` của nhóm Administrators: **chỉ những tên này có quyền quản trị máy**. `megacorp\domain admins` nghĩa là cả nhóm quản trị miền cũng là quản trị máy này.
+- Muốn biết tài khoản nào trong nhóm quản trị mà bạn có thể chiếm: ghi lại các tên này.
+
+</div>
+
+</Lenh>
+
+### 3. Máy này là bản Windows nào?
+
+Mỗi phiên bản Windows có những lỗ hổng riêng, và một máy chưa vá có thể dính lỗi đã được công bố từ lâu (bài 2.5 sẽ dạy cách tra). Điều cần biết là tên bản Windows và số **build**, vì từ hai dữ kiện đó bạn tìm được lỗ hổng của đúng bản:
+
+<Lenh noi="cmd trên máy Windows của lab" muc="Lấy tên và phiên bản Windows để tra lỗ hổng của đúng bản đó">
+
+<Terminal title="systeminfo lọc nhanh phiên bản">
+
+```text
+C:\> systeminfo | findstr /B /C:"OS Name" /C:"OS Version"
+OS Name:      Microsoft Windows Server 2016 Standard
+OS Version:   10.0.14393 N/A Build 14393
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `systeminfo`: in rất nhiều thông tin về máy (tên, phiên bản, bản vá, RAM...). Dài và chậm một chút.
+- `|`: ống dẫn, đưa output của `systeminfo` cho lệnh sau.
+- `findstr /B /C:"OS Name" /C:"OS Version"`: lọc, chỉ giữ dòng **bắt đầu** (`/B`) bằng một trong hai cụm chữ (mỗi `/C:` là một cụm). Đây là lệnh `grep` của Windows.
+
+</div>
+
+<div slot="doc">
+
+- `OS Name`: tên bản Windows. Ở đây là Windows Server 2016.
+- `OS Version: 10.0.14393 ... Build 14393`: số **build**. Dùng chuỗi `14393` này để tra các lỗ hổng nhân Windows và biết máy còn thiếu bản vá nào.
+- Tên bản Windows và số build là hai dữ kiện quan trọng nhất; cứ ghi cả hai.
+
+</div>
+
+</Lenh>
+
+### 4. Có gì đang chạy ngầm và tự chạy khi khởi động?
+
+Cuối cùng, nhìn vào hai nơi cấu hình sai hay xảy ra nhất: dịch vụ (chạy ngầm dưới một tài khoản, thường là SYSTEM) và registry (chứa danh sách chương trình tự chạy). Nếu bạn thấy một dịch vụ chạy bằng quyền cao mà đường dẫn chương trình của nó có thể bị sửa, thì đó là đường lên SYSTEM, và bài 3.2 sẽ dạy cách đi tiếp:
+
+<Lenh noi="cmd trên máy Windows của lab" muc="Xem cấu hình một dịch vụ Windows và xem chương trình nào tự chạy khi khởi động">
+
+<Terminal title="sc query và reg query">
+
+```text
+C:\> sc qc UsoSvc
+    BINARY_PATH_NAME   : C:\Windows\system32\svchost.exe -k netsvcs
+
+C:\> reg query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+    OneDrive    REG_SZ    C:\Users\jdoe\AppData\...\OneDrive.exe
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sc qc UsoSvc`: `sc` là chương trình quản lý dịch vụ; `qc` (query config) hiện **cấu hình** của dịch vụ có tên `UsoSvc`.
+- `reg query HKLM\...\Run`: đọc một khoá trong **registry** (kho cấu hình của Windows); ở đây là khoá liệt kê chương trình tự chạy khi mở máy.
+
+</div>
+
+<div slot="doc">
+
+- `BINARY_PATH_NAME`: **file chương trình thật sự chạy** khi dịch vụ khởi động. Kiểm tra xem đường dẫn này có dấu cách mà không có ngoặc kép, hoặc thư mục có cho người dùng thường ghi vào không: đó là điểm yếu (bài 3.2).
+- Dưới khoá `Run`, mỗi dòng gồm tên mục (`OneDrive`), kiểu dữ liệu (`REG_SZ` = chuỗi chữ) và **đường dẫn chương trình**.
+- Chương trình lạ trong khoá `Run` là chỗ mã độc hay ẩn mình để sống sót sau khi khởi động lại.
+
+</div>
+
+</Lenh>
+
+Trong PowerShell, các lệnh tương đương mạnh hơn: `Get-LocalUser`, `Get-Service`, `Get-CimInstance Win32_Service`. PowerShell là ngôn ngữ chính để tự động hoá trên Windows (bài 1.6).
+
+<Callout type="note">
+Công cụ liệt kê tự động như <code>winPEAS</code> (Windows) và <code>linPEAS</code> (Linux) gom gần hết các kiểm tra trên vào một lần chạy và tô màu chỗ đáng ngờ. Nhưng hiểu từng lệnh thủ công trước, để biết công cụ đang nói gì.
+</Callout>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hãy nhìn bốn bước trên từ phía người quản trị Windows. Mỗi thứ kẻ tấn công kiểm tra là một thứ bạn nên thu hẹp trước. Người dùng hằng ngày không nên thuộc nhóm Administrators, để kẻ chiếm được tài khoản đó vẫn chỉ ở bậc thấp. Dịch vụ nên chạy bằng tài khoản quyền thấp nhất đủ dùng, thay vì mặc định SYSTEM. Hạn chế cấp các đặc quyền nhạy cảm như `SeImpersonatePrivilege` cho tài khoản không thực sự cần.
+
+Về phát hiện, Windows Event Log ghi lại đăng nhập và thay đổi quan trọng (ví dụ ID 4624 cho đăng nhập, 4672 cho việc cấp đặc quyền đặc biệt), và một chuỗi lệnh `whoami /priv`, `net user`, `net localgroup` chạy liền nhau từ một tài khoản lạ là dấu hiệu rõ rệt của người đang "thăm dò sau khi vào được".
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ Administrator là cao nhất.** Trên nhiều máy SYSTEM còn cao hơn, và mục tiêu thực của leo thang thường là SYSTEM. Dừng ở Administrator, bạn có thể bỏ lỡ những thứ chỉ SYSTEM đọc được.
+- **Bỏ qua `whoami /priv`.** Đây là nơi lộ các đặc quyền cho phép leo thang gần như tức thì. Nhiều người mới nhảy sang tìm công cụ phức tạp trong khi lời giải nằm ngay trong danh sách này.
+- **Quen tay dùng lệnh Linux trên Windows.** Gõ `ls`, `cat`, `grep` vào cmd rồi báo lỗi, người mới hay nghĩ máy hỏng. Cmd và PowerShell có cú pháp riêng, và cách nhanh nhất là học song song một bảng "lệnh Linux nào tương ứng lệnh Windows nào".
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Tài khoản nào thường là đích đến cuối cùng khi leo thang trên Windows?', options: ['Guest', 'SYSTEM', 'Người dùng thường'], answer: 1, explain: 'SYSTEM có quyền cao nhất để điều khiển máy.' },
+    { q: 'Lệnh nào hiển thị các đặc quyền của token hiện tại?', options: ['net user', 'whoami /priv', 'systeminfo'], answer: 1, explain: '`whoami /priv` liệt kê đặc quyền; chỗ hay có đường leo thang như SeImpersonate.' },
+    { q: 'Bạn cần biết phiên bản và build của Windows để tra lỗ hổng. Lệnh nào?', options: ['whoami', 'systeminfo', 'ping'], answer: 1, explain: '`systeminfo` cho OS Name/Version/Build, dùng để tra CVE nhân Windows.' },
+  ]}
+/>
+
+## Bài tập tự làm
+
+<LabBrief
+  ten="Thực hành Windows: Khám phá Integrity Level, đặc quyền Token và kiểm tra dịch vụ"
+  muctieu="Khởi chạy máy Windows lab, so sánh token giữa cmd thường và cmd quản trị (UAC High vs Medium), kiểm tra cấu hình dịch vụ LocalSystem và truy vấn Registry"
+  may="Windows bản đánh giá"
+  ip="10.10.14.30"
+  kali="10.10.14.7"
+  thoigian="45 phút"
+  xong="Chỉ ra sự khác biệt giữa Medium và High Integrity Level, nhận diện đặc quyền SeDebugPrivilege, và truy vấn được khóa Run trong Registry"
+>
+
+1. Đăng nhập vào máy ảo Windows bằng tài khoản quản trị viên.
+2. Mở `cmd` bình thường và chạy lệnh `whoami /groups | findstr Label` cùng `whoami /priv`.
+3. Mở `cmd` với quyền quản trị viên ("Run as administrator") và lặp lại 2 lệnh trên. So sánh sự khác nhau về Mandatory Label và danh sách đặc quyền token.
+4. Mở PowerShell, truy vấn danh sách dịch vụ chạy dưới tài khoản `LocalSystem` và tìm dịch vụ có đường dẫn chứa dấu cách chưa bọc ngoặc kép (Unquoted Service Path).
+5. Kiểm tra khóa khởi động tự động trong Registry tại `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`.
+
+<div slot="goiy1">
+  Để lọc Mandatory Label, bạn có thể dùng lệnh <code>whoami /groups | findstr Label</code>. Chú ý con số SID: <code>S-1-16-8192</code> tương ứng Medium Integrity, còn <code>S-1-16-12288</code> là High Integrity.
+</div>
+
+<div slot="goiy2">
+  Trong PowerShell, dùng <code>Get-CimInstance Win32_Service</code> để đọc đối tượng dịch vụ. Dùng biểu thức chính quy <code>-notmatch '^"' -and $_.PathName -match ' '</code> để lọc đường dẫn thiếu ngoặc kép.
+</div>
+
+<div slot="loigiai">
+  <p>Các lệnh kiểm tra cốt lõi:</p>
+
+```cmd
+:: 1. Kiểm tra mức Integrity và quyền token
+whoami /groups | findstr Label
+whoami /priv
+
+:: 2. Truy vấn khóa tự chạy trong Registry
+reg query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+```
+
+```powershell
+# 3. Lọc dịch vụ LocalSystem
+Get-CimInstance Win32_Service | Where-Object StartName -eq 'LocalSystem' | Measure-Object
+```
+</div>
+
+<div slot="kiemtra">
+  <ul>
+    <li><strong>Mandatory Label:</strong> Xác nhận cmd thường là <code>Medium Mandatory Level</code>, cmd quản trị là <code>High Mandatory Level</code>.</li>
+    <li><strong>Đặc quyền then chốt:</strong> Nhận diện được <code>SeDebugPrivilege</code> chỉ xuất hiện khi chạy với quyền High/Administrator.</li>
+    <li><strong>Registry Run:</strong> Tìm thấy các phần mềm tự chạy của hệ thống trong <code>HKLM</code>.</li>
+  </ul>
+</div>
+
+</LabBrief>
+
+Làm trên một máy Windows 10/11 hoặc Windows Server bản đánh giá trong lab (bài 0.2), đăng nhập bằng tài khoản quản trị bạn tạo lúc cài. Chụp snapshot trước khi bắt đầu.
+
+**Bài 1 — Hai mức của cùng một người.** Mở `cmd` bình thường, chạy `whoami /groups | findstr Label` và `whoami /priv`. Sau đó mở `cmd` bằng "Run as administrator" và chạy lại. Dòng `Mandatory Label` đổi thế nào? Danh sách đặc quyền dài thêm bao nhiêu dòng?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu, để đọc hiểu được cả khi chưa có lab)</summary>
+
+```text
+C:\> whoami /groups | findstr Label                      REM cmd thường
+Mandatory Label\Medium Mandatory Level   Label   S-1-16-8192
+
+C:\> whoami /priv                                         REM cmd thường
+Privilege Name                Description                    State
+============================= ============================== ========
+SeShutdownPrivilege           Shut down the system           Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking        Enabled
+SeUndockPrivilege              Remove computer from docking   Disabled
+```
+
+```text
+C:\> whoami /groups | findstr Label                      REM "Run as administrator"
+Mandatory Label\High Mandatory Level     Label   S-1-16-12288
+
+C:\> whoami /priv                                          REM "Run as administrator"
+Privilege Name                Description                      State
+============================= ================================ ========
+SeIncreaseQuotaPrivilege      Adjust memory quotas for a process Disabled
+SeSecurityPrivilege           Manage auditing and security log   Disabled
+SeTakeOwnershipPrivilege      Take ownership of files or objects Disabled
+SeLoadDriverPrivilege         Load and unload device drivers     Disabled
+SeSystemProfilePrivilege      Profile system performance         Disabled
+SeSystemtimePrivilege         Change the system time             Disabled
+SeBackupPrivilege             Back up files and directories      Disabled
+SeRestorePrivilege            Restore files and directories      Disabled
+SeShutdownPrivilege           Shut down the system                Disabled
+SeDebugPrivilege              Debug programs                      Enabled
+SeChangeNotifyPrivilege       Bypass traverse checking             Enabled
+... (còn thêm khoảng 10 dòng nữa)
+```
+
+`Mandatory Label` đổi từ **Medium** (cmd thường) sang **High** (chạy bằng quản trị) — con số SID cũng đổi (`S-1-16-8192` → `S-1-16-12288`, càng cao càng nhiều quyền). Danh sách đặc quyền dài thêm khoảng 15–20 dòng, trong đó đáng chú ý nhất là `SeDebugPrivilege` chuyển sang `Enabled` — đặc quyền mạnh, cho phép đọc/ghi bộ nhớ của hầu hết tiến trình khác.
+
+Đó là UAC: tài khoản quản trị có hai "token" (thẻ quyền), và chỉ dùng token đầy đủ khi được xác nhận qua hộp thoại. Vì vậy chiếm được một phiên cmd của quản trị viên (chưa "Run as administrator") chưa chắc đã có ngay quyền cao.
+
+</details>
+
+**Bài 2 — Tạo một người dùng thường và so sánh.** Trong cửa sổ quản trị, tạo tài khoản bằng `net user hocvien * /add` (dấu `*` để Windows hỏi mật khẩu thay vì gõ thẳng trên dòng lệnh). Kiểm tra bằng `net user hocvien` và `net localgroup administrators`. Đăng nhập bằng `hocvien` rồi chạy `whoami /priv`.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+C:\> net user hocvien * /add
+Type a password for the user:
+Retype the password to confirm:
+The command completed successfully.
+
+C:\> net user hocvien
+User name                    hocvien
+Full Name
+...
+Local Group Memberships      *Users
+Global Group memberships     *None
+
+C:\> net localgroup administrators
+Members
+-------------------------------------------------------------------------
+Administrator
+MEGACORP\Domain Admins
+The command completed successfully.
+```
+
+`net user hocvien`: dòng `Local Group Memberships` chỉ có `*Users` — không có `Administrators`. `net localgroup administrators`: liệt kê thành viên nhóm quản trị, **không có `hocvien`** trong đó.
+
+```text
+C:\> whoami /priv                                         REM đăng nhập bằng hocvien
+Privilege Name                Description                    State
+============================= ============================== ========
+SeShutdownPrivilege           Shut down the system            Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking         Enabled
+SeUndockPrivilege             Remove computer from docking     Disabled
+SeIncreaseWorkingSetPrivilege Increase a process working set   Disabled
+```
+
+Chỉ vài dòng, không có `SeDebugPrivilege` hay bất kỳ đặc quyền mạnh nào — đây chính là vị trí khởi đầu điển hình sau khi chiếm một tài khoản thường (ví dụ qua phishing, bài 2.4). Gõ mật khẩu thẳng trên dòng lệnh (`net user hocvien MatKhau123 /add` thay vì dùng `*`) là thói quen xấu: nó có thể nằm lại trong lịch sử lệnh hoặc log tạo tiến trình (sự kiện 4688).
+
+</details>
+
+**Bài 3 — Dịch vụ chạy bằng tài khoản nào?** Trên Windows, nếu một dịch vụ chạy dưới quyền `LocalSystem` mà đường dẫn file thực thi của nó lại chứa dấu cách và không bọc trong dấu ngoặc kép, kẻ tấn công có thể cài file giả để mượn quyền SYSTEM. Hãy mở PowerShell, đếm xem có bao nhiêu dịch vụ chạy bằng `LocalSystem`, rồi lọc ra các dịch vụ có đường dẫn chứa dấu cách mà **không** đặt trong ngoặc kép:
+
+<Lenh noi="PowerShell trên máy Windows của lab (mở bằng &quot;Run as administrator&quot; để thấy đủ)" muc="Bài tập: liệt kê dịch vụ chạy bằng LocalSystem, rồi tìm dịch vụ có đường dẫn chứa dấu cách mà không đặt trong ngoặc kép">
+
+<Terminal title="Rà dịch vụ chạy LocalSystem và đường dẫn thiếu ngoặc kép">
+
+```text
+Get-CimInstance Win32_Service | Where-Object StartName -eq 'LocalSystem' | Measure-Object
+Get-CimInstance Win32_Service |
+  Where-Object { $_.PathName -notmatch '^"' -and $_.PathName -match ' ' } |
+  Select-Object Name, StartName, PathName
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `Get-CimInstance Win32_Service`: lấy danh sách tất cả dịch vụ Windows dưới dạng đối tượng PowerShell.
+- `Where-Object StartName -eq 'LocalSystem'`: giữ những dịch vụ chạy bằng `LocalSystem`; ở lệnh thứ hai `Where-Object { ... }` lọc đường dẫn không bắt đầu bằng dấu `"` nhưng có dấu cách.
+- `Measure-Object`: đếm tổng số kết quả. `Select-Object Name, StartName, PathName`: chỉ hiện ba cột đó.
+
+</div>
+
+<div slot="doc">
+
+- Lệnh đầu in `Count : N` là số dịch vụ chạy bằng quyền cao nhất.
+- Lệnh sau in bảng ba cột. Bảng trống = không có dịch vụ nào dính lỗi (kết quả tốt). Có dòng nào thì đọc kỹ `PathName`: dấu cách nằm ở đâu.
+
+</div>
+
+</Lenh>
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+Count
+-----
+   96
+
+Name       StartName         PathName
+----       ---------         --------
+BackupSvc  LocalSystem       C:\Program Files\Backup Tool\agent.exe
+```
+
+Lệnh đầu (`Measure-Object`) chỉ in `Count : 96` — rất nhiều dịch vụ chạy bằng `LocalSystem`; đó là lý do cấu hình sai dù chỉ một dịch vụ trong số đó cũng có thể dẫn thẳng tới SYSTEM. Lệnh sau tìm "đường dẫn không đặt trong ngoặc kép" (unquoted service path): bảng cho một dòng `BackupSvc` với `PathName` là `C:\Program Files\Backup Tool\agent.exe` — có dấu cách sau `Program Files` và `Backup Tool`, không có dấu `"` bao ngoài.
+
+Windows có thể thử chạy `C:\Program.exe` trước khi thử đường dẫn đầy đủ; ghi được file vào đó là chiếm được dịch vụ này (một kiểu leo thang ở bài 3.2).
+
+Lưu ý lệnh lọc này còn thô: nó cũng bắt cả những dòng chỉ có dấu cách ở phần tham số phía sau (ví dụ `app.exe -c config.ini`), nên phải đọc kỹ từng kết quả. Bảng trống hoàn toàn cũng là kết quả tốt và rất thường gặp trên máy mới cài.
+
+</details>
+
+**Bài 4 — Cái gì tự chạy khi khởi động?** Chạy hai lệnh dưới. Với mỗi dòng kết quả, bạn có biết chương trình đó là gì không? So với tab Startup trong Task Manager.
+
+<Lenh noi="cmd trên máy Windows của lab" muc="Bài tập: xem những chương trình tự chạy khi khởi động, ở mức máy và mức người dùng">
+
+<Terminal title="Kiểm tra khoá Run ở mức máy (HKLM) và mức người dùng (HKCU)">
+
+```text
+reg query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+reg query HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `reg query`: đọc registry.
+- `HKLM` (HKEY_LOCAL_MACHINE): cấu hình cho **cả máy**. `HKCU` (HKEY_CURRENT_USER): cấu hình của **người đang đăng nhập**.
+- Hai lệnh giống nhau, chỉ khác gốc.
+
+</div>
+
+<div slot="doc">
+
+- Mỗi dòng là một chương trình tự chạy. Với mỗi dòng, hỏi: tôi có biết chương trình này không?
+- Danh sách trống cũng bình thường: máy mới cài ít khi có gì trong `HKCU`.
+
+</div>
+
+</Lenh>
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+C:\> reg query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+    SecurityHealth    REG_EXPAND_SZ    %ProgramFiles%\Windows Defender\MSASCuiL.exe
+    RtkAudUService    REG_SZ    C:\Windows\System32\DriverStore\...\RtkAudUService64.exe
+
+C:\> reg query HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+
+ERROR: The system was unable to find the specified registry key or value.
+```
+
+Khoá `HKLM`: hai chương trình quen thuộc (bảo mật Windows, driver âm thanh) — đọc tên thấy ngay là hợp lệ. Khoá `HKCU`: báo lỗi "không tìm thấy khoá" — đây **không phải lỗi thật**, nghĩa đơn giản là người dùng hiện tại chưa có gì tự chạy riêng, rất bình thường trên máy mới cài.
+
+`HKLM` áp cho mọi người dùng (cần quyền quản trị để sửa), `HKCU` chỉ cho người đang đăng nhập (người dùng tự sửa được, không cần quyền cao). Đây là hai trong rất nhiều vị trí mã độc hay dùng để tự chạy lại sau khi khởi động.
+
+Phía phòng thủ dùng công cụ **Autoruns** (bộ Sysinternals của Microsoft) để xem tất cả các vị trí tự chạy trên một màn hình, thay vì tra tay từng khoá.
+
+</details>
+
+**Bài 5 — Góc phòng thủ: đọc nhật ký đăng nhập.** Khoá màn hình (`Win+L`), cố ý gõ sai mật khẩu một lần rồi đăng nhập đúng. Trong PowerShell chạy bằng quyền quản trị:
+
+```powershell
+Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4625} -MaxEvents 3 |
+  Format-List TimeCreated, Message
+Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624} -MaxEvents 3 |
+  Format-List TimeCreated, Message
+```
+
+Tìm trong mỗi sự kiện: tên tài khoản, **Logon Type**, và lý do thất bại.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+TimeCreated : 09/11/2026 10:20:03
+Message     : An account failed to log on.
+
+              Subject:
+                 Security ID:  S-1-5-18
+                 Account Name:  WIN-MUCTIEU$
+              ...
+              Account For Which Logon Failed:
+                 Account Name:  jdoe
+              Failure Information:
+                 Failure Reason:  Unknown user name or bad password.
+                 Status:   0xC000006D
+                 Sub Status:  0xC000006A
+              Logon Type:  7
+```
+
+```text
+TimeCreated : 09/11/2026 10:20:09
+Message     : An account was successfully logged on.
+
+              Subject:
+                 Security ID:  S-1-5-18
+              ...
+              New Logon:
+                 Account Name:  jdoe
+                 Logon ID:  0x3E7A12
+              Logon Type:  7
+```
+
+Sự kiện **4625** (thất bại): `Account For Which Logon Failed` cho tên tài khoản (`jdoe`), `Failure Reason` nói rõ lý do (`Unknown user name or bad password`), và `Logon Type: 7` — **7 nghĩa là mở khoá màn hình**, đúng với thao tác bạn vừa làm. Sự kiện **4624** (thành công) ngay sau đó cũng `Logon Type: 7`, cùng tài khoản.
+
+Các giá trị Logon Type khác hay gặp: **2** là đăng nhập tại bàn phím (gõ mật khẩu lúc khởi động máy), **3** là qua mạng (ví dụ SMB, chia sẻ file — bài 3.9 dùng để nhận biết di chuyển ngang), **10** là qua Remote Desktop.
+
+Nếu không thấy sự kiện nào, kiểm tra audit policy bằng `auditpol /get /category:*` — mặc định Windows không phải lúc nào cũng ghi đủ các ID này. Ở bài 8.2, password spraying (bài 2.6) chính là hàng loạt 4625 trên **nhiều tài khoản khác nhau** từ cùng một nguồn trong thời gian ngắn, còn di chuyển ngang (bài 3.9) để lại 4624 kiểu 3 tới nhiều máy liên tiếp.
+
+</details>
+
+## Ghi nhớ
+
+- Bậc thang quyền trên Windows là người dùng thường, Administrator, rồi SYSTEM. Leo thang nghĩa là đi từ bậc thấp lên bậc cao hơn.
+- Vào máy Windows nào cũng hỏi theo thứ tự: tôi là ai (`whoami /priv`), ai khác ở đây (`net user`, `net localgroup`), bản nào (`systeminfo`), và có gì chạy ngầm (`sc qc`, `reg query`).
+- Đặc quyền token và dịch vụ cấu hình sai là hai nguồn leo thang lớn nhất trên Windows, nên hai nơi đó luôn đáng đọc kỹ.
+- `winPEAS` và `linPEAS` tự động hoá việc này, nhưng hãy hiểu từng lệnh thủ công trước để biết công cụ đang nói gì.

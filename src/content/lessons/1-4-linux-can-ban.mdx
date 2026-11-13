@@ -1,0 +1,473 @@
+---
+title: "Linux căn bản"
+code: "1.4"
+level: 1
+summary: "Khi vào được một máy Linux ở xa, bạn chỉ có một dòng lệnh trống. Bài này dạy bạn đi quanh trong đó, đọc hiểu quyền của từng file, và dùng find, grep để tìm ra những chỗ có thể leo lên quyền cao hơn."
+duration: "85 phút + 50 phút bài tập"
+updated: "2026-11-09"
+objectives:
+  - "Di chuyển, đọc file và tìm kiếm trong terminal Linux mà không cần giao diện đồ hoạ"
+  - "Đọc và tính được quyền rwx của một file, rồi chỉ ra quyền nào là nguy hiểm"
+  - "Dùng find và grep để săn những file nhạy cảm và mật khẩu để lộ trong một máy Linux"
+  - "Kể được những file và thư mục mà pentester luôn kiểm tra đầu tiên, và giải thích vì sao"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import FakeTerminal from '../../components/sim/FakeTerminal.tsx';
+import PermissionViz from '../../components/sim/PermissionViz.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+
+## Hình dung trước
+
+Terminal giống như nhắn tin cho máy tính: bạn gõ một dòng, máy làm đúng dòng đó. Nhanh và chính xác hơn bấm chuột, nhất là khi làm việc trên máy ở xa không có giao diện.
+
+Đó chính là tình huống của pentest. Khi bạn khai thác được một dịch vụ và vào được một máy Linux, thứ nhận được thường chỉ là một dòng lệnh trống: không có cửa sổ, không có chuột, không ai chỉ đường.
+
+Máy chủ Linux chiếm phần lớn máy trong các mạng bạn sẽ gặp (cả ngoài đời lẫn trong phòng thi OSCP), nên người làm nghề phải đi lại trong nó như người trong nhà. Bài này dạy bạn đi dạo trong một căn nhà Linux và biết ngó vào những chỗ nào trước: nơi cất mật khẩu, nơi để chìa khoá, nơi chủ nhà hay quên khoá cửa.
+
+## Kiến thức chính
+
+### Cấu trúc thư mục và file quan trọng
+
+Linux xếp mọi thứ dưới gốc `/`. Có vài chỗ mà người làm nghề luôn ngó tới đầu tiên, vì chúng hay chứa thứ có thể dùng để leo lên quyền cao hơn. Cột cuối cho biết vì sao chúng đáng xem:
+
+| Đường dẫn | Chứa gì | Vì sao quan tâm |
+|---|---|---|
+| `/etc/passwd` | Danh sách người dùng | Ai cũng đọc được; biết có tài khoản nào |
+| `/etc/shadow` | Hash mật khẩu | Chỉ root; đọc được là leo thang xong |
+| `/home/*/.ssh/` | Khoá SSH | Khoá riêng để lộ = đăng nhập không cần mật khẩu |
+| `/var/www/` | Mã nguồn web | Hay chứa mật khẩu cơ sở dữ liệu |
+| `/opt`, `/srv` | Phần mềm cài thêm | Script, cấu hình tuỳ biến dễ sai |
+| `~/.bash_history` | Lịch sử lệnh | Người dùng gõ nhầm mật khẩu vào đây |
+
+<ConceptMap
+  client:visible
+  title="Bản đồ cây thư mục Linux: Các điểm nóng bảo mật"
+  width={760}
+  height={395}
+  zones={[
+    { label: "Thư mục hệ thống & cấu hình nhạy cảm", x: 200, y: 10, w: 550, h: 190 },
+    { label: "Không gian người dùng & vùng nhớ tạm", x: 200, y: 220, w: 550, h: 165 },
+  ]}
+  nodes={[
+    { id: 'root', label: 'Gốc /', sub: 'Root filesystem', x: 95, y: 230, tone: 'accent', detail: 'Điểm khởi đầu của mọi đường dẫn trong Linux. Chỉ root mới có quyền ghi trực tiếp tại gốc.' },
+    { id: 'etc', label: '/etc', sub: 'passwd, shadow, sudoers', x: 310, y: 75, tone: 'warn', detail: 'Nơi lưu cấu hình toàn hệ thống. /etc/passwd đọc được danh sách user; /etc/shadow chứa hash mật khẩu (chỉ root đọc); /etc/sudoers quy định quyền leo thang.' },
+    { id: 'var', label: '/var/www & /var/log', sub: 'Web app & Nhật ký', x: 470, y: 155, tone: 'accent', detail: '/var/www chứa mã nguồn web hay lộ mật khẩu DB; /var/log chứa auth.log ghi nhận mọi nỗ lực đăng nhập.' },
+    { id: 'home', label: '/home/user', sub: '.ssh/id_rsa, .bash_history', x: 330, y: 330, tone: 'warn', detail: 'Thư mục cá nhân của người dùng. Thường chứa file lịch sử lệnh gõ nhầm password hoặc private key SSH.' },
+    { id: 'tmp', label: '/tmp & /dev/shm', sub: 'World-writable (quyền 777)', x: 590, y: 290, tone: 'accent', detail: 'Thư mục ai cũng có quyền ghi. Nơi lý tưởng để pentester tải công cụ linpeas, reverse shell script vào máy đích.' },
+    { id: 'bin', label: '/bin, /usr/bin', sub: 'Binary SUID', x: 640, y: 75, tone: 'warn', detail: 'Chứa các chương trình thực thi. Những file có cờ SUID (như /usr/bin/find hoặc nmap cũ) có thể giúp leo quyền root.' },
+  ]}
+  edges={[
+    { from: 'root', to: 'etc' },
+    { from: 'root', to: 'var' },
+    { from: 'root', to: 'home' },
+    { from: 'root', to: 'tmp' },
+    { from: 'etc', to: 'bin', dashed: true, label: 'tham chiếu binary' },
+  ]}
+/>
+
+### Vài lệnh để sống sót
+
+Chỉ cần vài lệnh là đủ đi lại: `pwd` (đang ở đâu), `ls -la` (liệt kê kèm file ẩn và quyền), `cd` (chuyển thư mục), `cat`/`less` (đọc file), `whoami`/`id` (tôi là ai, nhóm nào), `find` và `grep` (tìm kiếm, xem phần thực hành).
+
+### Thử ngay
+
+Trước khi chạm vào máy lab, hãy làm quen trong một "phòng tập" an toàn. Terminal dưới đây chạy ngay trong trình duyệt với hệ thống file giả, nên bạn không thể làm hỏng gì. Làm lần lượt các nhiệm vụ bên phải, và chú ý điều gì xảy ra khi bạn thử đọc `/etc/shadow` bằng tài khoản thường, vì đó là cơ chế quyền đang làm việc:
+
+<FakeTerminal client:visible />
+
+### Quyền file
+
+Mỗi file có quyền cho ba nhóm (chủ sở hữu, nhóm, người khác), mỗi nhóm có `r`(4) `w`(2) `x`(1). Chuyện này đáng học kỹ vì phần lớn lỗi leo thang trên Linux thực chất là quyền đặt sai: một file nhạy cảm cho "người khác" đọc, hay một script chạy bằng root mà ai cũng sửa được. Bấm các ô để thấy quan hệ chữ và số:
+
+<PermissionViz client:visible />
+
+<Callout type="note">
+Chuyển tab "Thư mục": với thư mục, `x` nghĩa là được đi vào (cd), còn `r` chỉ là xem được danh sách tên file.
+</Callout>
+
+## Thực hành: săn file nhạy cảm bằng find và grep
+
+Giả sử bạn vừa vào được một máy Linux bằng một tài khoản yếu như `www-data` và muốn đi tiếp lên quyền cao hơn (chủ đề bài 3.1). Bạn không biết máy có gì, nên cần một cách lục lọi có hệ thống.
+
+Ba việc dưới đây là bộ ba mà người làm nghề gõ gần như theo phản xạ: tìm chương trình đặc biệt chạy bằng quyền cao, tìm mật khẩu bị bỏ quên, rồi xem người dùng này được phép làm gì thêm. Chạy tất cả trong lab của bạn.
+
+### 1. Có chương trình nào chạy bằng quyền cao hơn người gọi nó không?
+
+Bình thường, một chương trình chạy với quyền của người bật nó. Nhưng có một loại ngoại lệ gọi là **SUID**: chương trình đó luôn chạy bằng quyền của chủ sở hữu file, thường là root, dù ai gọi.
+
+Thiết kế này có lý do chính đáng (ví dụ `passwd` cần sửa file mật khẩu), nhưng nếu một chương trình SUID có lỗi hoặc cho phép chạy lệnh tuỳ ý thì bạn mượn được quyền root. Việc đầu tiên là liệt kê chúng ra:
+
+<Lenh noi="Terminal trên máy Linux của lab (thử cả Kali lẫn Metasploitable)" muc="Tìm các chương trình có &quot;bit SUID&quot;, tức chạy bằng quyền chủ sở hữu (thường là root) dù ai gọi nó">
+
+<Terminal title="find các file SUID bất thường">
+
+```text
+kali@lab:~$ find / -perm -4000 -type f 2>/dev/null
+/usr/bin/passwd
+/usr/bin/sudo
+/usr/bin/find        <-- SUID trên find là bất thường, có thể leo thang
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `find`: tìm file theo điều kiện. `/` nghĩa là tìm từ gốc, tức cả hệ thống.
+- `-perm -4000`: chỉ lấy file có bit SUID (4000 là bit đó trong dạng số của quyền).
+- `-type f`: chỉ lấy file thường, bỏ thư mục.
+- `2>/dev/null`: số `2` là kênh báo lỗi; `/dev/null` là "thùng rác". Cả cụm vứt hết thông báo `Permission denied` đi cho đỡ rối.
+
+</div>
+
+<div slot="doc">
+
+- Mỗi dòng là một đường dẫn đầy đủ tới chương trình có SUID.
+- **Cái bình thường:** `passwd`, `sudo`, `su`, `mount`, `ping`... vì chúng cần quyền root để làm đúng việc. Bạn sẽ thấy một danh sách ngắn các tên quen này.
+- **Cái đáng chú ý:** chương trình **không cần quyền root mà vẫn có SUID**, như `find`, `vim`, `nmap`, `python`. Với chúng, kẻ tấn công có thể mượn quyền root (bài 3.1, danh mục GTFOBins).
+- Đoạn `<-- ...` là chú thích của bài. Nếu danh sách trống, máy đó không có SUID, hiếm gặp.
+
+</div>
+
+</Lenh>
+
+
+### 2. Có mật khẩu nào bị bỏ quên trong file không?
+
+Cách leo thang nhàm chán nhất, mà hiệu quả nhất, là tìm mật khẩu ai đó đã viết thẳng vào file. Lập trình viên cần ứng dụng web kết nối cơ sở dữ liệu nên điền mật khẩu vào file cấu hình rồi quên mất nó nằm đó. Bạn dùng `grep` để tìm chữ "password" trong cả thư mục web thay vì mở từng file:
+
+<Lenh noi="Terminal trên máy Linux của lab, sau khi đã vào được máy" muc="Tìm mật khẩu để quên trong mã nguồn và file cấu hình của trang web">
+
+<Terminal title="grep tìm chuỗi password trong mã nguồn web">
+
+```text
+kali@lab:~$ grep -riI "password" /var/www/ 2>/dev/null
+/var/www/html/config.php:$db_pass = "S3cr3t!2024";
+/var/www/html/config.php:$db_user = "webapp";
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `grep`: tìm các dòng chứa một chuỗi trong file.
+- `-r`: tìm đệ quy trong mọi thư mục con. `-i`: không phân biệt hoa thường (`Password`, `PASSWORD` đều khớp). `-I`: bỏ qua file nhị phân (ảnh, chương trình), chỉ đọc file chữ.
+- `"password"`: chuỗi cần tìm. `/var/www/`: thư mục chứa trang web (thư mục web mặc định của nhiều bản Linux).
+- `2>/dev/null`: vứt các thông báo lỗi như `Permission denied`.
+
+</div>
+
+<div slot="doc">
+
+- Mỗi dòng có dạng `đường-dẫn-file:nội dung dòng khớp`. Phần trước dấu `:` đầu tiên cho bạn biết **file nào**, phần sau là dòng chứa chữ cần tìm.
+- `config.php:$db_pass = "S3cr3t!2024"`: một mật khẩu cơ sở dữ liệu nằm sẵn trong mã nguồn. File cấu hình là nơi mật khẩu hay lộ nhất.
+- Kết quả dài và lẫn nhiều dòng vô nghĩa (ví dụ `password` trong tên biến): lọc bằng cách đọc những file như `config`, `.env`, `settings`.
+- Không có dòng nào: không có chữ đó trong thư mục này, hoặc bạn không đọc được. Thử `grep -ri "pass" /var/www/ 2>/dev/null` hoặc đổi từ khoá (`secret`, `key`, `token`).
+
+</div>
+
+</Lenh>
+
+Bước tiếp theo sau khi thấy mật khẩu cơ sở dữ liệu là thử nó cho các tài khoản khác (tái sử dụng mật khẩu là đường leo thang rất hay gặp).
+
+### 3. Tài khoản này đã làm gì và được phép làm gì?
+
+Hai nguồn cuối cùng nằm ngay trong tầm tay tài khoản bạn đang dùng. Lịch sử lệnh cho thấy người dùng thật đã gõ gì, kể cả những lần họ gõ nhầm mật khẩu vào dòng lệnh. Còn `sudo -l` nói thẳng tài khoản này được phép chạy lệnh nào bằng quyền cao hơn, mà không cần ai chỉ:
+
+<Lenh noi="Terminal trên máy Linux của lab, sau khi đã vào được máy bằng một tài khoản" muc="Đọc lịch sử lệnh của người dùng và xem người dùng này được phép chạy lệnh nào với quyền cao hơn">
+
+<Terminal title="Xem lịch sử lệnh và quyền sudo">
+
+```text
+kali@lab:~$ cat ~/.bash_history
+mysql -u root -pRootPass123
+cd /var/www
+
+kali@lab:~$ sudo -l
+User webapp may run the following commands on this host:
+    (root) NOPASSWD: /usr/bin/vim
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `cat ~/.bash_history`: in nội dung file lưu các lệnh người dùng đã gõ. `~` là thư mục cá nhân của người đang đăng nhập.
+- `sudo -l`: chữ `l` là list. Lệnh này **liệt kê những gì tài khoản hiện tại được phép chạy bằng sudo**. Có thể hỏi mật khẩu của chính bạn.
+
+</div>
+
+<div slot="doc">
+
+- `cat ~/.bash_history` in các lệnh cũ, mỗi lệnh một dòng. Dòng `mysql -u root -pRootPass123` có **mật khẩu gõ thẳng trên dòng lệnh** (chữ ngay sau `-p`). Lịch sử lệnh lưu lại luôn cả mật khẩu.
+- `sudo -l`, dòng `(root) NOPASSWD: /usr/bin/vim`: tài khoản này được chạy `vim` **với quyền root mà không cần mật khẩu**. Vì `vim` mở được shell, đây là đường lên root (bài 3.1).
+- Nếu `sudo -l` báo `may not run sudo` hoặc `command not found`: tài khoản không có quyền sudo; thử hướng khác (bài 3.1).
+- Cách đọc chung: `(root)` là chạy **như ai**, `NOPASSWD` là **không hỏi mật khẩu**, phần sau là **chương trình nào**. `(ALL) ALL` nghĩa là được chạy mọi thứ.
+
+</div>
+
+</Lenh>
+
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là quản trị viên của một máy Linux, hãy tự chạy đúng ba việc ở trên trên máy của mình, trước khi kẻ tấn công làm điều đó. Chính lệnh `find / -perm -4000` và `grep -r` là công cụ rà soát tốt nhất của bạn, và những gì chúng tìm ra là danh sách việc cần sửa: gỡ bit SUID khỏi chương trình không cần nó, đặt quyền file theo mức tối thiểu (`chmod`, `chown`), không để mật khẩu chữ rõ trong file cấu hình (dùng biến môi trường hoặc kho bí mật thay vào đó), và giới hạn `sudo` chỉ cho đúng lệnh cần.
+
+Nhiều lỗ hổng leo thang nghe cao siêu, nhưng thực ra là một mật khẩu bỏ quên hoặc một quyền đặt dư, và đây là những lỗi bạn hoàn toàn tự phát hiện được.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Quên `2>/dev/null`.** Output của `find` bị ngập hàng trăm dòng `Permission denied`, và dòng quan trọng trôi mất trong đó mà bạn không nhận ra.
+- **Chỉ đọc file cấu hình chính.** Người mới thường dừng ở `config.php` và bỏ qua `.bash_history`, `.ssh`, file sao lưu (`.bak`, `~`). Những chỗ này hay chứa mật khẩu thật hơn cả file cấu hình đã được dọn dẹp.
+- **Thấy mật khẩu rồi dừng.** Tìm được mật khẩu cơ sở dữ liệu là vui, nhưng nhiều người quên thử nó cho các tài khoản khác, trong khi đó mới là chỗ nó có giá trị nhất. Người dùng hay dùng lại cùng một mật khẩu cho nhiều nơi.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Lệnh nào tìm tất cả file SUID trên hệ thống?', options: ['find / -perm -4000 -type f', 'ls -l /', 'grep SUID /etc/passwd'], answer: 0, explain: '-perm -4000 lọc các file có bit SUID; đây là bước đầu khi tìm đường leo thang.' },
+    { q: 'Quyền rwxr-x--- ứng với con số nào?', options: ['750', '740', '755'], answer: 0, explain: 'rwx=7, r-x=5, ---=0 → 750.' },
+    { q: 'Tìm thấy mật khẩu DB trong config.php, việc nên làm tiếp theo là gì?', options: ['Bỏ qua vì chỉ là mật khẩu DB', 'Thử mật khẩu đó cho các tài khoản khác (SSH, root...)', 'Xoá file đi'], answer: 1, explain: 'Người dùng hay dùng lại mật khẩu; một mật khẩu lộ có thể mở nhiều cửa.' },
+    { q: 'Vì sao `~/.bash_history` đáng đọc?', options: ['Vì nó chứa ảnh', 'Vì người dùng có thể đã gõ mật khẩu thẳng vào dòng lệnh', 'Vì nó là file hệ thống'], answer: 1, explain: 'Lệnh như `mysql -pMatKhau` lưu cả mật khẩu vào lịch sử.' },
+  ]}
+/>
+
+## Bài tập tự làm
+
+<LabBrief
+  ten="Thực hành Linux: Định hướng, kiểm tra quyền và săn file SUID nhạy cảm"
+  muctieu="Đăng nhập SSH vào máy Linux lab, phân tích quyền rwx, tìm kiếm tài khoản thật trong /etc/passwd và phát hiện binary SUID bất thường"
+  may="Metasploitable 2"
+  ip="10.10.14.20"
+  kali="10.10.14.7"
+  thoigian="40 phút"
+  xong="Xác định đúng 5 user có shell thật, tìm ra binary /usr/bin/nmap mang cờ SUID 4755, và trích xuất mật khẩu rõ trong config.inc.php"
+>
+
+1. Từ Kali, SSH vào máy lab: `ssh msfadmin@10.10.14.20` (mật khẩu `msfadmin`). Nếu gặp lỗi thuật toán cũ, dùng cờ `-o HostKeyAlgorithms=+ssh-rsa`.
+2. Kiểm tra danh tính hiện tại bằng `whoami` và `id`. Đếm tổng số user và lọc các user có shell thật (`/bin/bash`, `/bin/sh`) trong `/etc/passwd`.
+3. Tạo file thử nghiệm `~/thu.txt` và gán quyền `600` (chỉ chủ sở hữu đọc/ghi).
+4. Tìm toàn bộ các file thực thi mang bit SUID bằng lệnh `find / -perm -4000 -type f 2>/dev/null` và so sánh với hệ thống chuẩn.
+5. Dùng `grep` tìm kiếm chuỗi mật khẩu không mã hóa trong các file cấu hình web tại `/var/www`.
+
+<div slot="goiy1">
+  Để lọc các user có shell đăng nhập thật, hãy kết hợp <code>grep</code> với biểu thức chính quy tìm các dòng kết thúc bằng <code>sh$</code> trong <code>/etc/passwd</code>.
+</div>
+
+<div slot="goiy2">
+  Khi tìm kiếm chuỗi trong mã nguồn web, dùng cờ <code>grep -rIil "pass" /var/www</code>. Trong đó <code>-r</code> là đệ quy, <code>-I</code> bỏ qua file nhị phân, <code>-i</code> không phân biệt hoa thường, và <code>-l</code> chỉ in tên file.
+</div>
+
+<div slot="loigiai">
+  <p>Các lệnh then chốt để hoàn thành bài lab:</p>
+
+```bash
+# 1. Lọc user có shell thật
+grep -E 'sh$' /etc/passwd | cut -d: -f1
+
+# 2. Tìm binary SUID nguy hiểm
+find / -perm -4000 -type f 2>/dev/null
+
+# 3. Săn mật khẩu lộ trong web
+grep -rIil "password" /var/www 2>/dev/null
+```
+</div>
+
+<div slot="kiemtra">
+  <ul>
+    <li><strong>User có shell:</strong> Tìm thấy chính xác 5 tài khoản: <code>root</code>, <code>msfadmin</code>, <code>service</code>, <code>user</code>, <code>postgres</code>.</li>
+    <li><strong>SUID bất thường:</strong> Phát hiện <code>/usr/bin/nmap</code> (phiên bản cũ cho phép thoát shell root bằng <code>--interactive</code>).</li>
+    <li><strong>Mật khẩu lộ:</strong> Tìm thấy <code>db_password = 'p@ssw0rd'</code> trong file <code>/var/www/dvwa/config/config.inc.php</code>.</li>
+  </ul>
+</div>
+
+</LabBrief>
+
+Làm trên Metasploitable 2. Đăng nhập trên cửa sổ máy ảo, hoặc từ Kali bằng `ssh msfadmin@10.10.14.20` (mật khẩu `msfadmin`). Máy này rất cũ; nếu Kali báo không thoả thuận được thuật toán, thêm `-o HostKeyAlgorithms=+ssh-rsa` vào lệnh ssh.
+
+**Bài 1 — Định hướng.** Trả lời bằng lệnh: bạn là ai, thuộc nhóm nào, đang đứng ở đâu? Hệ thống có bao nhiêu tài khoản, và những tài khoản nào có shell đăng nhập thật (không phải `nologin` hay `false`)?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu, để đọc hiểu được cả khi chưa có lab)</summary>
+
+```text
+msfadmin@metasploitable:~$ whoami
+msfadmin
+msfadmin@metasploitable:~$ id
+uid=1000(msfadmin) gid=1000(msfadmin) groups=1000(msfadmin),4(adm),20(dialout),24(cdrom),25(floppy),29(audio),30(dip),44(video),46(plugdev),104(admin),107(lpadmin),111(admin),112(sambashare)
+msfadmin@metasploitable:~$ pwd
+/home/msfadmin
+msfadmin@metasploitable:~$ wc -l /etc/passwd
+41 /etc/passwd
+msfadmin@metasploitable:~$ grep -E 'sh$' /etc/passwd | cut -d: -f1
+root
+msfadmin
+service
+user
+postgres
+```
+
+`whoami` cho tên tài khoản (`msfadmin`), `id` cho cả uid/gid lẫn **danh sách nhóm** — để ý nhóm `admin` (xuất hiện hai lần trong danh sách, `104` và `111`, do cấu hình cũ của máy này): trên Ubuntu/Debian cũ, nhóm `admin` được cấp quyền `sudo`, nghĩa là tài khoản `msfadmin` gần như đã là root ngay từ đầu.
+
+`pwd` cho thư mục hiện tại (`/home/msfadmin`, thư mục cá nhân). `wc -l /etc/passwd` đếm **số dòng** (= số tài khoản, kể cả tài khoản hệ thống): 41. Lệnh `grep` lọc chỉ giữ dòng kết thúc bằng `sh` (shell thật như `/bin/bash`, `/bin/sh`), loại bỏ các tài khoản hệ thống kết thúc bằng `nologin`/`false`: chỉ còn 5 tài khoản có thể đăng nhập thật sự.
+
+</details>
+
+**Bài 2 — Tính quyền.** Không dùng máy, viết số tương ứng: `rw-r-----`, `rwxr-xr-x`, `rwsr-xr-x`. Rồi tạo file `~/thu.txt`, đặt quyền để chỉ bạn đọc và ghi được, kiểm tra bằng `ls -l`.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+Cách tính: mỗi nhóm ba ký tự `rwx` đổi thành một chữ số (r=4, w=2, x=1, cộng lại). `rw-r-----` = 640 (chủ 6, nhóm 4, khác 0); `rwxr-xr-x` = 755 (chủ 7, nhóm 5, khác 5); `rwsr-xr-x` = 4755 (chữ `s` ở vị trí `x` của chủ sở hữu là **bit SUID**, cộng thêm 4000 vào trước).
+
+```text
+msfadmin@metasploitable:~$ echo "bi mat" > ~/thu.txt
+msfadmin@metasploitable:~$ chmod 600 ~/thu.txt
+msfadmin@metasploitable:~$ ls -l ~/thu.txt
+-rw------- 1 msfadmin msfadmin 7 Nov  9 10:12 /home/msfadmin/thu.txt
+```
+
+`ls -l` in đúng `-rw-------`: chủ sở hữu (`msfadmin`) đọc và ghi được (`rw-`), nhóm và người khác không có quyền gì (`---`, `---`) — khớp với số `600` vừa đặt.
+
+</details>
+
+**Bài 3 — Ý nghĩa của `x` trên thư mục.** Quyền `x` trên file là "chạy chương trình", nhưng trên thư mục nó có nghĩa hoàn toàn khác: quyền "đi bước qua" thư mục đó để chạm tới file bên trong. Hãy chạy lần lượt các lệnh dưới đây và ghi lại kết quả của từng lệnh `sudo -u nobody ...`:
+
+<Lenh noi="Terminal trên máy Linux của lab" muc="Bài tập: thấy tận mắt `x` trên thư mục nghĩa là gì">
+
+<Terminal title="Thử nghiệm quyền r và x trên thư mục">
+
+```text
+mkdir /tmp/thumuc && echo "bi mat" > /tmp/thumuc/a.txt && chmod 644 /tmp/thumuc/a.txt
+chmod 744 /tmp/thumuc
+sudo -u nobody ls /tmp/thumuc
+sudo -u nobody cat /tmp/thumuc/a.txt
+chmod 711 /tmp/thumuc
+sudo -u nobody ls /tmp/thumuc
+sudo -u nobody cat /tmp/thumuc/a.txt
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `mkdir /tmp/thumuc`: tạo thư mục thử nghiệm. `&&` nối hai lệnh: lệnh sau chỉ chạy nếu lệnh trước thành công.
+- `echo "bi mat" > /tmp/thumuc/a.txt`: ghi chữ vào file. `chmod 644 /tmp/thumuc/a.txt`: đặt quyền rw-r--r-- (ai cũng đọc được).
+- `chmod 744 /tmp/thumuc`: chủ sở hữu toàn quyền; nhóm và người khác chỉ có `r` (đọc danh sách), không có `x` (đi vào).
+- `sudo -u nobody ls /tmp/thumuc` và `sudo -u nobody cat /tmp/thumuc/a.txt`: chạy lệnh dưới danh nghĩa tài khoản `nobody` (một người dùng không có quyền gì đặc biệt) để mô phỏng "người khác".
+
+</div>
+
+<div slot="doc">
+
+- Với mỗi lệnh `sudo -u nobody ...`, ghi lại: chạy được hay bị `Permission denied`.
+- Lệnh `chmod` im lặng là bình thường: Linux không báo gì khi thành công.
+- Đối chiếu kết quả với phần đáp án bên dưới.
+
+</div>
+
+</Lenh>
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+msfadmin@metasploitable:~$ sudo -u nobody ls /tmp/thumuc        # quyền 744
+a.txt
+msfadmin@metasploitable:~$ sudo -u nobody cat /tmp/thumuc/a.txt # quyền 744
+cat: /tmp/thumuc/a.txt: Permission denied
+
+msfadmin@metasploitable:~$ chmod 711 /tmp/thumuc
+msfadmin@metasploitable:~$ sudo -u nobody ls /tmp/thumuc        # quyền 711
+ls: cannot open directory '/tmp/thumuc': Permission denied
+msfadmin@metasploitable:~$ sudo -u nobody cat /tmp/thumuc/a.txt # quyền 711
+bi mat
+```
+
+Với `744` (người khác có `r`, không có `x`): `ls` liệt kê được tên file (vì `r` cho phép đọc danh sách thư mục), nhưng `cat` bị từ chối vì không được "đi vào" (`x`) thư mục để mở file bên trong.
+
+Với `711` (người khác có `x`, không có `r`): ngược lại — `ls` bị từ chối vì không đọc được danh sách, nhưng `cat` **đọc được nội dung** nếu biết đúng tên file, vì `x` đã đủ để "đi qua" thư mục tới đúng file đó. Đây là lý do "giấu tên file" không phải là bảo vệ thật sự: ai biết đúng tên vẫn đọc được.
+
+</details>
+
+**Bài 4 — Săn SUID.** Chạy `find / -perm -4000 -type f 2>/dev/null` trên Metasploitable, rồi chạy cùng lệnh trên Kali. So hai danh sách: chương trình nào có SUID trên Metasploitable mà bạn thấy lạ?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+msfadmin@metasploitable:~$ find / -perm -4000 -type f 2>/dev/null
+/usr/bin/passwd
+/usr/bin/sudo
+/usr/bin/su
+/usr/bin/mount
+/usr/bin/nmap          # <-- bất thường, không nằm trong danh sách Kali
+/usr/bin/newgrp
+/bin/ping
+```
+
+So với danh sách trên Kali (chỉ có `passwd`, `sudo`, `su`, `mount`, `ping`, `newgrp` — những chương trình **cần** quyền root để làm đúng việc của mình), Metasploitable có thêm `/usr/bin/nmap` mang bit SUID. `nmap` không cần SUID để hoạt động bình thường, nên đây là cấu hình sai cố ý: bản nmap cũ (trước 5.21, dùng kiểu tương tác `--interactive`) cho phép thoát ra một shell mang quyền root ngay từ bên trong chương trình.
+
+Ghi lại tên này. Bài 3.1 và danh mục GTFOBins sẽ cho bạn biết chi tiết vì sao nó nguy hiểm và cách lạm dụng.
+
+</details>
+
+**Bài 5 — Săn mật khẩu trong mã nguồn web.** Tìm các file cấu hình trong `/var/www` có chứa chuỗi `pass` (không phân biệt hoa thường), chỉ in tên file, không in nội dung. Mở một file và xem nó lưu thông tin gì.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+msfadmin@metasploitable:~$ grep -rIil "pass" /var/www 2>/dev/null
+/var/www/dvwa/config/config.inc.php
+/var/www/mutillidae/config.inc
+/var/www/phpMyAdmin/config.inc.php
+
+msfadmin@metasploitable:~$ cat /var/www/dvwa/config/config.inc.php
+...
+$_DVWA[ 'db_server' ]   = '127.0.0.1';
+$_DVWA[ 'db_database' ] = 'dvwa';
+$_DVWA[ 'db_user' ]     = 'root';
+$_DVWA[ 'db_password' ] = 'p@ssw0rd';
+...
+```
+
+`-l` (chữ thường, khác với `-i` không phân biệt hoa thường) chỉ in **tên file khớp**, không in nội dung — đúng yêu cầu bài. `-I` bỏ qua file nhị phân để đỡ nhiễu. Ba file cấu hình của ba ứng dụng web hiện ra; mở một file (`config.inc.php`) thấy ngay tên người dùng và **mật khẩu kết nối cơ sở dữ liệu ở dạng chữ rõ** (`db_password = 'p@ssw0rd'`).
+
+Câu hỏi tiếp theo của pentester luôn là: mật khẩu này có được dùng lại ở chỗ nào khác không — ví dụ thử `ssh msfadmin@... ` hay `su` với đúng mật khẩu này (bài 2.6, tái sử dụng mật khẩu).
+
+</details>
+
+**Bài 6 — Góc phòng thủ: dấu chân của chính bạn.** Sau khi đăng nhập SSH ở đầu bài, xem log xác thực: `sudo grep sshd /var/log/auth.log | tail -n 5`. Rồi đăng nhập sai mật khẩu một lần từ Kali và xem lại. Bạn thấy những thông tin gì?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+msfadmin@metasploitable:~$ sudo grep sshd /var/log/auth.log | tail -n 5
+Nov  9 10:00:02 metasploitable sshd[4021]: Accepted password for msfadmin from 10.10.14.7 port 51222 ssh2
+Nov  9 10:00:02 metasploitable sshd[4021]: pam_unix(sshd:session): session opened for user msfadmin
+...
+# sau khi gõ sai mật khẩu một lần từ Kali rồi đăng nhập lại đúng:
+Nov  9 10:14:10 metasploitable sshd[4099]: Failed password for msfadmin from 10.10.14.7 port 51301 ssh2
+Nov  9 10:14:15 metasploitable sshd[4102]: Accepted password for msfadmin from 10.10.14.7 port 51305 ssh2
+```
+
+Mỗi dòng ghi: **thời điểm**, **tên tài khoản** (`msfadmin`), **IP nguồn** (`10.10.14.7` — chính là Kali), và **kết quả** (`Accepted password` hay `Failed password`).
+
+Hàng trăm dòng `Failed password` từ một IP trong vài phút là dấu hiệu dò mật khẩu (bài 2.6); một dòng `Accepted` ngay sau một loạt `Failed` đó (như ví dụ trên) còn đáng lo hơn — gợi ý cuối cùng đã đoán trúng. Bài 8.2 và 8.3 biến chính các dòng log này thành cảnh báo tự động.
+
+</details>
+
+## Ghi nhớ
+
+- Vào máy Linux nào cũng bắt đầu bằng việc dạo quanh những chỗ hay lộ: `/etc/passwd`, `.ssh`, cấu hình web trong `/var/www`, và `.bash_history`.
+- Quyền file là gốc của phần lớn lỗi leo thang. Đọc được chữ `rwx` và con số 4-2-1 là đọc được "ai làm được gì với file này".
+- `find / -perm -4000` tìm chương trình chạy bằng quyền cao, `grep -ri password` tìm mật khẩu bỏ quên: hai lệnh bạn sẽ dùng mãi, và cũng là hai lệnh quản trị viên nên tự chạy trước.
+- Tìm được thông tin rồi, hãy nghĩ ngay "dùng nó ở đâu nữa" thay vì dừng.

@@ -1,0 +1,264 @@
+---
+title: "Pivoting và mạng nội bộ"
+code: "3.3"
+level: 3
+summary: "Máy đầu tiên bạn chiếm được hiếm khi là đích cuối. Nó thường chỉ là cánh cửa dẫn vào một vùng mạng sâu hơn mà bạn không chạm trực tiếp được. Bài này dạy bạn biến máy đó thành bàn đạp, qua SSH tunnel, proxychains và chisel."
+duration: "70 phút"
+updated: "2026-11-10"
+prereq: ["1.2", "2.7"]
+objectives:
+  - "Giải thích được vì sao có máy không chạm tới được trực tiếp từ ngoài, dù máy bạn đã chiếm lại thấy nó"
+  - "Dựng được SSH tunnel (local, dynamic) để với tới một máy hoặc cả một dải mạng nội bộ"
+  - "Dùng được proxychains để các công cụ bình thường (nmap, smbclient) đi qua máy bàn đạp"
+  - "Giải thích được vì sao phân đoạn mạng là biện pháp hạn chế pivoting hiệu quả nhất"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import PivotLab from '../../components/sim/PivotLab.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Trong một toà nhà, từ sảnh bạn không vào thẳng được kho. Nhưng nếu vào được phòng làm việc tầng 2, và phòng đó có cửa thông sang kho, thì phòng tầng 2 thành bàn đạp: bạn không cần phá cửa kho, chỉ cần đi qua phòng đã có sẵn lối thông. Pivoting là đúng ý này: máy đầu tiên chiếm được trở thành điểm trung chuyển tới các máy sâu hơn.
+
+Đây là lúc kiến thức phân đoạn mạng ở bài 1.1 quay lại, nhưng từ phía kẻ tấn công. Bạn đã học rằng chia mạng thành nhiều vùng là cách phòng thủ tốt; giờ bạn học cách đi xuyên qua các vùng đó khi đã có một chỗ đứng.
+
+## Kiến thức chính
+
+### Vì sao cần pivoting
+
+Mạng doanh nghiệp chia nhiều vùng. Vùng tiếp xúc Internet (máy chủ web) được ra ngoài; vùng nội bộ (máy nhân viên, cơ sở dữ liệu) không cho truy cập trực tiếp từ ngoài.
+
+Khi chiếm được máy chủ web ở vùng ngoài, bạn thường thấy nó lại nói chuyện được với máy nội bộ mà bạn không chạm trực tiếp, vì máy chủ web cần hỏi cơ sở dữ liệu để chạy. Pivoting dùng chính máy đó làm cầu nối.
+
+Quan trọng: pivoting **không tạo quyền mới**, chỉ mở rộng **tầm với**. Bạn vẫn phải khai thác và leo thang trên từng máy nội bộ.
+
+### Sơ đồ mạng nhiều vùng
+
+<ConceptMap
+  client:visible
+  title="Dùng máy bàn đạp để với tới vùng nội bộ"
+  width={660}
+  height={320}
+  zones={[
+    { label: 'Vùng tiếp xúc Internet', x: 20, y: 110, w: 300, h: 190 },
+    { label: 'Vùng nội bộ', x: 360, y: 110, w: 280, h: 190 },
+  ]}
+  nodes={[
+    { id: 'att', label: 'Máy của bạn', x: 270, y: 42, tone: 'accent', detail: 'Ở ngoài. Chỉ chạm trực tiếp vùng tiếp xúc, không chạm vùng nội bộ.' },
+    { id: 'web', label: 'Máy chủ web', sub: 'đã chiếm', x: 220, y: 230, tone: 'warn', detail: 'Chiếm từ Internet. Nằm vùng ngoài nhưng nói chuyện được với vùng nội bộ. Đây là bàn đạp.' },
+    { id: 'db', label: 'Cơ sở dữ liệu', x: 500, y: 165, detail: 'Chỉ nhận kết nối từ trong mạng nội bộ. Máy chủ web thì tới được.' },
+    { id: 'file', label: 'Máy chủ file', x: 500, y: 255, detail: 'Cũng ở vùng nội bộ. Qua bàn đạp, giờ nằm trong tầm với.' },
+  ]}
+  edges={[
+    { from: 'att', to: 'web', label: 'chiếm trực tiếp' },
+    { from: 'web', to: 'db', label: 'chuyển tiếp', dashed: true },
+    { from: 'web', to: 'file', label: 'chuyển tiếp', dashed: true },
+  ]}
+/>
+
+### Hình dung luồng bắc cầu qua bàn đạp
+
+Trước khi đi vào cú pháp chi tiết của từng công cụ, hãy thử bấm qua mô phỏng nhỏ dưới đây để thấy rõ vì sao từ máy Kali không quét thẳng vào mạng nội bộ được, và ba bước *xem bảng định tuyến → mở đường hầm → đẩy công cụ đi qua đường hầm* khớp với nhau ra sao:
+
+<PivotLab client:visible />
+
+## Thực hành: dựng tunnel
+
+Tunnel (đường hầm) là một kết nối được dựng sẵn để lưu lượng của bạn đi "chui" qua máy bàn đạp tới nơi mà bình thường bạn không với tới. Có ba cách dựng, từ hẹp tới rộng, và chọn cách nào tuỳ bạn cần chạm một cổng duy nhất hay cả một dải mạng.
+
+Giả sử bạn đã có SSH vào máy bàn đạp `10.10.14.30` (chiếm được từ các bài Cấp 2), và từ nó thấy cơ sở dữ liệu nội bộ `172.16.0.10:3306` mà máy bạn không chạm được.
+
+### 1. Local port forward (`-L`): kéo một cổng nội bộ về máy mình
+
+Đây là cách hẹp và an toàn nhất: bạn chỉ mở đúng một "ống" cho đúng một đích, khi bạn đã biết rõ mình cần gì.
+
+<Lenh noi="Terminal trên máy Kali" muc="Mở một đường ống riêng cho đúng một cổng, để chạm tới cơ sở dữ liệu nội bộ qua máy bàn đạp" quyen="Cần có tài khoản SSH (jdoe) trên máy bàn đạp 10.10.14.30">
+
+<Terminal title="SSH -L chuyển tiếp một cổng cụ thể">
+
+```text
+kali@lab:~$ ssh -L 3306:172.16.0.10:3306 jdoe@10.10.14.30
+# Giờ trên MÁY BẠN, cổng 3306 trỏ thẳng tới DB nội bộ:
+kali@lab:~$ mysql -h 127.0.0.1 -P 3306 -u root -p
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ssh -L 3306:172.16.0.10:3306`: mở cổng **trên máy bạn** (`3306` đầu tiên), mọi kết nối tới đó được SSH tự chuyển qua máy bàn đạp rồi tới đích `172.16.0.10:3306` (cú pháp: `-L cổng-của-tôi:đích:cổng-đích`).
+- `jdoe@10.10.14.30`: tài khoản và địa chỉ máy bàn đạp dùng để mở đường ống SSH.
+- `mysql -h 127.0.0.1 -P 3306`: lệnh kết nối MySQL bình thường, nhưng trỏ vào `127.0.0.1` (chính máy bạn) — vì cổng đó đã được "nối dây" sang DB nội bộ.
+
+</div>
+
+<div slot="doc">
+
+- Lệnh `ssh -L` không in gì đặc biệt, chỉ mở một phiên SSH bình thường và **giữ đường ống chạy** trong lúc phiên đó còn mở. Đóng phiên SSH là mất đường ống.
+- Lệnh `mysql` ở cửa sổ khác (hoặc sau khi đẩy phiên SSH ra nền) nếu nối được và hỏi mật khẩu, nghĩa là đường ống hoạt động: gói tin của bạn đã đi qua `10.10.14.30` để tới `172.16.0.10`.
+- Lỗi `Connection refused` phía mysql: kiểm tra lại cổng cục bộ `3306` có bị chương trình khác chiếm không (đổi thành `13306:172.16.0.10:3306` nếu cần).
+
+</div>
+
+</Lenh>
+
+### 2. Dynamic port forward (`-D`): biến bàn đạp thành một proxy SOCKS
+
+Local forward chỉ cho một đích cố định. Nhưng thường bạn chưa biết hết mạng nội bộ có gì, và muốn quét cả dải `172.16.0.0/24` qua bàn đạp. Dynamic forward mở một **proxy SOCKS** (một "cổng trung chuyển" cho phép gửi lưu lượng tới bất kỳ máy nào mà bàn đạp thấy được, không chỉ một cổng cố định), để với tới cả mạng nội bộ cùng lúc:
+
+<Lenh noi="Terminal trên máy Kali" muc="Biến máy bàn đạp thành một cổng vào cho cả dải mạng nội bộ, để chạy bất kỳ công cụ nào qua đó" quyen="Cần tài khoản SSH trên máy bàn đạp; proxychains đã cài sẵn trên Kali">
+
+<Terminal title="SSH -D tạo proxy SOCKS + proxychains">
+
+```text
+kali@lab:~$ ssh -D 9050 jdoe@10.10.14.30
+# Trong cấu hình proxychains đã có: socks5 127.0.0.1 9050
+kali@lab:~$ proxychains nmap -sT -Pn 172.16.0.0/24
+kali@lab:~$ proxychains smbclient -L //172.16.0.20
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ssh -D 9050 jdoe@10.10.14.30`: `-D` (dynamic) mở một **proxy SOCKS** trên cổng `9050` của máy bạn. Khác `-L` ở chỗ nó không giới hạn một đích cụ thể — mọi địa chỉ nội bộ mà bàn đạp chạm tới đều đi qua được.
+- `proxychains nmap ...` và `proxychains smbclient ...`: đặt `proxychains` ở đầu để ép mọi kết nối mạng của lệnh đi qua proxy khai trong file cấu hình proxychains (dòng `socks5 127.0.0.1 9050`, trùng với cổng vừa mở).
+- `-sT -Pn` trong nmap: `-sT` dùng kiểu quét TCP connect (bắt buộc khi qua proxychains, vì nó không làm được kiểu quét SYN thô); `-Pn` bỏ qua bước kiểm tra máy sống bằng ping (ping cũng không đi qua được SOCKS).
+
+</div>
+
+<div slot="doc">
+
+- `proxychains` in thêm một dòng trạng thái cho mỗi kết nối, kiểu `[proxychains] ... OK` khi nối được qua proxy, hoặc báo lỗi khi bị chặn.
+- Kết quả nmap/smbclient hiện ra như quét bình thường, chỉ chậm hơn vì mọi gói phải đi qua đường ống SSH.
+- Không thấy kết quả gì hoặc toàn "timeout": kiểm tra phiên `ssh -D` ở cửa sổ khác còn sống không, và máy bàn đạp có thật sự chạm tới dải `172.16.0.0/24` không (`ip route` trên bàn đạp).
+
+</div>
+
+</Lenh>
+
+### 3. Reverse port forward (`-R`): khi bàn đạp không chạm thẳng về máy bạn
+
+Hai cách trên giả định bạn chủ động kết nối tới bàn đạp. Nhưng đôi khi tường lửa chặn đúng chiều đó, nên thay vì kéo về, bạn để máy bàn đạp *đẩy ngược* một cổng về máy mình.
+
+Ví dụ `ssh -R 8000:127.0.0.1:80 user@may-ban` mở cổng 8000 trên máy kia, trỏ về một dịch vụ đang chạy trên máy bạn, hay dùng để máy nội bộ tải một file hoặc gọi ngược về công cụ của bạn. Đây cũng chính là ý tưởng sau `--reverse` của chisel bên dưới.
+
+### 4. Khi không có SSH: dùng chisel
+
+Ba cách trên đều cần một tài khoản SSH trên bàn đạp. Nhưng nhiều khi thứ bạn có chỉ là một web shell (bài 2.8) hoặc một shell từ khai thác, không hề có SSH. Chisel dựng được cùng loại tunnel đó, chỉ qua HTTP:
+
+<Lenh noi="Lệnh đầu trên máy Kali (server); lệnh sau trên máy bàn đạp Windows (client), qua shell đã có sẵn" muc="Dựng một đường ống SOCKS qua HTTP, khi máy bàn đạp không có SSH, chỉ có một shell từ web shell hoặc lệnh tuỳ ý">
+
+<Terminal title="chisel khi không có SSH">
+
+```text
+# Trên máy bạn (server):
+kali@lab:~$ ./chisel server -p 8000 --reverse
+# Trên máy bàn đạp (client), trỏ ngược về bạn:
+C:\> chisel.exe client 10.10.14.7:8000 R:socks
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `./chisel server -p 8000 --reverse`: chạy trên Kali, mở chisel ở vai **server**, lắng nghe ở cổng `8000`. `--reverse` cho phép phía client (máy bàn đạp) được yêu cầu mở tunnel ngược, phù hợp khi tường lửa bàn đạp chặn chiều vào nhưng cho chiều ra.
+- `chisel.exe client 10.10.14.7:8000 R:socks`: chạy trên máy bàn đạp, vai **client**, kết nối ra tới Kali (`10.10.14.7:8000`). `R:socks` xin một proxy SOCKS ngược — tương tự tác dụng của `ssh -D` nhưng không cần SSH.
+
+</div>
+
+<div slot="doc">
+
+- Cả hai lệnh đứng chờ, không trả lại dấu nhắc khi đang chạy tốt. Phía server in dòng log khi client kết nối vào.
+- Sau khi cả hai lên, dùng `proxychains` trên Kali trỏ vào cổng SOCKS mà chisel vừa mở (cấu hình trong proxychains.conf), giống bước ở ví dụ `-D` phía trên.
+- Lỗi kết nối: kiểm tra địa chỉ `10.10.14.7` đúng là IP Kali trong mạng mà máy bàn đạp chạm tới, và cổng `8000` không bị tường lửa chặn chiều ra.
+
+</div>
+
+</Lenh>
+
+<Callout type="note">
+Bấm vào máy chủ web trong sơ đồ: nó vừa thuộc vùng ngoài vừa chạm được vùng trong. Chính vị trí "hai chân hai vùng" khiến nó thành bàn đạp giá trị. Luôn liệt kê "máy này còn nói chuyện được với ai" ngay sau khi chiếm máy đầu tiên (xem `ip route`, `arp -a`, bài 1.1).
+</Callout>
+
+### Vài công cụ thay thế khi thiếu công cụ quen
+
+Bốn cách trên đủ cho hầu hết tình huống, nhưng phòng thi hay cho bạn một máy *thiếu đúng công cụ bạn định dùng*. Nhớ thêm vài lựa chọn thay thế để không bế tắc:
+
+| Tình huống | Công cụ | Ý chính |
+|---|---|---|
+| Muốn cả mạng nội bộ "hiện ra" tự nhiên, khỏi đặt `proxychains` trước mỗi lệnh | **sshuttle** | `sshuttle -r jdoe@10.10.14.30 172.16.0.0/24` — dựng một "VPN nghèo" qua SSH; mọi lệnh chạy thẳng tới dải đó. Cần Python trên bàn đạp. |
+| Bàn đạp là **Windows**, không có SSH client quen | **plink** | Bản dòng lệnh của PuTTY: `plink -R 8000:127.0.0.1:80 user@kali` tạo reverse forward y như `ssh -R`. |
+| Đã có SYSTEM trên bàn đạp Windows, muốn mở cổng ngay bằng công cụ có sẵn | **netsh** | `netsh interface portproxy add v4tov4 listenport=3389 connectaddress=172.16.0.10` — Windows tự chuyển tiếp, không cần tải gì lên. |
+| Chỉ cần nối "ống" thô giữa hai cổng, hoặc chuyển tiếp một cổng trên Linux không có SSH | **socat** | `socat TCP-LISTEN:8080,fork TCP:172.16.0.10:80` — chuyển tiếp cổng tối giản, hay dùng làm relay nhiều tầng. |
+
+Tất cả chỉ đổi *công cụ*, không đổi *ý tưởng*: vẫn là local forward, dynamic/SOCKS, hay reverse forward như bốn cách gốc. Chọn theo thứ bàn đạp đang có sẵn.
+
+<LabBrief
+  ten="Tự dựng một mạng hai vùng và bắc cầu qua nó"
+  muctieu="Thêm một card mạng Internal thứ hai cho Metasploitable 2 để nó trở thành bàn đạp, rồi đặt một máy thứ ba chỉ nằm trong vùng trong, và chạm tới máy đó từ Kali mà Kali chưa bao giờ nối thẳng vào vùng trong"
+  may="Metasploitable 2 (bàn đạp) + một máy thứ ba bất kỳ (mục tiêu vùng trong, ví dụ một bản Kali thứ hai hoặc máy ảo trống)"
+  thoigian="40 phút"
+  xong="Từ Kali, bạn gọi được một dịch vụ (ví dụ SSH hoặc một máy chủ HTTP bạn tự bật) đang chạy trên máy thứ ba, dù Kali không có đường mạng trực tiếp tới nó"
+>
+
+1. Cho Metasploitable 2 thêm một card mạng thứ hai, đặt kiểu Internal Network (một tên mạng mới, khác với mạng Kali–Metasploitable hiện có).
+2. Dựng một máy thứ ba, chỉ gắn đúng card mạng Internal đó — không có card nào khác, nên Kali không với tới được.
+3. Trên máy thứ ba, bật một dịch vụ đơn giản để thử (SSH có sẵn, hoặc `python3 -m http.server`).
+4. Từ Kali, dùng local port forward hoặc dynamic forward qua Metasploitable 2 để chạm tới dịch vụ đó.
+5. Xác nhận bằng cách mở dịch vụ qua cổng đã forward, ghi lại đúng câu lệnh forward đã dùng và vì sao chọn forward đó chứ không phải loại khác.
+
+<div slot="goiy1">
+Mạng "hai vùng, một máy đứng giữa" chính là sơ đồ ở đầu bài: Metasploitable 2 đóng vai máy chủ web có "hai chân hai vùng", máy thứ ba đóng vai máy chủ cơ sở dữ liệu chỉ nằm trong vùng trong.
+</div>
+
+<div slot="goiy2">
+Nếu chỉ cần một dịch vụ, dùng local forward (`ssh -L`). Nếu muốn quét hay chạm nhiều dịch vụ trên máy thứ ba, dùng dynamic forward (`-D`) với `proxychains`, như hai mục đầu của phần Thực hành.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: lệnh `curl 127.0.0.1:<cổng-forward>` (hoặc `ssh -p <cổng-forward> 127.0.0.1`) từ Kali trả về đúng nội dung của máy thứ ba.
+- Không kết nối được: kiểm tra máy thứ ba có thật sự chỉ gắn Internal Network (không vô tình còn NAT) bằng cách thử ping ra Internet từ nó — phải thất bại.
+- SSH tunnel đóng ngay sau khi mở: thêm `-N` để giữ phiên không chạy lệnh nào, chỉ giữ đường forward.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người thiết kế mạng, hãy coi đây là lý do mạnh nhất để làm phân đoạn mạng nghiêm túc: nếu máy chủ web chỉ được mở đúng các kết nối nó thật sự cần (chứ không nói chuyện tự do với cả vùng nội bộ), giá trị của nó khi bị chiếm nhỏ đi nhiều, vì kẻ tấn công chiếm được nó cũng không có gì để pivoting qua.
+
+Thêm vào đó: giám sát lưu lượng bất thường giữa các vùng, phát hiện tunnel (một kết nối SSH hay HTTP kéo dài bất thường lâu là một dấu hiệu), và áp dụng tin cậy tối thiểu, tức không mặc định tin một máy chỉ vì nó nằm trong mạng nội bộ.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ pivoting cho thêm quyền.** Nó chỉ mở rộng tầm với tới những máy bạn chưa chạm được; bạn vẫn phải khai thác và leo thang trên từng máy nội bộ như bình thường.
+- **Quên liệt kê "máy này nối được với ai" sau khi chiếm máy đầu.** Nhiều người dừng lại ở việc có được một shell và không nghĩ tới việc hỏi `ip route`, `arp -a` xem máy đó còn thấy ai, nên bỏ lỡ cả một vùng mạng ngay trước mắt.
+- **Không vẽ lại sơ đồ mạng khi đi sâu.** Qua hai, ba lớp bàn đạp, người mới dễ lạc trong các dải địa chỉ chồng chéo. Ghi lại từng vùng, từng bàn đạp vào sổ tay (bài 0.3) như khi làm với một máy đơn.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Pivoting về bản chất làm gì?', options: ['Tạo quyền root mới', 'Dùng máy đã chiếm làm cầu nối tới máy khác', 'Quét cổng nhanh hơn'], answer: 1, explain: 'Nó mở rộng tầm với qua máy trung gian, không tạo thêm quyền.' },
+    { q: '`ssh -D 9050` tạo ra gì?', options: ['Một local port forward', 'Một proxy SOCKS để proxychains đẩy công cụ qua bàn đạp', 'Một tài khoản mới'], answer: 1, explain: '-D mở proxy SOCKS động; kết hợp proxychains để mọi công cụ đi qua bàn đạp.' },
+    { q: 'Khi chỉ có web shell, không có SSH, công cụ nào hay dùng để dựng tunnel?', options: ['chisel', 'nmap', 'hydra'], answer: 0, explain: 'chisel dựng tunnel qua HTTP, hữu ích khi không có SSH.' },
+    { q: 'Biện pháp phòng thủ chính chống pivoting?', options: ['Đổi mật khẩu thường xuyên', 'Phân đoạn mạng, chỉ cho đúng kết nối cần thiết', 'Tắt máy chủ web'], answer: 1, explain: 'Hạn chế những gì mỗi máy được kết nối tới làm giảm giá trị một máy bị chiếm.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Pivoting dùng máy đã chiếm làm bàn đạp để mở rộng tầm với, không tạo thêm quyền. Vẫn phải khai thác từng máy nội bộ như bình thường.
+- Chọn công cụ theo độ rộng cần: `ssh -L` kéo đúng một cổng về, `ssh -D` cộng proxychains mở cả dải mạng, chisel dùng khi không có SSH mà chỉ có một shell.
+- Sau khi chiếm máy đầu, luôn hỏi ngay "máy này còn nói chuyện được với ai", và ghi lại sơ đồ mạng khi đi sâu qua nhiều lớp.
+- Phân đoạn mạng và tin cậy tối thiểu là phòng thủ cốt lõi: hạn chế một máy bị chiếm thì pivoting được tới đâu.

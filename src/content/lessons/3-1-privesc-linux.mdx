@@ -1,0 +1,282 @@
+---
+title: "Leo thang đặc quyền trên Linux"
+code: "3.1"
+level: 3
+summary: "Bạn mới chỉ có quyền của một tài khoản thường trên máy Linux. Bài này đi qua bốn con đường hay gặp nhất lên tới root: sudo cấu hình rộng, file SUID, cron job sửa được, và capability cấp dư, tất cả tra được qua một danh mục công khai gọi là GTFOBins."
+duration: "90 phút"
+updated: "2026-11-10"
+prereq: ["1.4", "2.7"]
+objectives:
+  - "Liệt kê có hệ thống một máy Linux để tìm đường leo thang, thay vì đoán mò"
+  - "Nhận ra và lạm dụng được cấu hình sudo hay SUID quá rộng qua danh mục GTFOBins"
+  - "Nhận diện cron job và capabilities bị cấu hình sai, và biết vì sao chúng nguy hiểm"
+  - "Đề xuất được cách phòng thủ tương ứng cho từng dạng leo thang"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import EnumExplorer from '../../components/sim/EnumExplorer.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import PrivescTriage from '../../components/sim/PrivescTriage.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Bạn vào được sảnh một toà nhà bằng thẻ khách. Thẻ này không mở được phòng máy chủ, nơi cất mọi thứ giá trị. Leo thang đặc quyền (privilege escalation) là tìm cách biến thẻ khách thành thẻ quản lý: không phá cửa, mà lợi dụng những sơ hở trong cách toà nhà được vận hành, như một cánh cửa quên khoá hay một quy trình bảo trì lỏng lẻo.
+
+Đây chính xác là tình huống bạn vừa rơi vào sau các bài ở Cấp 2. Bạn khai thác được một lỗ hổng web (bài 2.3, 2.8) và nhận một shell, nhưng shell đó mang quyền của tài khoản web server như `www-data`, một tài khoản gần như không làm được gì ngoài phục vụ trang web.
+
+Leo thang là bước nối giữa "vào được" và "kiểm soát được", và trong phòng thi OSCP, máy nào bạn cũng phải đi qua bước này mới tính là đã "root" được máy đó.
+
+## Kiến thức chính
+
+### Vì sao cần leo thang
+
+Để đọc dữ liệu nhạy cảm hay lan sang máy khác trong mạng, bạn cần quyền root, quyền cao nhất trên Linux. Nhưng root không tự nhiên mà có: nó nằm ở cuối một trong vài con đường quen thuộc, và việc của bạn là nhận ra con đường nào đang mở.
+
+<ConceptMap
+  client:visible
+  title="Bản đồ 5 hướng leo thang đặc quyền trên Linux"
+  width={720}
+  height={370}
+  nodes={[
+    { id: 'start', label: 'Tài khoản thường', sub: 'www-data / jdoe', x: 360, y: 40, tone: 'accent', detail: 'Điểm khởi đầu sau khi khai thác được một dịch vụ web hoặc dịch vụ từ xa. Từ đây liệt kê lần lượt cả năm hướng bên dưới (tay hoặc bằng linPEAS) rồi mới chọn đường.' },
+    { id: 'sudo', label: '1. Sudo lỏng lẻo', sub: 'sudo -l', x: 76, y: 185, w: 120, tone: 'warn', detail: 'Tài khoản được phép chạy một chương trình cụ thể với quyền root, nhiều khi không cần mật khẩu (NOPASSWD). Tra GTFOBins để tìm cách thoát ra shell từ chương trình đó.' },
+    { id: 'suid', label: '2. Binary SUID', sub: 'find -perm -4000', x: 218, y: 185, w: 120, tone: 'warn', detail: 'Chương trình luôn chạy bằng quyền chủ sở hữu (root). Nếu đó là công cụ có đường thoát shell như find, vim, env hay nmap bản cũ thì chiếm được root ngay.' },
+    { id: 'cron', label: '3. Cron & PATH', sub: '/etc/crontab, pspy', x: 360, y: 185, w: 120, tone: 'warn', detail: 'Script chạy định kỳ bằng quyền root nhưng tài khoản thường ghi được vào nó, hoặc script gọi lệnh không kèm đường dẫn tuyệt đối nên bị chiếm qua biến PATH.' },
+    { id: 'cap', label: '4. Capabilities', sub: 'getcap -r /', x: 506, y: 185, w: 120, tone: 'warn', detail: 'Quyền hạt nhân chia nhỏ, dùng thay cho SUID. Cờ cap_setuid=ep gắn trên python hay perl cho phép chương trình tự đổi UID thành 0.' },
+    { id: 'kernel', label: '5. Nhóm & kernel', sub: 'id, uname -a', x: 644, y: 185, w: 120, tone: 'warn', detail: 'Tài khoản nằm trong nhóm docker hoặc lxd tương đương root (mount ổ gốc vào container). Nhân Linux cũ có lỗ hổng leo quyền công khai (Dirty Pipe, Dirty COW), nhưng thử sau cùng vì dễ làm treo máy.' },
+    { id: 'root', label: 'Chiếm root (UID 0)', sub: 'Toàn quyền máy', x: 360, y: 330, tone: 'bad', detail: 'Đích đến: toàn quyền trên máy Linux, đọc được /root/proof.txt và mọi bí mật trên máy, làm bàn đạp sang máy khác.' },
+  ]}
+  edges={[
+    { from: 'start', to: 'sudo' },
+    { from: 'start', to: 'suid' },
+    { from: 'start', to: 'cron' },
+    { from: 'start', to: 'cap' },
+    { from: 'start', to: 'kernel' },
+    { from: 'sudo', to: 'root' },
+    { from: 'suid', to: 'root' },
+    { from: 'cron', to: 'root' },
+    { from: 'cap', to: 'root' },
+    { from: 'kernel', to: 'root' },
+  ]}
+/>
+
+### Luôn liệt kê trước khi thử
+
+Phản xạ sai của người mới là thử ngay thứ đầu tiên nghĩ ra. Phản xạ đúng là liệt kê có hệ thống trước (tay hoặc bằng **linPEAS**, công cụ tự động hoá các lệnh dưới đây), rồi mới chọn đường, đúng tinh thần "liệt kê trước khi thử" đã học ở bài 0.3 và 2.2. Bấm từng lệnh để xem output mẫu và điều đáng chú ý, như cách một người làm nghề sẽ đọc qua chúng lần lượt trên một máy thật:
+
+<EnumExplorer
+  client:visible
+  title="Liệt kê leo thang trên một máy Linux"
+  intro="Mẫu từ một máy lab. Mỗi lệnh là một hướng kiểm tra; dòng tô vàng là manh mối."
+  items={[
+    {
+      cmd: 'id; sudo -l',
+      explain: [
+        'id: in uid (mã người dùng), gid (mã nhóm) và các nhóm của tài khoản hiện tại.',
+        'sudo -l: liệt kê những lệnh tài khoản này được phép chạy bằng sudo (-l = list). Có thể hỏi mật khẩu của chính bạn.',
+      ],
+      output: [
+        { text: 'uid=1000(jdoe) gid=1000(jdoe) groups=1000(jdoe)' },
+        { text: 'User jdoe may run the following commands on lab:' },
+        { text: '    (root) NOPASSWD: /usr/bin/find', hit: true },
+      ],
+      finding: 'jdoe được chạy find với quyền root không cần mật khẩu. find có thể chạy lệnh con, nên đây là đường thẳng tới root (xem GTFOBins bên dưới). Cách đọc dòng sudo -l: "(root)" là chạy NHƯ AI, "NOPASSWD" là không hỏi mật khẩu, phần cuối là lệnh được phép.',
+      tone: 'bad',
+    },
+    {
+      cmd: 'find / -perm -4000 -type f 2>/dev/null',
+      explain: [
+        'find /: tìm từ gốc hệ thống. -perm -4000: chỉ lấy file có bit SUID (4000 là bit đó dưới dạng số). -type f: chỉ file thường.',
+        '2>/dev/null: vứt các thông báo lỗi "Permission denied" đi cho đỡ rối.',
+      ],
+      output: [
+        { text: '/usr/bin/passwd' },
+        { text: '/usr/bin/sudo' },
+        { text: '/usr/bin/env', hit: true },
+      ],
+      finding: 'passwd và sudo có SUID là bình thường, vì chúng cần quyền root để làm đúng việc. env có bit SUID là bất thường: nó không cần quyền root, và có kỹ thuật lạm dụng đã biết trên GTFOBins.',
+      tone: 'warn',
+    },
+    {
+      cmd: 'cat /etc/crontab',
+      explain: [
+        'cat: in nội dung file ra màn hình. /etc/crontab: file liệt kê các việc chạy định kỳ (cron job) của toàn hệ thống.',
+      ],
+      output: [
+        { text: 'SHELL=/bin/sh' },
+        { text: '* * * * * root /opt/scripts/backup.sh', hit: true },
+        { text: '' },
+        { text: '# ls -l /opt/scripts/backup.sh' },
+        { text: '-rwxrwxrwx 1 root root 120 backup.sh', hit: true },
+      ],
+      finding: 'Dòng "* * * * *" là năm dấu * nghĩa là "mọi phút" (phút, giờ, ngày, tháng, thứ). "root" là chạy bằng quyền ai; phần cuối là lệnh. Script chạy mỗi phút với quyền root, nhưng quyền file rwxrwxrwx (dòng dưới, lấy từ ls -l) nghĩa là ai cũng ghi được. Ghi lệnh của mình vào đó, một phút sau nó chạy với quyền root.',
+      tone: 'bad',
+    },
+    {
+      cmd: 'getcap -r / 2>/dev/null',
+      explain: [
+        'getcap: liệt kê capability (quyền hạn chi tiết hơn SUID) gắn trên từng file.',
+        '-r /: tìm đệ quy (-r) từ gốc hệ thống (/).',
+      ],
+      output: [
+        { text: '/usr/bin/python3.8 = cap_setuid+ep', hit: true },
+      ],
+      finding: 'python3 có capability cap_setuid: cho phép chương trình tự đổi sang uid 0 (root) mà không cần là SUID. Một dòng Python là leo thang xong.',
+      tone: 'bad',
+    },
+  ]}
+/>
+
+### Sàng lọc manh mối trước khi thử
+
+Khi chạy `linPEAS` hoặc tự gõ lệnh liệt kê trên một máy thật, màn hình sẽ trôi qua hàng trăm dòng chữ, trong đó có rất nhiều dòng được tô màu đỏ rực nhưng thực chất lại là ngõ cụt vì thiếu quyền ghi file hoặc chỉ là cấu hình bình thường của hệ thống. Hãy thử chọn ra những manh mối thật sự có cơ sở trong bảng dưới đây trước khi bấm đối chiếu:
+
+<PrivescTriage client:visible platform="linux" />
+
+### GTFOBins: từ điển lạm dụng lệnh
+
+Tìm thấy một manh mối (như dòng `sudo` cho chạy `find` không mật khẩu ở trên) chỉ là nửa đầu việc. Nửa sau là biết cách lợi dụng đúng lệnh đó, và bạn không cần tự nghĩ ra mẹo: **GTFOBins** là một danh mục công khai ghi lại, với mỗi lệnh Unix quen thuộc, nếu nó đang chạy với quyền cao (qua sudo hoặc SUID) thì lợi dụng để mở ra một shell mang quyền đó bằng cách nào.
+
+Nhiều lệnh tưởng vô hại như `find`, `vim`, `less` đều có trong danh mục này, vì chúng có cách chạy lệnh con mà người viết ra chúng không ngờ tới. Ví dụ với `find` ở trên:
+
+<Lenh noi="Terminal, đã đăng nhập là jdoe (tài khoản thường có quyền sudo find)" muc="Lợi dụng việc sudo cho phép chạy find với quyền root để mở một shell cũng mang quyền root" quyen="Cần sudo -l đã xác nhận jdoe chạy được find không mật khẩu">
+
+<Terminal title="Lạm dụng sudo find để lấy shell root (kỹ thuật GTFOBins)">
+
+```text
+jdoe@lab:~$ sudo find . -exec /bin/sh \; -quit
+# id
+uid=0(root) gid=0(root) groups=0(root)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sudo find .`: chạy `find` với quyền root (qua sudo), tìm từ thư mục hiện tại (`.`).
+- `-exec /bin/sh \; -quit`: với mỗi file tìm thấy, chạy lệnh `/bin/sh` (mở một shell con). Dấu `\;` kết thúc lệnh `-exec`; `-quit` dừng ngay sau lần đầu, không cần tìm hết.
+- Vì `find` đang mang quyền root, shell `/bin/sh` mà nó mở ra **cũng mang quyền root**.
+
+</div>
+
+<div slot="doc">
+
+- Dấu nhắc đổi từ `$` (người dùng thường) sang `#` (quyền root) ngay khi shell mới mở ra — đây là dấu hiệu đầu tiên cho biết đã lên được root.
+- `id` xác nhận chắc chắn: `uid=0(root)` nghĩa là bạn đang là root.
+- Đây là một ví dụ của GTFOBins; mỗi lệnh Unix có cách lạm dụng khác nhau, tra đúng tên lệnh trên trang GTFOBins.
+
+</div>
+
+</Lenh>
+
+### Chọn hướng từ một manh mối
+
+<DecisionTree
+  client:visible
+  title="Tìm thấy một manh mối, nên nghĩ theo hướng nào"
+  start="type"
+  nodes={{
+    type: { q: 'Manh mối thuộc dạng nào?', options: [
+      { label: 'sudo -l cho chạy một lệnh với quyền root', next: 'sudo' },
+      { label: 'Một file SUID lạ', next: 'suid' },
+      { label: 'Một script cron sửa được', next: 'cron' },
+    ] },
+    sudo: { q: 'Lệnh đó có cách chạy lệnh con hoặc mở shell không?', options: [
+      { label: 'Có / tra GTFOBins thấy có', next: 'sudoYes' }, { label: 'Chưa rõ', next: 'sudoCheck' } ] },
+    sudoYes: { result: 'Nhiều khả năng leo thang được. Dùng đúng kỹ thuật GTFOBins cho lệnh đó: shell con sẽ mang quyền root. Kiểm chứng trong lab.', tone: 'good' },
+    sudoCheck: { result: 'Tra tên lệnh trên GTFOBins ở mục Sudo. Rất nhiều lệnh tưởng vô hại lại có đường thoát shell đã ghi nhận.', tone: 'warn' },
+    suid: { result: 'Xác định chính xác chương trình, tra mục SUID trên GTFOBins. Không phải SUID nào cũng khai thác được, nhưng nhiều cái có.', tone: 'warn' },
+    cron: { result: 'Ghi một lệnh reverse shell hoặc copy /bin/bash thành SUID vào script. Lần chạy tới (quyền root) sẽ thực thi. Nhớ hoàn tác sau khi làm xong.', tone: 'good' },
+  }}
+/>
+
+### Vài đường ít gặp hơn nhưng hay có trong lab
+
+Bốn đường trên phủ phần lớn máy, nhưng trong đề thi và lab bạn sẽ gặp thêm những cấu hình sai sau. Mỗi cái đều bắt đầu từ cùng một câu hỏi: **có thứ gì chạy bằng quyền root mà mình can thiệp được không?**
+
+| Dấu hiệu khi liệt kê | Cơ chế lạm dụng |
+|---|---|
+| `sudo -l` cho chạy một script, mà script đó gọi lệnh bằng tên trần (ví dụ `tar` chứ không phải `/bin/tar`) | **PATH hijack:** tạo một file tên `tar` chứa lệnh của mình trong một thư mục mình ghi được, đặt thư mục đó lên đầu `$PATH`, rồi chạy script. Script quyền root gọi "tar" sẽ gọi nhầm file của bạn. |
+| Một cron/script chạy root dùng ký tự đại diện, ví dụ `tar czf backup.tar.gz *` trong thư mục bạn ghi được | **Wildcard injection:** tạo các file có tên đúng bằng *tham số dòng lệnh* của `tar` (như `--checkpoint-action=exec=sh runme.sh`). Khi `*` nở ra, shell đưa các tên file đó vào thành tham số, và `tar` chạy lệnh của bạn với quyền root. |
+| `showmount -e <IP>` thấy một NFS share xuất ra kèm `no_root_squash` | **NFS no_root_squash:** mount share đó từ máy bạn (nơi bạn *là* root), đặt vào đó một bản `/bin/bash` gắn bit SUID. Về máy nạn nhân chạy bản bash SUID đó sẽ cho shell root, vì file do root tạo trên share được giữ nguyên quyền. |
+| `/etc/passwd` ghi được (hiếm, nhưng có) | Thêm một dòng user mới với mật khẩu băm do bạn tự tạo (`openssl passwd`) và `uid=0`. `su` sang user đó là thành root. |
+| `id` cho thấy bạn ở nhóm `docker` hoặc `lxd` | Nhóm docker tương đương quyền root: chạy một container mount `/` của máy thật vào rồi `chroot`. Đây là thiết kế của docker, không phải lỗi, nhưng là đường leo thang thẳng. |
+
+<Callout type="note" label="pspy: nhìn được cron và tiến trình root mà không cần quyền root">
+Nhiều đường trên (cron, script chạy định kỳ) chỉ lộ ra khi bạn *thấy* chúng chạy. `pspy` là một công cụ chạy bằng quyền thường, theo dõi tiến trình mới sinh ra theo thời gian thực. Để nó chạy vài phút, bạn sẽ thấy các cron job và lệnh mà root thực thi ngầm, kể cả những cái không nằm trong `/etc/crontab` mà bạn đọc được.
+</Callout>
+
+<Callout type="warn" label="Khai thác nhân (kernel exploit): để cuối cùng">
+Nếu không đường nào ở trên mở, một nhân Linux cũ có thể có lỗ hổng leo thang (ví dụ họ Dirty Pipe, Dirty COW). Nhưng để cuối cùng vì: mã khai thác tải về có thể làm **treo hoặc hỏng máy**, đúng bản phiên bản nhân mới chạy, và trong phòng thi làm sập máy là mất thời gian quý. Luôn đọc mã trước và chạy thử trong snapshot lab (bài 3.7).
+</Callout>
+
+<LabBrief
+  ten="Tìm đủ một đường lên root trên Metasploitable 2"
+  muctieu="Tự liệt kê và lạm dụng một đường leo quyền thật, không xem lại danh sách GTFOBins trước khi thử"
+  may="Metasploitable 2, đăng nhập bằng tài khoản msfadmin (bài 1.4)"
+  ip="10.10.14.20"
+  thoigian="35 phút"
+  xong="Bạn chạy được whoami và thấy root, kèm một dòng giải thích đúng bạn đã lợi dụng manh mối nào để tới đó"
+>
+
+1. Chạy đủ bốn lệnh liệt kê ở phần "Luôn liệt kê trước khi thử": sudo, SUID, cron, capability.
+2. Ghi lại mọi dòng kết quả đáng chú ý, kể cả khi chưa chắc dùng được.
+3. Chọn một manh mối và tra GTFOBins (hoặc bảng "Chọn hướng từ một manh mối" trong bài) để biết cách lạm dụng đúng chương trình đó.
+4. Thực hiện và xác nhận bằng `id`.
+
+<div slot="goiy1">
+Metasploitable 2 có ít nhất một chương trình chạy được bằng `sudo` không cần mật khẩu. Lệnh đầu tiên trong mục liệt kê của bài sẽ cho thấy nó.
+</div>
+
+<div slot="goiy2">
+Tra đúng tên chương trình đó trên GTFOBins, phần "sudo", rồi làm theo một dòng lệnh mẫu ở đó.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: `id` in ra `uid=0(root)`.
+- `sudo -l` yêu cầu mật khẩu: bạn chưa đăng nhập bằng `msfadmin`, hoặc gõ nhầm mật khẩu ở bài 1.4.
+- Không chương trình nào trong GTFOBins khớp: quay lại bước 2, có thể bạn đã bỏ sót một dòng không nổi bật.
+- Đã lên root nhưng chưa chắc vì sao: viết lại một câu — "tôi lên root vì [chương trình X] có [quyền/đặc quyền Y]" — nếu không viết được, đó là dấu hiệu cần đọc lại phần giải nghĩa của bước 3.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là quản trị viên, hãy tự chạy đúng bốn lệnh ở phần liệt kê trên máy của mình, vì đó cũng là danh sách rà soát tốt nhất.
+
+Mỗi dạng có cách phòng riêng: cấp sudo hẹp, không cho các lệnh có đường thoát shell đã biết trên GTFOBins (find, vim, less, env...); gỡ bit SUID không cần; đặt quyền chặt cho script chạy quyền cao, để chỉ root sửa được; trong script luôn gọi lệnh bằng đường dẫn tuyệt đối và tránh ký tự đại diện; xuất NFS share với `root_squash`; chỉ cho người thật tin cậy vào nhóm `docker`/`lxd`; không gán capability dư cho thông dịch viên như python; cập nhật nhân để vá các lỗi leo thang đã biết; không lưu mật khẩu chữ rõ.
+
+Công cụ như `linpeas` hay `lynis` giúp quét nhanh hơn, nhưng danh sách gốc vẫn là bốn lệnh bạn vừa tự tay chạy.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Lao vào mã khai thác nhân Linux trước.** Nghe "khai thác nhân" có vẻ chuyên nghiệp hơn, nhưng đường thường đơn giản hơn nhiều (sudo, SUID, mật khẩu lộ) và đúng gần như luôn luôn. Dành thời gian liệt kê trước khi nghĩ tới khai thác nhân.
+- **Bỏ qua `sudo -l` và `getcap`.** Hai lệnh chạy trong chưa đầy một giây mà hay ra kết quả ngay. Người mới hay nhảy sang các bước phức tạp hơn mà bỏ sót đúng hai lệnh rẻ nhất này.
+- **Quên hoàn tác thay đổi.** Sửa một cron job để chứng minh lỗ hổng rồi quên trả lại như cũ. Trong lab việc này ít hại, nhưng trong một dự án pentest thật, đó là thay đổi bạn phải báo cáo và dọn lại cho khách hàng.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'GTFOBins là gì?', options: ['Một loại mã độc', 'Danh mục cách lạm dụng từng lệnh Unix khi nó chạy quyền cao', 'Một công cụ quét mạng'], answer: 1, explain: 'GTFOBins tra cứu: lệnh X chạy qua sudo/SUID thì thoát ra shell bằng cách nào.' },
+    { q: '`sudo find . -exec /bin/sh \\; -quit` cho shell root vì sao?', options: ['find mã hoá mật khẩu', 'find đang chạy quyền root nên lệnh con /bin/sh cũng mang quyền root', 'find tắt firewall'], answer: 1, explain: 'Tiến trình con thừa hưởng quyền của tiến trình cha; find chạy bằng root nên shell cũng root.' },
+    { q: 'Script cron chạy quyền root có quyền file rwxrwxrwx nghĩa là gì?', options: ['An toàn', 'Ai cũng sửa được nội dung, nên có thể chèn lệnh chạy bằng root', 'Không chạy được'], answer: 1, explain: 'Quyền ghi cho mọi người + chạy bằng root = chèn lệnh của mình để thực thi quyền root.' },
+    { q: 'Lệnh nào tìm capability bị cấu hình sai?', options: ['getcap -r / 2>/dev/null', 'ls -l', 'ping'], answer: 0, explain: 'getcap liệt kê capability; cap_setuid trên python là một đường leo thang.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Liệt kê trước khi thử: `id`, `sudo -l`, `find -perm -4000`, `getcap -r /`, cron, mật khẩu lộ. Đây là bốn-năm lệnh bạn sẽ gõ trên gần như mọi máy Linux đã chiếm được.
+- GTFOBins cho biết lệnh nào thoát được ra shell khi chạy quyền cao. Tìm thấy manh mối thì tra ngay, đừng tự đoán cách khai thác.
+- Đường đơn giản (sudo, SUID, cron, capability) thường đúng hơn và nhanh hơn mã khai thác nhân phức tạp. Thử đường dễ trước.

@@ -1,0 +1,31 @@
+---
+// Khối "phiên terminal" tĩnh để hiển thị lệnh và kết quả mẫu trong bài học.
+// Dùng: <Terminal title="..."> bọc một khối ```text ... ``` (dòng trống trước và sau khối code).
+// Dùng khối code thay vì chữ trần để MDX không biến dòng bắt đầu bằng # thành tiêu đề,
+// không đổi "..." thành … hay dấu nháy thẳng thành nháy cong (làm hỏng lệnh khi người học chép).
+interface Props {
+  title?: string;
+  user?: string;
+  host?: string;
+}
+const { title, user = 'kali', host = 'kali' } = Astro.props;
+---
+<div class="term-static">
+  {title && <p class="term-static-title">{title}</p>}
+  <div class="term-static-body">
+    <span class="term-static-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <slot />
+  </div>
+</div>
+
+<style>
+  .term-static { margin: 1.4em 0; }
+  .term-static-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  .term-static-body { background: var(--code-bg); border-radius: var(--radius); overflow: hidden; }
+  .term-static-dots { display: flex; gap: 6px; padding: 10px 14px 0; }
+  .term-static-dots i { width: 11px; height: 11px; border-radius: 50%; background: #3a3f45; display: block; }
+  .term-static-dots i:first-child { background: #e06c5a; }
+  .term-static-dots i:nth-child(2) { background: #e0b04a; }
+  .term-static-dots i:nth-child(3) { background: #5ba85b; }
+  .term-static :global(pre) { background: none !important; margin: 0; padding: 10px 16px 16px; font-size: 0.82rem; line-height: 1.6; overflow-x: auto; }
+</style>

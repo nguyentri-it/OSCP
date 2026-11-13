@@ -1,0 +1,296 @@
+---
+title: "Active Directory: kiến trúc"
+code: "3.4"
+level: 3
+summary: "Hầu hết doanh nghiệp quản lý tài khoản và máy tính qua Active Directory, nên hiểu cách nó tổ chức (domain, forest, Kerberos) là điều kiện để tấn công nó ở bài 3.5. Bài này cũng cho bạn ba công cụ liệt kê: rpcclient, ldapsearch và BloodHound."
+duration: "85 phút"
+updated: "2026-11-09"
+prereq: ["1.5", "2.6"]
+objectives:
+  - "Giải thích được domain, domain controller, forest và trust, và chỉ ra máy nào trong đó đáng chiếm nhất"
+  - "Mô tả được luồng vé Kerberos (TGT, TGS) và vì sao nó dùng vé thay cho gửi mật khẩu mỗi lần"
+  - "Liệt kê được một domain bằng rpcclient và ldapsearch chỉ với một tài khoản thường"
+  - "Dùng BloodHound để gom quan hệ quyền hạn thành đồ thị và tìm đường đi tới Domain Admin"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một công ty 500 người không thể tạo tài khoản riêng rẽ trên từng máy, rồi nhớ xem ai được vào phòng nào. Họ cần một "phòng nhân sự trung tâm" quản lý mọi tài khoản, quyền và máy móc ở một nơi.
+
+Active Directory (AD) là phòng nhân sự đó cho thế giới Windows, và nó quan trọng với người học OSCP vì một lý do rất thực tế: phần lớn mạng doanh nghiệp bạn sẽ gặp, cả ngoài đời lẫn trong phòng thi, chạy trên AD. Bài này xây nền kiến trúc; bài 3.5 sẽ dùng chính nền đó để tấn công.
+
+## Kiến thức chính
+
+### Domain, domain controller, forest
+
+- **Domain** — một nhóm người dùng, máy tính và tài nguyên được quản lý chung (như một "công ty" trong AD).
+- **Domain Controller (DC)** — máy chủ giữ cơ sở dữ liệu AD và xử lý đăng nhập. Chiếm được DC gần như chiếm cả domain, nên là mục tiêu giá trị nhất.
+- **Forest** — tập hợp một hay nhiều domain (như một "tập đoàn" gồm nhiều công ty); là **ranh giới an ninh** ngoài cùng.
+
+<ConceptMap
+  client:visible
+  title="Cấu trúc phân cấp của Active Directory"
+  width={640}
+  height={300}
+  nodes={[
+    { id: 'forest', label: 'Forest', sub: 'ranh giới an ninh', x: 320, y: 55, tone: 'accent', detail: 'Tập hợp domain dùng chung cấu hình nền. Forest là ranh giới an ninh thật sự của AD.' },
+    { id: 'd1', label: 'megacorp.lab', sub: 'domain gốc', x: 180, y: 160, detail: 'Domain gốc của forest.' },
+    { id: 'd2', label: 'dev.megacorp.lab', sub: 'domain con', x: 470, y: 160, detail: 'Domain con, cùng cây với domain gốc.' },
+    { id: 'u', label: 'Người dùng, máy, nhóm', x: 180, y: 250, detail: 'Các đối tượng trong domain: tài khoản, máy tính, nhóm quyền.' },
+    { id: 'trust', label: 'Quan hệ tin cậy', x: 470, y: 250, tone: 'warn', detail: 'Domain có thể tin cậy nhau để dùng chéo tài nguyên. Trust rộng tay là rủi ro.' },
+  ]}
+  edges={[
+    { from: 'forest', to: 'd1' },
+    { from: 'forest', to: 'd2' },
+    { from: 'd1', to: 'u' },
+    { from: 'd1', to: 'trust', dashed: true },
+    { from: 'd2', to: 'trust', dashed: true },
+  ]}
+/>
+
+### Kerberos: vé thay cho mật khẩu
+
+AD dùng giao thức đăng nhập tên Kerberos. Ý tưởng như vé xem phim: thay vì đem mật khẩu đi trình ở từng dịch vụ (rủi ro nếu một dịch vụ bị chiếm thì mật khẩu cũng lộ theo), người dùng đăng nhập một lần với DC, nhận **vé**, rồi đưa vé đó cho từng dịch vụ để được vào.
+
+Hiểu đúng luồng vé này là điều kiện để hiểu vì sao bài 3.5 có hẳn một họ kỹ thuật tấn công chỉ xoay quanh việc "xin vé" và "giả vé".
+
+<SequenceDiagram
+  client:visible
+  title="Luồng Kerberos (đã đơn giản hoá)"
+  actors={['Người dùng', 'Domain Controller', 'Dịch vụ']}
+  steps={[
+    { from: 0, to: 1, label: 'Yêu cầu vé (AS-REQ)', note: 'Người dùng chứng minh danh tính với DC, dựa trên mật khẩu nhưng không gửi mật khẩu dạng rõ.' },
+    { from: 1, to: 0, label: 'Vé tổng TGT', note: 'DC cấp Ticket Granting Ticket — thẻ chung chứng minh đã đăng nhập.', tone: 'good' },
+    { from: 0, to: 1, label: 'TGS-REQ: xin vé dịch vụ', note: 'Khi cần một dịch vụ cụ thể, đưa TGT ra xin vé riêng.' },
+    { from: 1, to: 0, label: 'Vé dịch vụ TGS', note: 'DC cấp vé chỉ dùng cho đúng dịch vụ đó.', tone: 'good' },
+    { from: 0, to: 2, label: 'Trình vé TGS', note: 'Dịch vụ kiểm tra vé hợp lệ và cho vào, không cần hỏi lại DC.', tone: 'good' },
+  ]}
+/>
+
+Nhiều kỹ thuật tấn công AD (bài 3.5) xoay quanh việc lạm dụng chính các loại vé này.
+
+## Thực hành: liệt kê AD
+
+Điều đáng nói ngay từ đầu: chỉ với một tài khoản domain thường, dù quyền thấp (ví dụ lấy được từ bài 2.1 hoặc 2.6), bạn đã liệt kê được rất nhiều, vì AD mặc định cho mọi tài khoản đọc phần lớn thông tin thư mục.
+
+Ba công cụ dưới đây đi từ gọn tới toàn cảnh: rpcclient hỏi nhanh qua SMB, ldapsearch hỏi trực tiếp cơ sở dữ liệu, và BloodHound gom hết thành một đồ thị.
+
+### 1. rpcclient qua SMB để lấy người dùng và nhóm
+
+<Lenh noi="Terminal trên máy Kali" muc="Liệt kê danh sách tài khoản người dùng trong domain, khi đã có một tài khoản thường" quyen="Cần một tài khoản domain hợp lệ (ở đây jdoe)">
+
+<Terminal title="rpcclient liệt kê người dùng domain">
+
+```text
+kali@lab:~$ rpcclient -U 'jdoe%Summer2024!' 10.10.14.50
+rpcclient $> enumdomusers
+user:[Administrator] rid:[0x1f4]
+user:[jdoe]          rid:[0x44f]
+user:[svc_sql]       rid:[0x45a]      # tài khoản dịch vụ, chú ý
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `rpcclient -U 'jdoe%Summer2024!' 10.10.14.50`: mở một phiên RPC (giao thức quản trị từ xa của Windows) qua SMB. `-U 'tên%mật-khẩu'`: đăng nhập bằng tài khoản `jdoe`, dấu `%` ngăn tên và mật khẩu. Địa chỉ cuối là Domain Controller.
+- `enumdomusers`: lệnh con gõ **sau khi đã vào** dấu nhắc `rpcclient $>`, liệt kê (enum) toàn bộ tài khoản người dùng của domain (dom users).
+
+</div>
+
+<div slot="doc">
+
+- Mỗi dòng là một tài khoản: `user:[tên] rid:[mã]`. **RID** là mã số định danh của tài khoản trong domain (không đổi dù đổi tên).
+- `Administrator` luôn có RID `0x1f4` (500) trên mọi domain — một hằng số đáng nhớ.
+- Tên có tiền tố `svc_` (như `svc_sql`) là **tài khoản dịch vụ**, đáng chú ý vì thường có SPN (xem mục LDAP bên dưới) và hay bị cấu hình lỏng. Dòng `# tài khoản dịch vụ, chú ý` là chú thích của bài.
+- Lỗi `NT_STATUS_LOGON_FAILURE`: sai tên hoặc mật khẩu tài khoản `jdoe`.
+
+</div>
+
+</Lenh>
+
+### 2. ldapsearch truy vấn trực tiếp cơ sở dữ liệu AD qua LDAP
+
+rpcclient cho bạn danh sách tên. Nhưng AD lưu rất nhiều thuộc tính khác cho mỗi tài khoản, và LDAP là ngôn ngữ để hỏi đúng thuộc tính mình cần. Ở đây ta hỏi một câu rất cụ thể: "tài khoản nào có đăng ký chạy dịch vụ?", vì câu trả lời là nguyên liệu trực tiếp cho kỹ thuật Kerberoasting ở bài 3.5:
+
+<Lenh noi="Terminal trên máy Kali" muc="Hỏi trực tiếp cơ sở dữ liệu AD (qua LDAP) để tìm các tài khoản có SPN — bước chuẩn bị cho Kerberoasting ở bài 3.5" quyen="Cần một tài khoản domain hợp lệ">
+
+<Terminal title="ldapsearch lấy tài khoản dịch vụ có SPN">
+
+```text
+kali@lab:~$ ldapsearch -x -H ldap://10.10.14.50 -D 'jdoe@megacorp.lab' -w 'Summer2024!' \
+  -b 'dc=megacorp,dc=lab' "(servicePrincipalName=*)" sAMAccountName
+sAMAccountName: svc_sql      # có SPN → có thể bị Kerberoasting (bài 3.5)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ldapsearch -x -H ldap://...`: truy vấn một máy chủ LDAP. `-x` dùng xác thực đơn giản (simple bind, tức gửi thẳng tên/mật khẩu thay vì SASL).
+- `-D 'jdoe@megacorp.lab' -w 'Summer2024!'`: `-D` là tài khoản dùng để đăng nhập (bind DN), `-w` là mật khẩu.
+- `-b 'dc=megacorp,dc=lab'`: điểm bắt đầu tìm kiếm trong cây LDAP — ở đây là gốc của domain `megacorp.lab`.
+- `"(servicePrincipalName=*)"`: bộ lọc LDAP, nghĩa là "chỉ lấy đối tượng có thuộc tính servicePrincipalName khác rỗng" — tức có đăng ký SPN (Service Principal Name, tên dịch vụ dùng trong Kerberos).
+- `sAMAccountName`: thuộc tính cần lấy ra, chính là tên đăng nhập.
+- Dấu `\` ở cuối dòng đầu chỉ là xuống dòng cho dễ đọc; gõ liền một dòng cũng được.
+
+</div>
+
+<div slot="doc">
+
+- Mỗi khối kết quả LDAP thường dài hơn, bài đã rút gọn chỉ còn dòng `sAMAccountName: svc_sql`.
+- Có SPN (Service Principal Name, nhãn gắn vào tài khoản để nói "tài khoản này chạy dịch vụ nào") nghĩa là tài khoản này đăng ký cho một dịch vụ cụ thể (ví dụ SQL Server) — và bất kỳ tài khoản domain nào, không cần quyền cao, đều xin được một vé Kerberos cho nó rồi mang về bẻ khoá ngoại tuyến (Kerberoasting, bài 3.5).
+- Không ra kết quả: domain này không có tài khoản dịch vụ nào đăng ký SPN qua tài khoản người dùng — khá hiếm, nhưng là tin tốt cho phía phòng thủ.
+
+</div>
+
+</Lenh>
+
+### 3. BloodHound gom toàn bộ quan hệ và vẽ đường đi tấn công
+
+rpcclient và ldapsearch cho bạn từng mẩu thông tin rời. Nhưng domain thật có hàng trăm, hàng nghìn quan hệ (ai thuộc nhóm nào, ai có quyền trên máy nào), và không ai đọc hết bằng tay được.
+
+BloodHound thu thập toàn bộ các quan hệ đó và vẽ thành một đồ thị, để bạn hỏi thẳng câu hỏi quan trọng nhất: "từ tài khoản tôi đang có, đường ngắn nhất tới Domain Admin đi qua đâu?"
+
+<Lenh noi="Terminal trên máy Kali" muc="Gom toàn bộ quan hệ quyền hạn trong domain thành một file dữ liệu, để nạp vào BloodHound và vẽ đường đi tấn công" quyen="Cần một tài khoản domain hợp lệ">
+
+<Terminal title="SharpHound/BloodHound thu thập dữ liệu">
+
+```text
+kali@lab:~$ bloodhound-python -u jdoe -p 'Summer2024!' -d megacorp.lab -c All -ns 10.10.14.50
+INFO: Found 42 users, 18 groups, 5 computers
+INFO: Compressed data written to 20240101_bloodhound.zip
+# Nạp file .zip vào giao diện BloodHound để xem đường đi tới Domain Admin
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `bloodhound-python`: bản thu thập dữ liệu BloodHound viết bằng Python, chạy ngay trên Kali (không cần chạy trên máy Windows như bản SharpHound gốc).
+- `-u jdoe -p 'Summer2024!' -d megacorp.lab`: tài khoản, mật khẩu, và tên domain cần thu thập.
+- `-c All`: thu thập **mọi loại** dữ liệu (collection method) — người dùng, nhóm, quyền, phiên đăng nhập... Có thể chọn riêng từng loại để nhanh và đỡ ồn hơn.
+- `-ns 10.10.14.50`: chỉ định máy chủ DNS (name server) cần dùng để tra tên — thường chính là Domain Controller.
+
+</div>
+
+<div slot="doc">
+
+- `Found 42 users, 18 groups, 5 computers`: số lượng đối tượng đã thu thập được, để biết việc đang chạy đúng hướng.
+- `Compressed data written to ....zip`: kết quả cuối, đóng gói thành một file `.zip` chứa nhiều file JSON (users, groups, computers, domains...).
+- Nạp file `.zip` này vào ứng dụng BloodHound (giao diện riêng, không phải dòng lệnh) bằng chức năng "Upload Data", rồi dùng nút "Shortest path to Domain Admins" để xem đồ thị đường đi.
+- Lỗi xác thực hoặc không tra được tên: kiểm tra lại tài khoản/mật khẩu và địa chỉ DNS server.
+
+</div>
+
+</Lenh>
+
+<Callout type="note">
+BloodHound là công cụ quan trọng nhất của pentest AD hiện đại: nó biến hàng nghìn quan hệ quyền hạn thành một đồ thị, và có nút "Shortest path to Domain Admins" chỉ thẳng đường đi. Bài 3.5 giải thích các đường đi đó.
+</Callout>
+
+### Khi chưa có cả một tài khoản: kerbrute và NetExec
+
+Ba công cụ trên đều cần sẵn một tài khoản domain. Trong đề thi kiểu "assumed breach" bạn thường được cho một cặp tài khoản; nếu không, hai công cụ sau lấp vào khoảng trống đó:
+
+<Lenh noi="Terminal trên máy Kali, chưa có tài khoản hợp lệ" muc="Dò tên tài khoản có thật chỉ bằng Kerberos (không gây khoá tài khoản), rồi thử một mật khẩu trên hàng loạt tài khoản để tìm cặp dùng được" quyen="Chỉ cần chạm được tới Domain Controller qua mạng">
+
+<Terminal title="kerbrute dò tài khoản, NetExec thử mật khẩu hàng loạt">
+
+```text
+kali@lab:~$ kerbrute userenum -d megacorp.lab --dc 10.10.14.50 users.txt
+[+] VALID USERNAME:  jdoe@megacorp.lab
+[+] VALID USERNAME:  svc_sql@megacorp.lab
+
+kali@lab:~$ nxc smb 10.10.14.50 -u users.txt -p 'Autumn2024!' --continue-on-success
+SMB  10.10.14.50  [+] megacorp.lab\jdoe:Autumn2024!
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `kerbrute userenum -d megacorp.lab --dc 10.10.14.50 users.txt`: hỏi Kerberos từng tên trong `users.txt` xem có thật không. Vì chỉ hỏi bước đầu của Kerberos, nó **không tính là một lần đăng nhập sai**, nên không làm khoá tài khoản — an toàn hơn thử mật khẩu.
+- `nxc smb ... -u users.txt -p 'Autumn2024!'`: NetExec (lệnh `nxc`) thử **một** mật khẩu trên mọi tài khoản trong danh sách (password spraying, bài 2.6). `--continue-on-success` để nó không dừng ở tài khoản khớp đầu tiên.
+
+</div>
+
+<div slot="doc">
+
+- `kerbrute` chỉ in các tên hợp lệ, bỏ qua tên không tồn tại — kết quả là một danh sách tài khoản có thật để mang sang bước thử mật khẩu hoặc AS-REP roasting (bài 3.5).
+- Dòng NetExec có `[+]` màu xanh là một cặp tài khoản/mật khẩu **dùng được**. Từ đây quay lại rpcclient/ldapsearch/BloodHound ở trên.
+- Thay một mật khẩu trên nhiều tài khoản (spraying) an toàn hơn thử nhiều mật khẩu trên một tài khoản (dễ gây khoá tài khoản). Chỉ chạy trong lab hoặc nơi được phép.
+
+</div>
+
+</Lenh>
+
+<LabBrief
+  ten="Dựng một domain nhỏ và tự liệt kê nó từ đầu"
+  muctieu="Có một Domain Controller và một máy trạm của riêng bạn, rồi tự chạy đủ các lệnh liệt kê trong bài này trên domain thật do mình tạo"
+  may="Một Windows Server bản đánh giá làm Domain Controller + một Windows 10/11 bản đánh giá làm máy trạm (bài 0.2)"
+  thoigian="60 phút (phần lớn là cài đặt)"
+  xong="Bạn có domain riêng chạy thật, một tài khoản domain thường, và kết quả của ldapsearch hoặc rpcclient liệt kê ra đúng tên domain cùng vài tài khoản bạn đã tạo"
+>
+
+1. Trên Windows Server, cài vai trò Active Directory Domain Services qua Server Manager, rồi thăng cấp máy thành Domain Controller cho một domain mới (ví dụ `lab.local`).
+2. Tạo 2–3 tài khoản người dùng thường trong Active Directory Users and Computers.
+3. Đưa máy trạm Windows thứ hai gia nhập domain đó.
+4. Từ Kali, dùng một trong các tài khoản thường vừa tạo để liệt kê qua LDAP hoặc RPC, đúng như phần Thực hành của bài.
+
+<div slot="goiy1">
+Việc thăng cấp Domain Controller là một thao tác quản trị Windows tiêu chuẩn (Server Manager → Add roles and features → Active Directory Domain Services → "Promote this server to a domain controller"), không phải kỹ thuật tấn công — làm theo đúng trình tự Server Manager hướng dẫn.
+</div>
+
+<div slot="goiy2">
+Ở bước 4, lệnh `ldapsearch -x -H ldap://<IP-DC> -s base` hoặc `rpcclient -U 'tên%mật-khẩu' <IP-DC>` trong phần Thực hành chính là thứ cần chạy, chỉ đổi domain và tài khoản cho khớp lab của bạn.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: `ldapsearch` trả về đúng `namingContexts` khớp tên domain bạn đặt, hoặc `rpcclient` cho vào được phiên RPC.
+- Máy trạm gia nhập domain báo lỗi: kiểm tra máy trạm đã trỏ DNS về đúng IP của Domain Controller trước khi gia nhập — DC cũng chính là máy chủ DNS của domain.
+- Không liệt kê được gì từ Kali: xác nhận cả hai máy Windows và Kali cùng nằm trên một mạng Internal/Host-only (bài 0.2), không phải NAT riêng từng máy.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hãy bảo vệ domain controller như tài sản quý nhất trong cả mạng, vì chiếm được nó gần như chiếm cả domain: hạn chế ai đăng nhập được vào DC, và giám sát chặt những ai làm điều đó. Giữ số tài khoản quyền cao ở mức tối thiểu; rà soát quan hệ tin cậy giữa các domain, vì một trust cấu hình rộng tay có thể mở đường từ domain yếu sang domain mạnh; theo dõi các mẫu yêu cầu vé bất thường.
+
+Vì forest là ranh giới an ninh thật sự, nối hai forest bằng trust cần cân nhắc kỹ như nối hai công ty làm một. Và đừng để BloodHound chỉ là công cụ của kẻ tấn công: đội phòng thủ cũng nên tự chạy nó định kỳ để tìm và cắt đường đi trước khi ai khác tìm ra.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nhầm domain với forest.** Domain chỉ là một đơn vị quản lý; forest mới là ranh giới an ninh ngoài cùng. Nhầm hai khái niệm này khiến bạn đánh giá sai độ nghiêm trọng của một trust hay một lỗ hổng chéo domain.
+- **Nghĩ chiếm một máy trong domain là xong việc.** Chiếm được máy trạm của một nhân viên chỉ là điểm xuất phát. Mục tiêu thật trong một mạng AD gần như luôn là Domain Controller hoặc một tài khoản Domain Admin.
+- **Bỏ qua tài khoản dịch vụ (có SPN).** Những tài khoản tên bắt đầu bằng `svc_` trông không có gì đặc biệt, nhưng chúng chính là nơi mở ra Kerberoasting ở bài 3.5. Đừng lướt qua chúng khi liệt kê.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Máy nào là mục tiêu giá trị nhất trong một domain?', options: ['Máy in', 'Domain Controller', 'Máy nhân viên mới'], answer: 1, explain: 'DC giữ cơ sở dữ liệu AD và xử lý xác thực; chiếm được gần như chiếm cả domain.' },
+    { q: 'Trong Kerberos, TGT dùng để làm gì?', options: ['Truy cập thẳng mọi dịch vụ', 'Chứng minh đã đăng nhập, để xin các vé dịch vụ (TGS)', 'Lưu mật khẩu'], answer: 1, explain: 'TGT chứng minh danh tính và được dùng để xin vé riêng cho từng dịch vụ.' },
+    { q: 'BloodHound giúp gì cho pentest AD?', options: ['Quét cổng', 'Vẽ đồ thị quan hệ quyền hạn và chỉ đường đi tới Domain Admin', 'Bẻ mật khẩu'], answer: 1, explain: 'Nó gom hàng nghìn quan hệ thành đồ thị và tìm đường đi ngắn nhất tới quyền quản trị.' },
+    { q: 'Tài khoản có servicePrincipalName (SPN) mở ra kỹ thuật nào ở bài sau?', options: ['Phishing', 'Kerberoasting', 'SQL injection'], answer: 1, explain: 'Tài khoản có SPN có thể bị Kerberoasting để lấy và bẻ hash mật khẩu (bài 3.5).' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- AD quản lý tập trung mọi tài khoản và máy tính của domain; DC là trung tâm giữ cơ sở dữ liệu đó; forest là ranh giới an ninh ngoài cùng, không phải domain.
+- Kerberos dùng vé thay cho gửi mật khẩu mỗi lần: TGT chứng minh đã đăng nhập, TGS xin riêng cho từng dịch vụ. Bài 3.5 lạm dụng chính các loại vé này.
+- Chỉ với một tài khoản thường, bạn đã liệt kê được rất nhiều: `rpcclient` cho danh sách nhanh, `ldapsearch` hỏi đúng thuộc tính cần, và nhất là BloodHound để nhìn thấy đường đi ngắn nhất tới Domain Admin.

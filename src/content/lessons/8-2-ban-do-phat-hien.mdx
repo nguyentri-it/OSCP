@@ -1,0 +1,340 @@
+---
+title: "Bản đồ phát hiện: mỗi kỹ thuật để lại dấu gì"
+code: "8.2"
+level: 8
+summary: "Gom các kỹ thuật tấn công ở Cấp 2–3 vào một bản đồ: dấu vết để lại, nguồn log phải bật, mã sự kiện và luật mẫu. Biết mình đang mù ở đâu trước khi kẻ tấn công biết."
+duration: "90 phút"
+updated: "2026-11-09"
+objectives:
+  - "Với mỗi kỹ thuật ở Cấp 2–3, nói được nó để lại dấu gì và nằm ở nguồn log nào"
+  - "Bật đúng nguồn log tối thiểu trên Windows, Linux, web, mạng và đám mây"
+  - "Đọc và viết luật phát hiện mẫu: Sigma, auditd, truy vấn gom nhóm"
+  - "Nhận ra kỹ thuật nào gần như mù với log và phải dựa vào phòng ngừa, mồi nhử"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import DetectionMap from '../../components/sim/DetectionMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Phòng bảo vệ của một toà nhà lớn có một tấm sơ đồ dán trên tường: mỗi cửa ra vào, mỗi hành lang, camera nào nhìn thấy, ghi hình lưu ở đâu, ai xem. Cửa nào không camera nào thấy được tô đỏ. Không có tấm sơ đồ này, đội bảo vệ chỉ biết "chúng ta có camera", mà không biết mình mù ở chỗ nào.
+
+Cấp 2 và Cấp 3 đã dạy hơn hai chục kỹ thuật tấn công. Dấu vết của chúng nằm rải rác trong từng bài. Bài này gom lại thành một tấm sơ đồ chung, mỗi kỹ thuật một dòng, để biết chỗ nào đội phòng thủ nhìn thấy và chỗ nào còn mù. Muốn lập sơ đồ, ta hỏi ba câu cho mỗi kỹ thuật (xem ngay dưới).
+
+## Kiến thức chính
+
+### Ba câu hỏi cho mỗi kỹ thuật
+
+1. **Nó để lại dấu gì?** Ví dụ: một chương trình (tiến trình) mới được chạy, một kết nối mạng, một file mới tạo, một lần đăng nhập, một "vé" Kerberos.
+2. **Dấu đó được ghi ở loại log nào, và loại log đó đã được bật và gửi về một chỗ chưa?** Rất nhiều sự kiện quan trọng **mặc định không được ghi**. Ví dụ Windows mặc định không ghi lại dòng lệnh mà một chương trình được chạy với, Linux mặc định không ghi lại những lệnh đã chạy.
+3. **Có luật nào biến dấu đó thành cảnh báo không, và luật đó đã được thử cho chạy thật chưa?**
+
+Trả lời đủ ba câu thì kỹ thuật đó "thấy được". Thiếu câu thứ hai là mù hoàn toàn, dù luật có viết đẹp tới đâu: không có dòng log nào để luật đọc.
+
+Một nguyên tắc nữa, sẽ gặp lại ở bài 8.4: luật dựa vào **hành vi** (ví dụ web server bỗng mở ra một cửa sổ lệnh, hay một nguồn đăng nhập sai trên nhiều tài khoản) bền hơn luật dựa vào **tên công cụ** hay User-Agent (dòng tự khai tên phần mềm trong yêu cầu web), vì kẻ tấn công đổi tên công cụ trong một giây nhưng khó đổi hành vi.
+
+### Bật nguồn log tối thiểu
+
+| Ở đâu | Bật gì | Thấy được |
+|---|---|---|
+| Mọi máy Windows | Advanced Audit Policy (chính sách ghi nhật ký chi tiết của Windows): Logon (đăng nhập); Process Creation (chạy chương trình) **kèm dòng lệnh**; Security System Extension (cài dịch vụ mới); Detailed File Share trên máy chủ (truy cập thư mục chia sẻ) | Các sự kiện mang mã 4624/4625 (đăng nhập thành công/thất bại), 4688 có dòng lệnh, 4697 (dịch vụ mới), 5145 |
+| Domain Controller (máy chủ trung tâm của AD) | Ghi các thao tác Kerberos (xin vé đăng nhập, xin vé dịch vụ) và truy cập thư mục AD, kèm SACL (danh sách quy định "cái gì bị truy cập thì phải ghi lại") cho quyền sao chép | 4768, 4769, 4771, 4662 |
+| PowerShell | Script Block Logging qua Group Policy | 4104 |
+| Máy trạm, máy chủ Windows | Sysmon (công cụ miễn phí của Microsoft ghi lại rất chi tiết việc chạy chương trình, kết nối mạng, tạo file) với một cấu hình cộng đồng đã tinh chỉnh sẵn (ví dụ SwiftOnSecurity, sysmon-modular) | Sysmon 1 (chạy chương trình), 3 (kết nối mạng), 10 (truy cập tiến trình khác), 11 (tạo file), 22 (tra DNS) |
+| Máy chủ Linux | auditd (hệ thống ghi nhật ký kiểm toán của Linux) với bộ luật bên dưới; giữ cả auth.log hoặc journal | Lệnh được chạy (execve), việc đọc và sửa file nhạy cảm, sudo, đăng nhập SSH |
+| Ứng dụng web | access.log đầy đủ; WAF (ví dụ ModSecurity với bộ luật OWASP CRS) và log của WAF | Request, mã trạng thái, User-Agent; thân request với WAF |
+| Mạng | Log truy vấn của DNS nội bộ; Zeek hoặc Suricata (công cụ phân tích lưu lượng mạng), hoặc NetFlow (thống kê ai nói chuyện với ai); log các kết nối bị tường lửa từ chối | Quét cổng, tunnel (đường hầm giấu lưu lượng), kết nối ra ngoài lạ |
+| AWS | CloudTrail (nhật ký mọi thao tác) bật cho mọi vùng; GuardDuty (dịch vụ phát hiện bất thường của AWS) | Mọi lệnh gọi API; khoá truy cập bị dùng từ bên ngoài AWS |
+
+Bật log rồi thì phải **gửi về một chỗ tập trung** (SIEM, bài 8.1) và **giữ đủ lâu** để điều tra ngược lại khoảng thời gian kẻ tấn công nằm im (bài 8.6). Log nằm yên trên từng máy thì kẻ tấn công xoá được, và không ai kịp đọc.
+
+**Bộ luật auditd tối thiểu cho một máy chủ Linux**
+
+<Lenh noi="File cấu hình /etc/audit/rules.d/50-phong-thu.rules trên máy chủ Linux" muc="Ghi lại mọi hành vi đọc/sửa file nhạy cảm, chạy file từ thư mục tạm và leo thang lên root từ tài khoản người dùng thường">
+
+<Terminal title="Bộ luật auditd tối thiểu cho máy chủ Linux (/etc/audit/rules.d/50-phong-thu.rules)">
+
+```text
+# /etc/audit/rules.d/50-phong-thu.rules
+## Đọc hoặc sửa file nhạy cảm
+-w /etc/shadow -p r -k doc_shadow
+-w /etc/sudoers -p wa -k sua_sudoers
+-w /etc/sudoers.d/ -p wa -k sua_sudoers
+-w /etc/crontab -p wa -k sua_cron
+-w /etc/cron.d/ -p wa -k sua_cron
+-w /root/.ssh/ -p wa -k sua_khoa_ssh
+## Chạy chương trình từ thư mục tạm
+-w /tmp/ -p x -k chay_tu_tmp
+-w /dev/shm/ -p x -k chay_tu_tmp
+## Lệnh chạy với quyền root nhưng do một người dùng thường khởi phát (sudo, SUID)
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root_tu_nguoi_dung
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `-w /etc/shadow -p r -k doc_shadow`: theo dõi (`-w`) file `/etc/shadow`, ghi log mỗi khi có tiến trình đọc (`-p r`) và gắn nhãn tìm kiếm là `doc_shadow`.
+- `-w /etc/sudoers -p wa -k sua_sudoers`: ghi log mỗi khi file cấu hình `sudoers` bị ghi hoặc thay đổi thuộc tính (`-p wa`).
+- `-w /tmp/ -p x -k chay_tu_tmp`: bắt hành vi thực thi chương trình (`-p x`) nằm trong `/tmp/` hoặc `/dev/shm/` — nơi kẻ tấn công rất hay thả công cụ leo thang (bài 3.1).
+- `-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k root_tu_nguoi_dung`: ghi lại mọi lời gọi hệ thống `execve` chạy với quyền hiệu dụng là root (`euid=0`) nhưng xuất phát từ một người dùng đăng nhập ban đầu là tài khoản thường (`auid>=1000`).
+
+</div>
+
+</Lenh>
+
+Nạp luật bằng `sudo augenrules --load`, tra lại bằng `sudo ausearch -k root_tu_nguoi_dung -i`. Trường `auid` (audit user id) luôn giữ nguyên danh tính người đăng nhập ban đầu, kể cả sau khi họ đã `sudo` hay chạy chương trình SUID, nên ta biết **ai thật sự** đứng sau một lệnh chạy bằng quyền root.
+
+Luật `doc_shadow` sẽ kêu cả khi chương trình hợp lệ (như `passwd`) đọc file; lọc các chương trình đó trong SIEM thay vì bỏ luật.
+
+### Bản đồ tương tác
+
+Hãy thử lần lượt ba cấu hình: (1) chỉ log mặc định, như một hệ thống mới cài; (2) bật thêm Sysmon, auditd và Advanced Audit Policy của Windows; (3) bật tất cả. Sau mỗi lần, đếm xem còn bao nhiêu kỹ thuật bạn "mù".
+
+<DetectionMap client:visible />
+
+Ba điều nên rút ra. Một: chỉ với log mặc định, phần lớn những gì bạn đã học ở Cấp 2–3 xảy ra trong im lặng. Hai: ba nguồn rẻ nhất để bật thêm (4688 kèm dòng lệnh, Sysmon, auditd) lấp được nhiều chỗ mù nhất. Ba: kể cả bật hết, vẫn còn vài kỹ thuật chỉ thấy một phần. Với chúng, phòng ngừa đáng tin hơn phát hiện (xem phần dưới).
+
+### Luật mẫu cho những chỗ chưa có ở bài khác
+
+Kerberoasting và DCSync có luật ở bài 8.1; tài khoản SPN mồi và file mồi ở bài 8.4; xoá shadow copy và công cụ đồng bộ đám mây ở bài 8.6. Các luật dưới đây lấp phần còn lại. Chúng là điểm khởi đầu: luật nào cũng phải được tinh chỉnh theo môi trường thật trước khi bật cảnh báo.
+
+**1. Web: dấu hiệu SQLi, đi ngược thư mục và công cụ dò trong log truy cập (Sigma)**
+
+```yaml
+title: Dấu hiệu tấn công ứng dụng web trong log truy cập
+logsource:
+  category: webserver
+detection:
+  sel_sqli:
+    cs-uri-query|contains: ['union%20select', 'union+select', 'sleep(', 'information_schema', '%27%20or%20']
+  sel_traversal:
+    cs-uri-query|contains: ['../', '..%2f', '%2e%2e%2f', '/etc/passwd', 'php://filter']
+  sel_tool:
+    c-useragent|contains: ['sqlmap', 'gobuster', 'Fuzz Faster U Fool', 'Nikto']
+  condition: 1 of sel_*
+falsepositives:
+  - Máy quét lỗ hổng được phép của chính đơn vị (lọc theo IP nguồn)
+level: medium
+tags:
+  - attack.initial_access
+  - attack.t1190
+```
+
+Luật này chỉ thấy những gì nằm trong URL. Hai việc nên làm thêm: một luật **đếm** số phản hồi 404 theo IP trong 5 phút để bắt dò thư mục kể cả khi User-Agent bị đổi; và WAF để thấy thân request POST, nơi phần lớn SQLi vào form đăng nhập nằm.
+
+**2. Web shell và RCE: tiến trình máy chủ web sinh ra shell (Sigma, Linux)**
+
+```yaml
+title: Tiến trình máy chủ web sinh ra shell hoặc công cụ mạng
+logsource:
+  product: linux
+  category: process_creation
+detection:
+  sel_parent:
+    ParentImage|contains: ['apache2', 'httpd', 'nginx', 'php-fpm']
+  sel_child:
+    Image|endswith: ['/sh', '/bash', '/dash', '/nc', '/ncat', '/python3', '/perl']
+  condition: all of sel_*
+falsepositives:
+  - Ứng dụng web gọi lệnh hệ thống có chủ đích (lập danh sách theo dòng lệnh cụ thể)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1505.003
+```
+
+Trên Windows, cùng ý tưởng với cha là `w3wp.exe` (IIS) và con là `cmd.exe`, `powershell.exe`. Đây là một trong những luật có độ tin cậy cao nhất bạn có thể có: một máy chủ web khoẻ mạnh gần như không bao giờ tự mở shell.
+
+**3. Linux: shell root mọc ra từ chương trình chạy bằng sudo (Sigma)**
+
+```yaml
+title: Shell chạy bằng root sinh ra từ trình soạn thảo hoặc công cụ hay bị lạm dụng
+logsource:
+  product: linux
+  category: process_creation
+detection:
+  sel_parent:
+    ParentImage|endswith: ['/vim', '/vi', '/less', '/more', '/find', '/awk', '/nmap', '/perl', '/python3']
+  sel_child:
+    Image|endswith: ['/sh', '/bash', '/dash']
+  sel_root:
+    User: 'root'
+  condition: all of sel_*
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
+```
+
+Đây là dấu vết của các đường leo thang GTFOBins ở bài 3.1. Nguồn dữ liệu là auditd (luật `root_tu_nguoi_dung` ở trên) hoặc Sysmon for Linux.
+
+**4. Windows: lệnh sinh ra từ dịch vụ quản trị từ xa (Sigma)**
+
+```yaml
+title: Shell (cmd, PowerShell) sinh ra từ WMI, WinRM hoặc DCOM
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    ParentImage|endswith:
+      - '\WmiPrvSE.exe'      # WMI (ví dụ wmiexec)
+      - '\wsmprovhost.exe'   # WinRM, PowerShell Remoting (ví dụ evil-winrm)
+      - '\mmc.exe'           # DCOM qua đối tượng MMC20.Application
+    Image|endswith: ['\cmd.exe', '\powershell.exe', '\pwsh.exe']
+  condition: selection
+falsepositives:
+  - Công cụ quản trị, quản lý cấu hình dùng WMI hoặc WinRM hợp lệ (lập danh sách theo tài khoản và máy nguồn)
+level: medium
+tags:
+  - attack.lateral_movement
+  - attack.t1047
+  - attack.t1021.006
+  - attack.t1021.003
+```
+
+Luật bám vào **cơ chế** (dịch vụ quản trị từ xa sinh ra shell), không bám vào một công cụ cụ thể, nên bắt được WMI, DCOM và WinRM bất kể công cụ nào gọi chúng.
+
+Hai giới hạn cần biết: lệnh PowerShell chạy trong phiên WinRM nằm ngay trong `wsmprovhost.exe`, không sinh tiến trình con, nên phải dựa thêm vào 4104; còn PsExec để lại dấu khác (dịch vụ mới 7045, file ghi vào `ADMIN$`). Trên máy chủ thường được quản trị bằng WinRM, luật này ồn; ghép thêm điều kiện "tài khoản này chưa từng quản trị máy này trong 30 ngày" để giữ lại cái bất thường.
+
+**5. Windows: tiến trình lạ mở bộ nhớ LSASS (Sigma, Sysmon sự kiện 10)**
+
+```yaml
+title: Tiến trình chưa được duyệt đọc bộ nhớ LSASS
+logsource:
+  product: windows
+  category: process_access
+detection:
+  selection:
+    TargetImage|endswith: '\lsass.exe'
+    GrantedAccess: ['0x1010', '0x1410', '0x1438', '0x143a', '0x1fffff']
+  filter_duoc_phep:
+    SourceImage|endswith: ['\MsMpEng.exe', '\wininit.exe', '\csrss.exe']
+  condition: selection and not filter_duoc_phep
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+```
+
+Danh sách được phép phải lấy từ chính môi trường của bạn (phần mềm bảo mật, giám sát). Đừng lọc cả thư mục `C:\Windows\System32\`: `rundll32.exe` nằm ở đó, và rundll32 gọi `comsvcs.dll` là một cách dump LSASS rất phổ biến.
+
+**6. Password spraying: gom theo nguồn thay vì theo tài khoản (KQL minh hoạ)**
+
+```text
+SecurityEvent
+| where EventID in (4625, 4771)
+| summarize SoTaiKhoan = dcount(TargetUserName), SoLan = count()
+    by IpAddress, bin(TimeGenerated, 15m)
+| where SoTaiKhoan > 15
+
+IpAddress     TimeGenerated         SoTaiKhoan  SoLan
+10.10.20.57   2026-11-03 02:15:00   212         214
+```
+
+Một máy thử 212 tài khoản, mỗi tài khoản một lần: không tài khoản nào chạm ngưỡng khoá, nên luật "một tài khoản sai 5 lần" im lặng. Gom theo nguồn thì hiện ra ngay.
+
+### Những chỗ log gần như mù
+
+| Kỹ thuật | Vì sao khó thấy | Làm gì thay |
+|---|---|---|
+| Pass-the-Hash (3.5, 3.9) | Trông y như một đăng nhập NTLM hợp lệ | Phân tầng quản trị; LAPS cho mật khẩu quản trị cục bộ; Credential Guard; chặn 445 giữa các máy trạm |
+| Golden, silver ticket (3.9) | Vé tự làm giả, DC không hề cấp | Bảo vệ DC như tài sản cấp cao nhất; đổi `krbtgt` hai lần khi dọn; chỉ dùng AES; công cụ chuyên giám sát AD |
+| NTLM relay (2.6) | Sự kiện giống đăng nhập thường | Bắt buộc SMB signing; ký LDAP kèm EPA; giảm dần NTLM |
+| Liệt kê AD (3.4) | Giống truy vấn của ứng dụng hợp lệ | Đối tượng AD mồi (bài 8.4); bớt quyền đọc không cần thiết |
+| SQLi qua POST khi chỉ có access.log (2.3) | Log không ghi thân request | WAF, log lỗi của CSDL, và quan trọng nhất là truy vấn tham số hoá |
+
+Tấm bản đồ trung thực phải ghi rõ những dòng "mù" này, kèm biện pháp phòng ngừa đã áp dụng. Báo cáo "chúng ta phát hiện được mọi thứ" là báo cáo sai.
+
+### Kiểm thử tấm bản đồ
+
+Bản đồ chỉ đúng khi đã thử. **Atomic Red Team** (mã nguồn mở của Red Canary) là thư viện các bài thử nhỏ, mỗi bài gắn với một mã kỹ thuật ATT&CK, dùng để chạy **trong lab** và xem luật có kêu không. Chu trình:
+
+1. Chọn một dòng trong bản đồ.
+2. Chạy bài thử tương ứng trong lab.
+3. Kiểm tra log có về SIEM không. Không về là lỗi ở câu hỏi thứ hai.
+4. Kiểm tra luật có kêu không. Không kêu là lỗi ở câu hỏi thứ ba.
+5. Sửa, chạy lại, ghi trạng thái mới vào bản đồ.
+
+Bài 8.3 dựng một lab Wazuh để bạn làm đúng chu trình này với chính các kỹ thuật ở Cấp 2–3; bài 8.4 tự động hoá việc thử luật mỗi khi luật thay đổi.
+
+### Bảng tra nhanh mã sự kiện
+
+| Mã | Nhật ký | Ý nghĩa | Hay dùng để bắt |
+|---|---|---|---|
+| 4624 / 4625 | Security | Đăng nhập thành công / thất bại; đọc kèm Logon Type | Password spraying, di chuyển ngang, Pass-the-Hash |
+| 4648 | Security | Đăng nhập bằng thông tin chỉ định rõ | Dùng thông tin đăng nhập đánh cắp |
+| 4672 | Security | Phiên được cấp đặc quyền đặc biệt | Tài khoản quản trị xuất hiện ở máy lạ |
+| 4688 | Security | Tiến trình mới (bật thêm dòng lệnh) | Gần như mọi thứ chạy trên máy |
+| 4697 / 7045 | Security / System | Dịch vụ mới được cài | PsExec, leo thang qua dịch vụ |
+| 4698 | Security | Tác vụ lập lịch mới | Duy trì, chạy lệnh từ xa |
+| 4720, 4728, 4732 | Security | Tạo tài khoản, thêm vào nhóm | Duy trì, leo quyền trong AD |
+| 4768 / 4769 / 4771 | Security (DC) | Cấp TGT / cấp vé dịch vụ / pre-authentication thất bại | AS-REP roasting, Kerberoasting, password spraying |
+| 4662 | Security (DC) | Truy cập đối tượng AD (cần SACL) | DCSync, đối tượng mồi |
+| 5145 | Security | Truy cập file trên chia sẻ mạng | Ghi vào ADMIN$, liệt kê qua IPC$ |
+| 1102 | Security | Nhật ký Security bị xoá | Xoá dấu vết: luôn là cảnh báo cao |
+| 4104 | PowerShell Operational | Nội dung khối script được chạy | PowerShell làm rối, tải mã từ mạng |
+| Sysmon 1 / 3 / 10 / 11 / 22 | Sysmon | Tiến trình / kết nối mạng / truy cập tiến trình / tạo file / truy vấn DNS | Chuỗi cha-con, LSASS, kết nối ra lạ |
+
+Bên Linux: `/var/log/auth.log` (Debian, Ubuntu) hoặc `/var/log/secure` (RHEL) cho sshd và sudo; `ausearch -k` và `aureport` cho auditd; `access.log`, `error.log` của máy chủ web cho tấn công web.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Bản đồ phát hiện là câu trả lời trung thực nhất khi lãnh đạo hỏi "chúng ta có nhìn thấy kẻ tấn công không". Hãy lập bảng theo dõi <strong>mỗi kỹ thuật tấn công một dòng</strong> (dấu vết để lại, nguồn log tương ứng, luật phát hiện, trạng thái thực tế là thấy rõ, thấy một phần hay đang mù). Ưu tiên bật ngay những nguồn log chi phí thấp nhưng xóa được nhiều vùng mù nhất: sự kiện 4688 kèm dòng lệnh, PowerShell 4104, Sysmon trên Windows, `auditd` trên Linux, cùng với log WAF và DNS nội bộ.
+
+Khi viết luật, hãy <strong>bám vào hành vi bất biến của cơ chế</strong> (như tiến trình web sinh ra shell, dịch vụ quản trị từ xa sinh ra shell, hoặc gom số lần đăng nhập sai theo IP nguồn) thay vì bám vào tên công cụ. Quan trọng không kém, hãy <strong>ghi nhận thẳng thắn những kỹ thuật mà log gần như mù</strong> (Pass-the-Hash, Golden Ticket, NTLM relay) để bù đắp bằng các chốt chặn phòng ngừa ở bài 7.2 và mồi nhử ở bài 8.4, rồi kiểm chứng toàn bộ tấm bản đồ định kỳ bằng các bài thử thực tế trong lab (Atomic Red Team, bài 8.3).
+</Callout>
+
+<Checklist
+  client:visible
+  title="Rà soát độ phủ phát hiện"
+  storageKey="detection-coverage"
+  items={[
+    { label: 'Mỗi kỹ thuật ở Cấp 2–3 đã được xếp: thấy rõ, thấy một phần, hoặc mù' },
+    { label: 'Mọi máy Windows ghi 4688 kèm dòng lệnh', hint: 'Group Policy: Include command line in process creation events' },
+    { label: 'Script Block Logging (4104) bật qua Group Policy' },
+    { label: 'Sysmon triển khai với cấu hình đã tinh chỉnh, log về SIEM' },
+    { label: 'DC bật audit Kerberos và Directory Service Access, có SACL cho quyền sao chép', hint: '4768, 4769, 4771, 4662' },
+    { label: 'Máy chủ Linux có auditd với luật cho file nhạy cảm và execve bằng root' },
+    { label: 'Ứng dụng web công khai có WAF, log WAF về SIEM' },
+    { label: 'DNS nội bộ ghi log truy vấn; máy trạm không dùng DNS ngoài trực tiếp' },
+    { label: 'Log được đẩy về một chỗ và giữ đủ lâu để điều tra ngược' },
+    { label: 'Mỗi luật quan trọng đã được thử bằng một bài thử trong lab', hint: 'Atomic Red Team, bài 8.3' },
+    { label: 'Mỗi kỹ thuật "mù" có biện pháp phòng ngừa hoặc mồi nhử thay thế' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Viết luật phát hiện rất chuẩn trên SIEM nhưng quên chưa bật nguồn log dưới máy trạm và máy chủ.** Luật dù viết tinh vi đến mấy cũng không bao giờ nổ nếu sự kiện gốc không được hệ điều hành ghi lại và đẩy về trung tâm.
+- **Bật ghi sự kiện tạo tiến trình (4688) trên Windows nhưng quên tích chọn tùy chọn ghi kèm dòng lệnh.** Nếu thiếu tham số dòng lệnh, bạn chỉ thấy `certutil.exe` hay `powershell.exe` vừa chạy chứ không hề biết chúng vừa tải mã độc từ địa chỉ nào về.
+- **Tưởng rằng chỉ cần thu thập `access.log` của máy chủ web là phát hiện được mọi đòn SQL injection.** Nhật ký truy cập web mặc định chỉ ghi đường dẫn URL mà không ghi phần thân (body) của các yêu cầu `POST`, nên mọi đòn tấn công qua biểu mẫu đăng nhập đều đi qua mà không để lại chữ nào trong `access.log`.
+- **Viết luật chỉ tìm đúng tên file `mimikatz.exe` hoặc chuỗi `User-Agent: sqlmap`.** Kẻ tấn công chỉ mất vài giây để đổi tên file hoặc truyền cờ `--random-agent` là toàn bộ các luật bám theo tên công cụ đều mù đặc.
+- **Cài Sysmon với cấu hình mặc định ghi lại mọi thao tác nhỏ nhất của hệ điều hành.** Lượng log rác khổng lồ sẽ làm nghẽn đường truyền và tràn kho lưu trữ của SIEM chỉ sau vài ngày, khiến đội vận hành chán nản gỡ bỏ luôn Sysmon thay vì dùng các file cấu hình đã được cộng đồng tinh chỉnh.
+- **Trình bày bản đồ độ phủ phát hiện xanh 100% không có lấy một ô "mù" nào.** Mọi hệ thống giám sát đều có điểm mù trước những kỹ thuật như Pass-the-Hash hay Golden Ticket; che giấu điểm mù làm lãnh đạo chủ quan và không duyệt ngân sách cho các lớp phòng ngừa bù đắp.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Hệ thống chỉ có log truy cập của máy chủ web. SQL injection qua form đăng nhập (gửi bằng POST) có thấy được không?', options: ['Thấy rõ, access.log ghi mọi thứ', 'Gần như không, vì access.log không ghi thân request POST; cần WAF hoặc log lỗi của CSDL', 'Thấy được nếu bật HTTPS'], answer: 1, explain: 'Log truy cập ghi URL, mã trạng thái, User-Agent, nhưng không ghi thân POST. Đó là một chỗ mù phổ biến.' },
+    { q: 'Vì sao bắt password spraying nên gom 4625/4771 theo IP nguồn thay vì theo từng tài khoản?', options: ['Vì password spraying cố ý thử mỗi tài khoản rất ít lần để né ngưỡng khoá, nhưng một nguồn thì thử rất nhiều tài khoản', 'Vì sự kiện 4625 không có tên tài khoản', 'Vì gom theo IP chạy nhanh hơn'], answer: 0, explain: 'Không tài khoản nào chạm ngưỡng, nhưng một nguồn chạm hàng trăm tài khoản: đó là dấu hiệu.' },
+    { q: 'Luật "w3wp.exe hoặc apache2 sinh ra shell" bắt được điều gì?', options: ['Người dùng duyệt web chậm', 'Web shell hoặc thực thi mã từ xa qua ứng dụng web, với độ tin cậy cao', 'Quét cổng'], answer: 1, explain: 'Máy chủ web khoẻ mạnh gần như không bao giờ tự mở shell, nên đây là luật bám hành vi rất đáng tin.' },
+    { q: 'Kỹ thuật nào gần như mù với log thông thường, nên phải dựa chủ yếu vào phòng ngừa?', options: ['Dò mật khẩu SSH bằng hydra', 'Golden ticket', 'Dò thư mục web bằng gobuster'], answer: 1, explain: 'Vé tự làm giả bằng hash krbtgt không đi qua bước cấp vé trên DC. Phòng: bảo vệ DC, đổi krbtgt hai lần khi dọn, chỉ dùng AES.' },
+    { q: 'Bật 4688 nhưng không bật "kèm dòng lệnh" thì thiếu gì?', options: ['Không thiếu gì', 'Chỉ biết tên chương trình đã chạy, không thấy tham số, ví dụ không biết certutil tải gì về', 'Mất cả sự kiện đăng nhập'], answer: 1, explain: 'Phần lớn tín hiệu nằm ở tham số dòng lệnh, nên thiếu nó thì nhiều luật không viết được.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Để biết một kỹ thuật tấn công có phát hiện được hay không, phải trả lời đủ ba câu hỏi: nó để lại dấu vết gì, nguồn log ghi dấu vết đó đã bật và gửi về trung tâm chưa, và luật cảnh báo đã được chạy thử thực tế chưa.
+- Cấu hình log mặc định của Windows và Linux bỏ sót hầu hết kỹ thuật ở Cấp 2–3; việc bật sự kiện 4688 kèm dòng lệnh, PowerShell 4104, Sysmon, `auditd`, log WAF và DNS nội bộ sẽ lấp được phần lớn khoảng trống đó.
+- Các luật phát hiện dựa trên hành vi cha-con của tiến trình và gom nhóm theo nguồn bền vững hơn rất nhiều so với luật tìm kiếm tên công cụ.
+- Những kỹ thuật gần như vô hình trên log thông thường (như Pass-the-Hash, Golden Ticket, NTLM relay) phải được ghi nhận rõ trên bản đồ để bù đắp bằng cứng hóa hệ thống và mồi nhử.
+- Một tấm bản đồ phát hiện chỉ thực sự đáng tin khi từng dòng trên đó đã được kiểm chứng bằng đòn thử thực tế trong môi trường lab.

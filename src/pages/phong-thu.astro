@@ -1,0 +1,171 @@
+---
+import Base from '../layouts/Base.astro';
+import { getLessons } from '../lib/lessons';
+import { defenseTrack } from '../data/defense-track';
+import { url } from '../lib/url';
+
+const lessons = await getLessons();
+const byCode = new Map(lessons.map((l) => [l.data.code, l]));
+
+const stages = defenseTrack.map((stage) => ({
+  ...stage,
+  steps: stage.steps.map((s) => {
+    const lesson = byCode.get(s.code);
+    if (!lesson) throw new Error(`Nhánh phòng thủ trỏ tới bài ${s.code}, nhưng không có bài nào mang mã này.`);
+    return { ...s, lesson };
+  }),
+}));
+
+const minutes = (d: string) => Number(d.match(/\d+/)?.[0] ?? 0);
+const required = stages.flatMap((st) => st.steps.filter((s) => !s.optional));
+const optionalCount = stages.flatMap((st) => st.steps).length - required.length;
+const hours = Math.round(required.reduce((sum, s) => sum + minutes(s.lesson.data.duration), 0) / 60);
+---
+<Base
+  title="Nhánh phòng thủ"
+  description="Thứ tự đọc cho người muốn bảo vệ một doanh nghiệp trước các cuộc tấn công hiện nay, kể cả tấn công dùng AI, không nhắm thi OSCP."
+>
+  <div class="wrap track">
+    <h1>Nhánh phòng thủ</h1>
+    <p class="intro">
+      Dành cho người muốn <strong>bảo vệ một doanh nghiệp</strong>: làm IT, quản trị hệ thống, SOC, hoặc người duy nhất
+      lo bảo mật ở một công ty nhỏ. Bạn không cần đọc hết các bài trên trang.
+      Nhánh này chọn <strong>{required.length} bài bắt buộc</strong> và {optionalCount} bài tuỳ chọn, xếp từ hiểu tới làm, và kết thúc
+      bằng một kế hoạch 90 ngày áp được vào doanh nghiệp thật.
+    </p>
+
+    <div class="facts">
+      <div><span class="f-num">{required.length}</span><span class="f-label">bài bắt buộc</span></div>
+      <div><span class="f-num">~{hours} giờ</span><span class="f-label">tổng thời lượng gợi ý</span></div>
+      <div><span class="f-num">{stages.length}</span><span class="f-label">chặng</span></div>
+    </div>
+
+    <div class="progress" aria-live="polite">
+      <div class="bar"><span class="fill" style="width:0%"></span></div>
+      <span class="progress-text">Đã học 0 / {required.length} bài bắt buộc</span>
+    </div>
+
+    <section class="expect">
+      <div>
+        <h2>Học xong bạn làm được gì</h2>
+        <ul>
+          <li>Hiểu các đường vào phổ biến nhất và dấu vết mỗi kỹ thuật để lại trong log.</li>
+          <li>Áp được các lớp chặn chính trước tấn công dùng AI: MFA chống phishing, gọi lại và duyệt hai người, sao lưu bất biến, mồi nhử.</li>
+          <li>Hardening AD, Windows, Linux theo baseline; rà quản trị viên, ứng dụng được cấp quyền và khoá trên Microsoft 365, Google Workspace và đám mây.</li>
+          <li>Tự dựng một lab giám sát, viết và kiểm thử luật phát hiện, cài mồi nhử và nối với chặn tự động.</li>
+          <li>Lập và theo dõi kế hoạch 90 ngày cho một doanh nghiệp chưa có SOC.</li>
+        </ul>
+      </div>
+      <div>
+        <h2>Chưa đủ cho việc gì</h2>
+        <ul>
+          <li>Một mình bảo vệ một tổ chức lớn. Cần thêm kinh nghiệm thực tế, đồng đội, và một đơn vị ứng cứu để gọi khi vượt sức.</li>
+          <li>Thao tác tới từng nút bấm trên mọi nền tảng. Bài 7.6 và 7.7 cho nguyên tắc và các lệnh kiểm tra chính; giao diện quản trị đổi thường xuyên, nên cách bấm cụ thể hãy theo tài liệu chính thức của nhà cung cấp.</li>
+          <li>Theo kịp mọi chiêu mới. Mối đe doạ dùng AI đổi rất nhanh; theo dõi danh mục KEV và các báo cáo tình báo mối đe doạ.</li>
+        </ul>
+      </div>
+    </section>
+
+    <p class="howto">
+      Bài thuộc Cấp 0–5 viết cho người học tấn công.
+      Trong nhánh này, đọc chúng để hiểu <em>cơ chế</em> và phần <em>Góc phòng thủ</em>; không cần luyện thành thạo từng lệnh tấn công. Nhiều bài ở Cấp 6–8 lấy ví dụ ở một ngân
+      hàng hư cấu, còn bài 8.8 chuyển cùng các nguyên tắc đó sang doanh nghiệp thường.
+    </p>
+
+    {stages.map((stage, i) => (
+      <section class="stage" id={stage.id}>
+        <div class="stage-head">
+          <span class="st-num">Chặng {i + 1}</span>
+          <h2>{stage.name}</h2>
+          <p>{stage.why}</p>
+        </div>
+        <ol class="lesson-list">
+          {stage.steps.map((s) => (
+            <li>
+              <a
+                href={url(`bai/${s.lesson.id}`)}
+                data-code={s.code}
+                data-required={s.optional ? undefined : ''}
+                class={s.optional ? 'is-optional' : undefined}
+              >
+                <span class="l-code">{s.code}</span>
+                <span class="l-body">
+                  <strong>
+                    {s.lesson.data.title}
+                    {s.optional && <span class="tag">tuỳ chọn</span>}
+                  </strong>
+                  <span class="l-sum">{s.note}</span>
+                </span>
+                <span class="l-time">{s.lesson.data.duration}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </section>
+    ))}
+
+    <p class="outro">
+      Những bài không có trong nhánh (ôn thi OSCP, viết lại exploit, bộ nhớ chương trình, shell và truyền file...) phục vụ
+      người làm pentest. Bỏ qua được; quay lại sau nếu muốn hiểu sâu hơn phía tấn công.
+      Xem toàn bộ ở <a href={url('lo-trinh')}>lộ trình đầy đủ</a>.
+    </p>
+  </div>
+</Base>
+
+<script is:inline define:vars={{ total: required.length }}>
+  let done = [];
+  try { done = JSON.parse(localStorage.getItem('oscp-done') || '[]'); } catch (e) {}
+  document.querySelectorAll('.lesson-list a[data-code]').forEach((a) => {
+    if (done.includes(a.dataset.code)) a.classList.add('is-done');
+  });
+  const n = document.querySelectorAll('.lesson-list a.is-done[data-required]').length;
+  document.querySelector('.fill').style.width = (n / total) * 100 + '%';
+  document.querySelector('.progress-text').textContent = 'Đã học ' + n + ' / ' + total + ' bài bắt buộc';
+</script>
+
+<style>
+  .track { max-width: 860px; padding-top: 28px; }
+  .intro { color: var(--muted); font-size: 1.05rem; }
+  .intro strong { color: var(--text); }
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0 4px; }
+  .facts > div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; }
+  .f-num { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
+  .f-label { color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+  .progress { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; font-size: 0.9rem; color: var(--muted); }
+  .bar { flex: 1; height: 8px; background: var(--surface-2); border-radius: 99px; overflow: hidden; max-width: 320px; }
+  .fill { display: block; height: 100%; background: var(--good); transition: width 0.3s; }
+  .expect { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+  .expect > div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 2px 18px 6px; }
+  .expect h2 { font-size: 1.05rem; margin: 14px 0 6px; }
+  .expect ul { padding-left: 1.2em; margin: 0 0 10px; font-size: 0.95rem; }
+  .expect li { margin: 4px 0; }
+  .howto, .outro { color: var(--muted); }
+  .howto { margin-top: 20px; }
+  .outro { margin-top: 36px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .stage { margin-top: 36px; scroll-margin-top: 72px; }
+  .stage-head h2 { margin: 2px 0 4px; padding: 0; }
+  .stage-head p { color: var(--muted); margin-bottom: 12px; }
+  .st-num { font-family: var(--mono); font-size: 0.82rem; color: var(--accent); }
+  .lesson-list { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--line); }
+  .lesson-list li { margin: 0; }
+  .lesson-list a { display: grid; grid-template-columns: 44px 1fr auto; gap: 12px; padding: 12px 14px; margin-left: -2px; border-left: 2px solid transparent; text-decoration: none; color: var(--text); }
+  .lesson-list a:hover { background: var(--surface); border-left-color: var(--accent); }
+  .lesson-list a.is-optional strong { font-weight: 600; }
+  .l-code { font-family: var(--mono); color: var(--muted); font-size: 0.9rem; padding-top: 2px; }
+  .lesson-list a.is-done { border-left-color: var(--good); }
+  .lesson-list a.is-done .l-code { color: var(--good); }
+  .lesson-list a.is-done .l-code::after { content: ' ✓'; }
+  .l-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .l-sum { color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+  .l-time { font-size: 0.8rem; color: var(--muted); white-space: nowrap; padding-top: 3px; }
+  .tag { display: inline-block; margin-left: 8px; font-size: 0.72rem; font-weight: 600; color: var(--muted); background: var(--surface-2); border-radius: 99px; padding: 0 8px; vertical-align: 2px; }
+  @media (max-width: 680px) {
+    .expect { grid-template-columns: 1fr; }
+    .facts { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .f-num { font-size: 1.2rem; }
+  }
+  @media (max-width: 560px) {
+    .lesson-list a { grid-template-columns: 38px 1fr; }
+    .l-time { display: none; }
+  }
+</style>

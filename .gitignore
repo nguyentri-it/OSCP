@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.astro/
+.DS_Store
+*.log
+
+# Công cụ cục bộ (cấu hình preview, v.v.)
+.claude/

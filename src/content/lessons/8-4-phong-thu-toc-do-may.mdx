@@ -1,0 +1,292 @@
+---
+title: "Phòng thủ ở tốc độ máy: mồi nhử và ngăn chặn tự động"
+code: "8.4"
+level: 8
+summary: "Khi AI agent tự điều phối cuộc xâm nhập, quy trình cảnh báo rồi chờ người duyệt không còn kịp. Dùng mồi nhử để có tín hiệu gần như không thể nhầm, duyệt trước playbook ngăn chặn tự động, và viết luật bám vào hành vi thay vì công cụ."
+duration: "85 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu bốn đặc điểm của tấn công do AI agent điều phối và hệ quả cho phòng thủ"
+  - "Triển khai được mồi nhử (đối tượng AD mồi, tài khoản SPN mồi, file mồi, khoá mồi) và hiểu vì sao chúng gần như không báo động giả"
+  - "Thiết kế ngăn chặn tự động được duyệt trước, gắn với độ tin cậy của tín hiệu, có cầu dao an toàn"
+  - "Viết luật khó né hơn, phát hiện mã độc gọi API AI, và kiểm thử luật tự động"
+---
+import Callout from '../../components/ui/Callout.astro';
+import ContainmentRace from '../../components/sim/ContainmentRace.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Kho tiền của một ngân hàng có quy định: thấy người lạ thì bảo vệ gọi cho trưởng ca, trưởng ca tới xem rồi mới cho khoá cửa. Quy định đó ổn khi tên trộm cần một tiếng để cạy két. Nó vô dụng khi tên trộm chỉ cần ba phút.
+
+Có một cách khác: đặt trong kho một thỏi vàng giả gắn chuông. Không nhân viên nào có lý do chạm vào nó. Ai nhấc nó lên thì cửa tự khoá ngay, không cần gọi ai, vì gần như chắc chắn đó là kẻ trộm.
+
+Bài này nói về hai thứ đó: **thỏi vàng giả** (mồi nhử) và **cửa tự khoá đã được duyệt từ trước** (ngăn chặn tự động).
+
+## Kiến thức chính
+
+### Tấn công do AI agent điều phối trông thế nào
+
+Bài 6.1 nhắc tới báo cáo Anthropic công bố tháng 11/2025: một nhóm gián điệp dùng AI agent (AI tự lập kế hoạch và tự thực hiện nhiều bước liên tiếp) làm khoảng 80–90% phần việc kỹ thuật của chiến dịch, con người chỉ can thiệp ở vài điểm cần quyết định. Lúc cao điểm, agent gửi hàng nghìn yêu cầu, thường là nhiều yêu cầu mỗi giây.
+
+Nhìn từ phía phòng thủ, kiểu tấn công này có bốn đặc điểm. Mỗi đặc điểm vừa là điều đáng lo, vừa là một kẽ hở để ta bắt nó:
+
+| Đặc điểm | Mối nguy | Cơ hội cho phòng thủ |
+|---|---|---|
+| **Nhanh** | Từ lúc vào được tới lúc lấy dữ liệu tính bằng phút | Ngăn chặn cũng phải tính bằng phút, nên phải tự động ở chỗ đủ tin |
+| **Vét cạn** | Không bỏ sót đường nào: đọc mọi đối tượng AD, mọi thư mục chia sẻ | Chắc chắn sẽ chạm vào mồi nhử, thứ mà người thật không bao giờ chạm vào |
+| **Tự thích nghi** | Bị chặn bằng cách này thì đổi ngay sang cách khác | Luật phải bám vào hành vi và mục tiêu của nó, không bám vào dấu vết của một công cụ cụ thể |
+| **Ồn về khối lượng** | Lượng yêu cầu khổng lồ có thể làm chìm các dấu hiệu thật trong đống log | Lượng này lệch rất xa mức bình thường của từng tài khoản, từng máy, nên đo được |
+
+### Mồi nhử (deception)
+
+**Mồi nhử** là tài khoản, file, khoá, bản ghi giả được cài lẫn vào hệ thống thật. Không ai làm việc hợp lệ có lý do để chạm vào chúng, nên hễ có ai chạm vào là gần như chắc chắn có kẻ xâm nhập. Trong SOC, đây là thứ hiếm hoi mà báo động giả gần như bằng không.
+
+| Mồi | Cài ở đâu | Bắt được gì | Dấu vết |
+|---|---|---|---|
+| Đối tượng AD mồi | Một tài khoản tên hấp dẫn (ví dụ `adm-backup`), bật audit đọc | Liệt kê AD vét cạn (bài 3.4) | 4662 trên đối tượng mồi |
+| Tài khoản SPN mồi | Tài khoản có gắn SPN (nhãn "tài khoản này chạy một dịch vụ", thứ mà Kerberoasting nhắm vào) nhưng thật ra không dịch vụ nào dùng | Kerberoasting (bài 3.5), bất kể kiểu mã hoá | 4769 với ServiceName là tài khoản mồi |
+| Mật khẩu mồi | Đặt trong script cũ, trường mô tả, file cấu hình | Kẻ gian dùng thông tin vừa lục được | Đăng nhập thử tài khoản mồi (4625, 4771) |
+| File mồi | `mat-khau-he-thong.xlsx` trên thư mục chia sẻ | Lục thư mục tìm mật khẩu, thu thập dữ liệu | 4663 khi file bị mở |
+| Khoá đám mây mồi | Khoá AWS không có quyền gì, để trong repo cũ | Lộ mã nguồn, lộ máy dev (bài 2.9) | CloudTrail ghi lời gọi bằng khoá mồi |
+| Bản ghi khách hàng mồi | Vài khách hàng giả, độc nhất, trong CSDL | CSDL bị lấy ra ngoài (bài 8.6) | Thông tin mồi xuất hiện ở nơi lạ hoặc bị dùng |
+
+Ba điều kiện để mồi hoạt động mà không thành lỗ hổng:
+
+1. **Trông thật:** tên, mô tả, ngày tạo giống tài khoản cũ bị bỏ quên. Mồi quá lộ thì kẻ tấn công (và cả AI của chúng) bỏ qua.
+2. **Không có quyền thật:** không thuộc nhóm nào, chặn đăng nhập tương tác, mật khẩu ngẫu nhiên rất dài để vé xin được không bao giờ bẻ nổi. Mồi bị chiếm cũng không mở ra được gì.
+3. **Có người nghe chuông:** bật đúng chính sách ghi log (audit policy), gửi log về SIEM, và gắn với playbook (kịch bản xử lý viết sẵn). Mồi mà không ai giám sát thì chỉ là một tài khoản thừa.
+
+**Tạo tài khoản SPN mồi (chạy trong lab hoặc theo quy trình thay đổi của đơn vị)**
+
+```powershell
+# Mật khẩu ngẫu nhiên 72 ký tự: vé xin được không thể bẻ khoá
+$pw = ConvertTo-SecureString ((New-Guid).Guid + (New-Guid).Guid) -AsPlainText -Force
+
+New-ADUser -Name 'svc-sqlbackup-old' -SamAccountName 'svc-sqlbackup-old' `
+  -Description 'SQL backup cu - khong xoa' -AccountPassword $pw -Enabled $true `
+  -Path 'OU=Service Accounts,DC=saomai,DC=lab'
+
+# SPN trỏ tới một máy không tồn tại: không dịch vụ thật nào xin vé này
+Set-ADUser 'svc-sqlbackup-old' -ServicePrincipalNames @{Add='MSSQLSvc/sql-old.saomai.lab:1433'}
+```
+
+Sau đó thêm tài khoản vào chính sách "Deny log on locally" và "Deny log on through Remote Desktop Services" để nó không đăng nhập được ở đâu.
+
+**Luật Sigma: có người xin vé cho tài khoản mồi**
+
+```yaml
+title: Yêu cầu vé dịch vụ cho tài khoản SPN mồi
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4769
+    ServiceName: 'svc-sqlbackup-old'   # không dịch vụ thật nào dùng tài khoản này
+  condition: selection
+level: critical
+tags:
+  - attack.credential_access
+  - attack.t1558.003
+```
+
+Luật này không quan tâm vé RC4 hay AES, công cụ nào hay ai xin. Nó chỉ hỏi một câu không thể trả lời sai: có ai đụng vào thứ không ai được đụng không.
+
+**Luật Sigma: file mồi bị mở**
+
+```yaml
+title: File mồi trên thư mục chia sẻ bị mở
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4663
+    ObjectName|endswith: '\mat-khau-he-thong.xlsx'
+  filter_backup:
+    SubjectUserName: 'svc-backup'      # phần mềm sao lưu được phép đọc mọi file
+  condition: selection and not filter_backup
+level: critical
+```
+
+<Callout type="note">
+File mồi cần bật <strong>Audit File System</strong> và đặt SACL ghi lại việc đọc trên chính file đó. Phần mềm sao lưu, máy quét lỗ hổng, công cụ lập chỉ mục cũng có thể chạm vào mồi; liệt kê các tài khoản này và loại trừ chúng ngay từ đầu, nếu không mồi sẽ kêu oan và mất giá trị.
+</Callout>
+
+### Ngăn chặn tự động được duyệt trước
+
+Bài 8.1 chia hành động phản ứng theo **mức ảnh hưởng**. Khi kẻ tấn công đi ở tốc độ máy, cần thêm chiều thứ hai: **độ tin cậy của tín hiệu**. Tín hiệu càng khó nhầm thì càng có thể cho máy hành động ngay.
+
+| Độ tin cậy | Ví dụ tín hiệu | Hành động tự động đã duyệt trước |
+|---|---|---|
+| Rất cao | Mồi bị chạm; khoá đám mây mồi bị dùng | Thu hồi phiên, khoá tài khoản, cô lập máy trạm nguồn: ngay lập tức |
+| Cao | EDR bắt đọc bộ nhớ LSASS; luật DCSync | Thu hồi phiên, cô lập máy trạm; với máy chủ thì báo trưởng ca |
+| Vừa | Khối lượng vé bất thường; đăng nhập từ nơi lạ | Buộc xác thực lại, tăng mức ghi log, analyst xem |
+| Thấp | UEBA lệch nhẹ khỏi thói quen | Ghi nhận, gom thêm ngữ cảnh |
+
+"Duyệt trước" nghĩa là lãnh đạo đã ký sẵn một playbook ghi rõ: điều kiện kích hoạt, hành động, tài sản ngoại lệ, ai được báo, và cách đảo ngược. Lúc sự cố xảy ra, không ai phải đi xin phép.
+
+Bốn cầu dao an toàn phải đi kèm:
+
+- **Danh sách tài sản không tự cô lập:** máy chủ thanh toán lõi, DC. Với chúng, hành động thay thế là khoá tài khoản và chặn kết nối ra, rồi báo người ngay.
+- **Giới hạn số lần:** quá N lần tự động trong một giờ thì dừng và gọi người. Kẻ tấn công biết bạn tự cô lập có thể cố tình chạm mồi từ hàng loạt máy để bạn tự làm tê liệt chính mình.
+- **Đảo ngược được:** mọi hành động tự động phải gỡ được trong vài phút.
+- **Ghi log và xem lại:** mỗi lần tự động chạy đều được analyst xem lại sau, kể cả khi đúng.
+
+### Thử tự tay
+
+<ContainmentRace client:visible />
+
+Ba điều nên rút ra:
+
+1. **Phát hiện sớm mà phản ứng chậm thì vẫn thua.** Bật riêng luật theo khối lượng: phát hiện ở phút 3 nhưng chờ hàng đợi tới phút 28, trong khi mã hoá xong ở phút 20.
+2. **Tự động hoá cần nhiên liệu.** Bật riêng ngăn chặn tự động: không gì thay đổi, vì chưa có tín hiệu đủ tin để tự động. Mồi nhử chính là nhiên liệu đó.
+3. **Phòng ngừa ở lớp danh tính vẫn rẻ nhất.** Conditional Access chặn từ phút 0. Nhưng đừng chỉ dựa vào nó: các lớp sau tồn tại cho ngày lớp đầu thủng.
+
+### Luật bám vào hành vi, không bám vào công cụ
+
+Kẻ tấn công dùng AI đổi được rất rẻ những thứ bề mặt: hash của file, IP, tên miền, câu chữ email. Thứ đắt nhất để đổi là **cách làm** (TTP): muốn Kerberoasting thì vẫn phải xin vé dịch vụ. Mô hình "kim tự tháp nỗi đau" của David Bianco xếp các loại dấu hiệu theo độ khó đổi:
+
+<ConceptMap
+  client:visible
+  title="Dấu hiệu nào AI đổi rẻ, dấu hiệu nào đắt"
+  width={660}
+  height={330}
+  zones={[
+    { label: 'Kẻ tấn công đổi rẻ, AI đổi gần như miễn phí', x: 20, y: 14, w: 300, h: 306 },
+    { label: 'Đắt để đổi: đầu tư luật ở đây', x: 340, y: 14, w: 300, h: 306 },
+  ]}
+  nodes={[
+    { id: 'hash', label: 'Hash file', x: 170, y: 70, w: 200, tone: 'muted', detail: 'Đổi một byte là hash khác. AI viết lại mã độc mỗi lần chạy nên luật theo hash gần như vô dụng với kẻ có chủ đích.' },
+    { id: 'ip', label: 'IP, tên miền', x: 170, y: 155, w: 200, tone: 'muted', detail: 'Thuê máy chủ mới, đăng ký tên miền mới mất vài phút. Danh sách chặn vẫn có ích với rác phổ thông nhưng luôn đi sau.' },
+    { id: 'tool', label: 'Dấu vết công cụ', sub: 'vd: chỉ bắt vé RC4', x: 170, y: 245, w: 200, tone: 'warn', detail: 'Luật chỉ bắt vé RC4 ở bài 8.1 thuộc tầng này. Công cụ có tuỳ chọn xin vé AES; AI agent bị chặn sẽ tự đổi sang.' },
+    { id: 'ttp', label: 'Hành vi (TTP)', sub: 'xin vé hàng loạt, chạm mồi', x: 512, y: 245, w: 220, tone: 'accent', detail: 'Muốn Kerberoasting thì phải xin nhiều vé dịch vụ trong thời gian ngắn, bất kể mã hoá gì. Muốn lục mật khẩu thì phải mở file. Luật ở tầng này buộc kẻ tấn công đổi cả cách làm.' },
+    { id: 'goal', label: 'Mục tiêu', sub: 'dữ liệu ra ngoài, xoá sao lưu', x: 512, y: 120, w: 220, tone: 'accent', detail: 'Cuối cùng kẻ tấn công phải lấy dữ liệu hoặc phá hệ thống. Giám sát luồng ra và hành vi phá sao lưu (bài 8.6) là lưới cuối cùng.' },
+  ]}
+  edges={[
+    { from: 'tool', to: 'ttp', label: 'nâng tầng luật' },
+    { from: 'ttp', to: 'goal', dashed: true },
+  ]}
+/>
+
+Áp vào luật Kerberoasting của bài 8.1: thay vì chỉ lọc vé RC4, gom **mọi** vé dịch vụ theo người xin và so với mức bình thường của chính họ.
+
+**Truy vấn: xin vé hàng loạt, mọi loại mã hoá (KQL minh hoạ)**
+
+```text
+SecurityEvent
+| where EventID == 4769
+| where ServiceName !endswith "$" and ServiceName != "krbtgt"
+| where TargetUserName !in ("svc-scanner", "svc-monitor")   // tài khoản quét hợp lệ đã biết
+| summarize SoDichVu = dcount(ServiceName), LoaiMaHoa = make_set(TicketEncryptionType)
+    by TargetUserName, IpAddress, bin(TimeGenerated, 10m)
+| where SoDichVu >= 10
+
+TargetUserName   IpAddress     SoDichVu  LoaiMaHoa
+it.hoang         10.20.5.41    22        ["0x12"]          // 0x12 = AES256: luật chỉ RC4 đã bỏ sót
+```
+
+### Mã độc gọi AI khi đang chạy
+
+Tháng 11/2025, nhóm tình báo mối đe doạ của Google công bố các họ mã độc gọi tới mô hình ngôn ngữ ngay trong lúc chạy, để sinh lệnh mới hoặc tự viết lại mình (ví dụ PROMPTFLUX, PROMPTSTEAL). Vỏ ngoài đổi liên tục, nhưng có một hành vi không giấu được: **một tiến trình không phải trình duyệt hay ứng dụng được duyệt lại nói chuyện với API AI công khai**.
+
+**Luật Sigma: tiến trình lạ phân giải tên miền API mô hình AI (Sysmon Event ID 22)**
+
+```yaml
+title: Tiến trình chưa được duyệt gọi tới API mô hình AI công khai
+logsource:
+  product: windows
+  category: dns_query
+detection:
+  selection:
+    QueryName|endswith:
+      - 'api.openai.com'
+      - 'api.anthropic.com'
+      - 'generativelanguage.googleapis.com'
+      - 'huggingface.co'
+  filter_approved:
+    Image|endswith:
+      - '\chrome.exe'
+      - '\msedge.exe'
+      - '\ai-gateway-agent.exe'   # agent của AI gateway nội bộ đã duyệt
+  condition: selection and not filter_approved
+level: medium
+tags:
+  - attack.command_and_control
+```
+
+Cách bền hơn là kiến trúc: cho mọi việc dùng AI đi qua một **AI gateway nội bộ** (ghi log, lọc dữ liệu nhạy cảm, bài 6.4), và chặn máy chủ gọi thẳng ra API AI. Khi đó mọi kết nối trực tiếp đều đáng ngờ.
+
+### Kiểm thử luật một cách tự động
+
+Kẻ tấn công dùng AI thử biến thể mới mỗi ngày, nên "luật đã viết" không có nghĩa là "luật còn bắt được". Cách làm hiện đại:
+
+- **Luật như mã nguồn (detection-as-code):** luật nằm trong kho Git, có người duyệt, mỗi luật đi kèm một mẫu log khớp và một mẫu không khớp.
+- **Mô phỏng kỹ thuật tấn công tự động:** chạy định kỳ các bài kiểm thử nhỏ gắn với ATT&CK, như Atomic Red Team, hoặc kịch bản nhiều bước bằng MITRE Caldera, trong lab hoặc môi trường được phép. Mỗi lần chạy trả lời: luật có kêu không, kêu sau bao lâu, ngăn chặn sau bao lâu.
+- **Thử cả biến thể:** với mỗi kỹ thuật, thử ít nhất một biến thể mà kẻ tấn công thích nghi sẽ dùng (vé AES thay RC4, công cụ khác cùng mục đích).
+
+**Kết quả một đợt kiểm thử mẫu (hư cấu)**
+
+```text
+Kỹ thuật                    Biến thể               Luật kêu?   Tới lúc ngăn chặn
+T1558.003 Kerberoasting     vé RC4                 Có          18 phút (chờ analyst)
+T1558.003 Kerberoasting     vé AES                 KHÔNG       —                    ← sửa ngay
+T1558.003 Kerberoasting     chạm SPN mồi           Có          40 giây (tự động)
+T1003.006 DCSync            từ máy trạm            Có          6 phút
+T1567     Đẩy dữ liệu ra    dịch vụ lưu trữ mây    Có          27 phút              ← quá chậm
+```
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Để đối phó với các chiến dịch tấn công được tự động hóa ở tốc độ máy, đội phòng thủ cũng phải tự động hóa việc ngăn chặn — nhưng <strong>chỉ bấm nút tự động ở những nơi tín hiệu gần như không thể nhầm</strong>. Bí quyết nằm ở việc rải <strong>mồi nhử (deception)</strong> tại những ngã tư mà kẻ tấn công vét cạn chắc chắn sẽ đi qua: tài khoản SPN mồi và đối tượng mồi trong AD, tệp mật khẩu mồi trên thư mục chia sẻ, khóa đám mây mồi trong kho mã nguồn và bản ghi khách hàng mồi trong CSDL. Mồi phải trông giống thật, tuyệt đối không có quyền thật và được nối thẳng với <strong>playbook ngăn chặn tự động đã được lãnh đạo phê duyệt trước</strong>, kèm theo các cầu dao an toàn (danh sách máy chủ trọng yếu không bao giờ tự cô lập, giới hạn số lần kích hoạt mỗi giờ và cơ chế tự gỡ sau thời gian ngắn).
+
+Song song đó, hãy nâng các luật phát hiện lên tầng hành vi (gom theo khối lượng vé và lưu lượng thay vì chỉ bắt một dấu hiệu công cụ như RC4), đưa toàn bộ việc sử dụng AI của nhân viên qua cổng nội bộ để bắt gọn các tiến trình lạ gọi thẳng API mô hình ngôn ngữ, và kiểm thử định kỳ để đo chính xác số phút từ lúc chạm bẫy tới lúc cô lập xong.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Sẵn sàng cho tấn công ở tốc độ máy"
+  storageKey="machine-speed"
+  items={[
+    { label: 'Có ít nhất một tài khoản SPN mồi và một đối tượng AD mồi, đã bật audit', hint: '4769, 4662' },
+    { label: 'Có file mồi trên các thư mục chia sẻ quan trọng, đã đặt SACL', hint: '4663; loại trừ tài khoản sao lưu, máy quét' },
+    { label: 'Có khoá đám mây mồi trong repo và cảnh báo khi khoá được dùng', hint: 'Bài 2.9' },
+    { label: 'Playbook tự động cho tín hiệu mồi đã được lãnh đạo duyệt trước' },
+    { label: 'Có danh sách tài sản không tự cô lập và hành động thay thế cho chúng' },
+    { label: 'Có giới hạn số lần tự động trong một giờ' },
+    { label: 'Luật Kerberoasting không phụ thuộc loại mã hoá', hint: 'Gom theo khối lượng' },
+    { label: 'Có luật cho tiến trình lạ gọi API AI công khai' },
+    { label: 'Luật được kiểm thử tự động ít nhất mỗi tháng, đo thời gian tới lúc ngăn chặn' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Đặt tên tài khoản hay tệp mồi quá lộ liễu kiểu `honeypot_admin` hoặc vứt ở thư mục không ai ngó tới.** Cả kẻ tấn công là người lẫn AI agent đều biết lọc bỏ những cái tên sặc mùi bẫy; mồi muốn phát huy tác dụng phải mang tên hợp lý như `svc-sqlbackup-old` và nằm đúng nơi công cụ liệt kê sẽ quét qua.
+- **Tạo tài khoản mồi nhưng lại quên tước quyền hoặc đặt mật khẩu ngắn dễ đoán.** Nếu kẻ tấn công bẻ được mật khẩu của tài khoản mồi rồi dùng nó đăng nhập hoặc mở đường hầm SSH, chiếc bẫy của bạn đã biến thành một lỗ hổng thật.
+- **Quên loại trừ tài khoản của phần mềm sao lưu và máy quét lỗ hổng định kỳ khỏi luật cảnh báo mồi.** Khi trình sao lưu chạy lúc 2 giờ sáng chạm vào tệp mồi và làm còi báo động kêu oan mỗi đêm, đội trực sẽ tắt luôn luật đó trước cả khi kẻ trộm thật xuất hiện.
+- **Gắn hành động tự động cô lập máy cho những cảnh báo hành vi có độ tin cậy trung bình.** Tự động hóa trên tín hiệu dễ báo nhầm sẽ khóa tài khoản và ngắt mạng của hàng loạt nhân viên đang làm việc bình thường, làm tê liệt doanh nghiệp nhanh không kém gì mã độc.
+- **Triển khai playbook tự động chặn IP hoặc cô lập máy mà không đặt trần giới hạn số lần mỗi giờ.** Kẻ tấn công khi nhận ra cơ chế tự động của bạn có thể giả mạo địa chỉ hoặc cố tình kích hoạt mồi hàng loạt trên các máy chủ quan trọng để mượn tay SOAR đánh sập toàn bộ hệ thống.
+- **Viết xong bộ luật phát hiện rồi để cố định suốt nhiều năm không kiểm thử lại với các biến thể mới.** Công cụ tấn công chỉ cần đổi từ xin vé RC4 sang AES là những luật cũ bám theo dấu vết công cụ sẽ im bặt nếu không được kiểm thử định kỳ.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Vì sao mồi nhử gần như không có báo động giả?', options: ['Vì chúng được mã hoá', 'Vì không ai làm việc hợp lệ có lý do chạm vào chúng', 'Vì chúng chỉ chạy ban đêm'], answer: 1, explain: 'Tài khoản, file, khoá mồi không phục vụ việc gì thật, nên có ai chạm là gần như chắc chắn đáng ngờ (sau khi đã loại trừ phần mềm sao lưu, máy quét).' },
+    { q: 'Vì sao AI agent tấn công lại dễ dính mồi nhử hơn người?', options: ['Vì AI không đọc được tiếng Việt', 'Vì nó liệt kê và thử vét cạn mọi đường, nên chắc chắn đi qua chỗ đặt mồi', 'Vì AI luôn bị chặn bởi tường lửa'], answer: 1, explain: 'Đặc điểm vét cạn giúp agent không bỏ sót đường nào, và cũng khiến nó chạm vào thứ người thật không bao giờ chạm.' },
+    { q: 'Tín hiệu nào phù hợp để cho máy tự cô lập ngay, không chờ analyst?', options: ['Một nhân viên đăng nhập muộn hơn thường lệ', 'Có người xin vé Kerberos cho tài khoản SPN mồi', 'Lưu lượng mạng tăng nhẹ'], answer: 1, explain: 'Chỉ tự động trên tín hiệu độ tin cậy rất cao. Hai tín hiệu kia cần người xem vì có nhiều cách giải thích vô hại.' },
+    { q: 'Luật Kerberoasting chỉ bắt vé RC4 có điểm yếu gì trước kẻ tấn công dùng AI?', options: ['Không có điểm yếu', 'Kẻ tấn công có thể xin vé AES để né, và AI agent sẽ tự đổi khi bị chặn', 'Luật chạy quá chậm'], answer: 1, explain: 'Luật bám vào dấu vết công cụ thì dễ né. Gom theo khối lượng vé mọi loại mã hoá, cộng tài khoản SPN mồi, bắt được cả biến thể.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Các chiến dịch tấn công do AI agent điều phối có bốn đặc trưng rõ rệt: tốc độ cực nhanh, liệt kê vét cạn, tự thích nghi khi bị chặn và tạo lưu lượng lớn — mỗi đặc trưng đều mở ra một cơ hội tương ứng cho đội phòng thủ.
+- Mồi nhử (deception) cung cấp tín hiệu có độ tin cậy gần như tuyệt đối để kích hoạt playbook ngăn chặn tự động ngay lập tức mà không cần chờ con người phê duyệt, miễn là luôn đi kèm các cầu dao an toàn.
+- Hãy thiết kế luật phát hiện bám chặt vào hành vi và mục tiêu cuối cùng của kẻ tấn công thay vì dấu vết bề mặt của công cụ, đồng thời duy trì kiểm thử tự động để đo lường thời gian thực tế từ lúc chạm bẫy tới lúc cô lập hoàn tất.

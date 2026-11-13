@@ -1,0 +1,286 @@
+---
+title: "Bảo mật đám mây: nền tảng AWS cho pentester"
+code: "2.9"
+level: 2
+summary: "Ngày càng nhiều hệ thống bạn gặp không còn là một máy chủ trong phòng mà là tài nguyên thuê trên AWS. Ranh giới tấn công cũng đổi theo: không còn tường lửa biên để vượt qua, mà là IAM, tức ai được làm gì với cái thẻ nào."
+duration: "80 phút"
+updated: "2026-11-09"
+prereq: ["2.3"]
+objectives:
+  - "Giải thích được mô hình trách nhiệm chung, và vì sao phần lớn sự cố đám mây là lỗi cấu hình của khách hàng, không phải của AWS"
+  - "Liệt kê được tài nguyên AWS bằng aws cli ngay khi có một bộ thông tin xác thực"
+  - "Nối được chuỗi SSRF → dịch vụ metadata → đánh cắp thông tin vai trò, và giải thích từng mắt xích"
+  - "Nhận ra các cấu hình sai phổ biến (IMDSv1, quyền quá rộng, S3 công khai) và biết cách phòng thủ cho từng chỗ"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Walkthrough from '../../components/sim/Walkthrough.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Trong một toà nhà truyền thống, an ninh là tường rào và cổng bảo vệ: vào được bên trong là gần như đi lại tự do. Đám mây giống một toà nhà văn phòng cho thuê, nơi mỗi cánh cửa mở bằng một thẻ từ riêng. Không còn "bên trong" và "bên ngoài" rõ ràng; thứ quyết định ai vào được phòng nào là **tấm thẻ**, tức là **quyền (IAM)**.
+
+Vì thế trong đám mây, phần lớn sự cố không đến từ một lỗ hổng phần mềm, mà từ **cấu hình sai**: một thẻ cấp quá nhiều quyền, một kho dữ liệu để công khai, một khoá truy cập lọt vào mã nguồn.
+
+Đây cũng là lý do bài này khác các bài trước: bạn không đi tìm một lỗi trong phần mềm, mà đi tìm một quyết định cấu hình sai của con người, và cách tìm nó là nối các bước nhỏ lại thành một chuỗi, giống đúng cách bạn đã làm với mọi lỗ hổng từ đầu Cấp 2.
+
+<Callout type="warn">
+Chỉ kiểm thử trên tài khoản đám mây của chính bạn hoặc nơi được phép bằng văn bản. Nhiều nhà cung cấp còn có quy định riêng về kiểm thử; đọc chính sách của họ trước. Mọi ví dụ dưới đây là môi trường hư cấu.
+</Callout>
+
+## Kiến thức chính
+
+### Mô hình trách nhiệm chung
+
+Nhà cung cấp (AWS, Azure, GCP) lo an ninh *của* đám mây: phần cứng, trung tâm dữ liệu, lớp ảo hoá. Khách hàng lo an ninh *trong* đám mây: cấu hình dịch vụ, phân quyền, dữ liệu, bản vá hệ điều hành trên máy ảo của mình.
+
+Hầu hết sự cố nằm ở nửa của khách hàng. Hiểu ranh giới này để biết cái gì bạn kiểm thử được và cái gì thuộc về nhà cung cấp.
+
+### IAM là trung tâm
+
+**IAM** (Identity and Access Management, quản lý danh tính và quyền truy cập) trả lời câu hỏi "ai được làm gì trên tài nguyên nào". Vài khái niệm cốt lõi của AWS:
+
+- **User:** danh tính cho người hoặc ứng dụng, có thể có **khoá truy cập** (access key) để gọi API.
+- **Role (vai trò):** danh tính *tạm thời* mà một dịch vụ hoặc người dùng "mặc vào" để lấy quyền trong thời gian ngắn. Máy ảo EC2 thường gắn một role để truy cập dịch vụ khác mà không cần nhét khoá cứng.
+- **Policy (chính sách):** văn bản JSON ghi rõ được phép (Allow) hay bị cấm (Deny) hành động gì trên tài nguyên nào.
+
+Nguyên tắc vàng là **quyền tối thiểu** (least privilege, nối tiếp bài 1.4, 3.1): mỗi danh tính chỉ có đúng quyền cần làm việc của nó. Phần lớn đường leo thang trong đám mây bắt nguồn từ việc vi phạm nguyên tắc này.
+
+### Dịch vụ metadata của máy ảo
+
+Mỗi máy ảo trên AWS (gọi là EC2) có thể hỏi một địa chỉ nội bộ đặc biệt — `169.254.169.254` — để lấy thông tin về chính nó, gồm cả **thông tin xác thực tạm thời của role đang gắn**. Đây là tiện ích hợp lệ, nhưng cũng là mục tiêu béo bở: nếu kẻ tấn công khiến máy chủ *thay mặt họ* gọi tới địa chỉ này (qua lỗ hổng **SSRF** — Server-Side Request Forgery), họ lấy được khoá của role.
+
+SSRF nghĩa là lừa chính máy chủ đi gọi một địa chỉ do kẻ tấn công chọn, nơi mà kẻ tấn công từ bên ngoài không tự gọi tới được.
+
+Có hai phiên bản:
+
+- **IMDSv1:** trả thông tin cho bất kỳ request GET nào. Dễ bị lạm dụng qua SSRF.
+- **IMDSv2:** bắt buộc lấy một token trước bằng một request đặc biệt rồi mới hỏi được. Nhiều kiểu SSRF đơn giản không thực hiện được bước lấy token này, nên IMDSv2 chặn được phần lớn. Bật IMDSv2 bắt buộc là một trong các biện pháp hiệu quả nhất.
+
+### Liệt kê bằng aws cli
+
+Mọi thứ trong đám mây bắt đầu từ một bộ khoá, dù bạn tìm thấy nó trong mã nguồn, một file cấu hình, hay lấy được từ dịch vụ metadata ở phần sau. Và với bất kỳ bộ khoá nào, phản xạ đầu tiên luôn giống phản xạ ở bài 1.5 khi vừa vào một máy Windows: hỏi "mình là ai, và làm được gì":
+
+<Lenh noi="Terminal trên máy Kali, đã cấu hình aws cli với một bộ khoá (ví dụ lấy được từ metadata)" muc="Xác nhận mình đang mang danh tính nào trên AWS, rồi xem danh tính đó chạm được tài nguyên gì">
+
+<Terminal title="aws cli: xác định danh tính và dò quyền">
+
+```text
+kali@lab:~$ aws sts get-caller-identity
+  "Account": "123456789012"
+  "Arn": "arn:aws:sts::123456789012:assumed-role/web-app-role/i-0ab12"
+
+kali@lab:~$ aws s3 ls
+2026-01-04 10:02:11 megabank-reports
+2026-01-04 10:02:11 megabank-backups
+
+kali@lab:~$ aws iam list-attached-role-policies --role-name web-app-role
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `aws sts get-caller-identity`: hỏi dịch vụ STS (Security Token Service) "danh tính đang dùng bộ khoá này là ai". Không cần tham số.
+- `aws s3 ls`: liệt kê mọi **bucket** S3 (kho lưu trữ) mà danh tính hiện tại thấy được.
+- `aws iam list-attached-role-policies --role-name web-app-role`: liệt kê các **chính sách** (policy) gắn trên một role cụ thể, để biết role đó được phép làm gì. `--role-name` chỉ định tên role.
+
+</div>
+
+<div slot="doc">
+
+- `Account`: mã số tài khoản AWS. `Arn` (Amazon Resource Name): "địa chỉ" đầy đủ của danh tính; cụm `assumed-role/web-app-role/...` cho biết đây là một **role tạm** tên `web-app-role`, không phải một user cố định.
+- Mỗi dòng của `aws s3 ls` là một bucket ("thùng" chứa file của dịch vụ lưu trữ S3), kèm ngày tạo. Tên bucket như `megabank-backups` gợi ý nội dung nhạy cảm, đáng xem tiếp.
+- Lệnh thứ ba thường trả về kết quả dạng JSON dài, liệt kê tên các policy. Đọc để biết role này có quyền rộng tới đâu (ví dụ chỉ đọc một bucket, hay có quyền ghi/xoá).
+- Báo lỗi `AccessDenied`: bộ khoá đang dùng không có quyền gọi API đó — chính bản thân lỗi cũng là thông tin (biết được giới hạn của quyền hiện có).
+
+</div>
+
+</Lenh>
+
+## Thực hành: chuỗi SSRF tới dữ liệu
+
+Một chuỗi tấn công đám mây kinh điển không khai thác lỗi của AWS, mà nối một lỗ hổng ứng dụng quen thuộc (SSRF, giống tinh thần "dữ liệu người dùng điều khiển máy chủ" ở bài 2.3 và 2.8) với cấu hình sai của tài khoản. Từng mắt xích một mình có thể vô hại; nối cả ba lại mới thành một vụ rò rỉ dữ liệu. Theo từng bước:
+
+<Walkthrough
+  client:visible
+  title="Từ SSRF tới dữ liệu trong S3 (môi trường hư cấu)"
+  steps={[
+    {
+      phase: 'Phát hiện',
+      title: 'Ứng dụng có tính năng tải ảnh từ URL',
+      prompt: '(trình duyệt)',
+      output: [
+        { text: 'POST /import-avatar   url=https://example.com/anh.png' },
+        { text: 'Máy chủ tự tải URL người dùng nhập → nghi ngờ SSRF', hit: true },
+      ],
+      takeaway: 'Một tính năng để máy chủ tự đi tải một URL do người dùng cung cấp là điểm khởi đầu kinh điển của SSRF. Giống bài 2.3: dữ liệu người dùng điều khiển hành vi máy chủ.',
+    },
+    {
+      phase: 'Phát hiện',
+      title: 'Trỏ SSRF vào dịch vụ metadata',
+      prompt: '(qua tính năng tải URL)',
+      output: [
+        { text: 'url=http://169.254.169.254/latest/meta-data/iam/security-credentials/' },
+        { text: 'web-app-role', hit: true },
+      ],
+      takeaway: 'Máy chủ EC2 tự gọi địa chỉ metadata thay cho kẻ tấn công và trả về tên role đang gắn. Dấu hiệu IMDSv1 còn bật. Với IMDSv2, bước này thường thất bại vì thiếu token.',
+      tone: 'warn',
+    },
+    {
+      phase: 'Lấy thông tin xác thực',
+      title: 'Rút khoá tạm của role',
+      prompt: '(qua tính năng tải URL)',
+      output: [
+        { text: 'url=.../security-credentials/web-app-role' },
+        { text: '"AccessKeyId": "ASIA...", "SecretAccessKey": "...",' },
+        { text: '"Token": "...", "Expiration": "2026-01-04T16:00:00Z"', hit: true },
+      ],
+      takeaway: 'Lấy được bộ khoá tạm của role. Khoá có hạn, nhưng đủ để hành động ngay. Nạp vào biến môi trường để aws cli dùng.',
+      tone: 'bad',
+    },
+    {
+      phase: 'Liệt kê',
+      title: 'Mình là ai và làm được gì',
+      prompt: 'kali@lab:~$',
+      cmd: 'aws sts get-caller-identity',
+      explain: ['aws sts get-caller-identity: hỏi "bộ khoá vừa rút được thuộc danh tính nào". Khoá đã được nạp vào biến môi trường AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN trước khi gọi lệnh này.'],
+      output: [
+        { text: '"Arn": ".../assumed-role/web-app-role/i-0ab12"' },
+        { text: '→ role có quyền đọc một số bucket S3', hit: true },
+      ],
+      takeaway: 'Xác nhận danh tính và dò quyền. Role này lẽ ra chỉ cần đọc ảnh đại diện, nhưng được cấp quá rộng — vi phạm quyền tối thiểu.',
+    },
+    {
+      phase: 'Truy cập dữ liệu',
+      title: 'Đọc bucket chứa dữ liệu nhạy cảm',
+      prompt: 'kali@lab:~$',
+      cmd: 'aws s3 ls s3://megabank-backups/',
+      explain: ['aws s3 ls s3://tên-bucket/: liệt kê nội dung của một bucket cụ thể (khác với "aws s3 ls" không tham số, vốn liệt kê danh sách bucket). "aws s3 cp nguồn ." ở dòng dưới tải một file từ bucket về thư mục hiện tại (dấu ".").'],
+      output: [
+        { text: '2026-01-02  db-dump-2026-01.sql.gz', hit: true },
+        { text: 'aws s3 cp s3://megabank-backups/db-dump-2026-01.sql.gz .' },
+      ],
+      takeaway: 'Một role cấu hình quá rộng cho phép đọc bản sao lưu cơ sở dữ liệu. Đây là phát hiện nghiêm trọng để viết vào báo cáo (bài 4.1).',
+      tone: 'bad',
+    },
+    {
+      phase: 'Rút ra',
+      title: 'Ba mắt xích, cắt một là gãy chuỗi',
+      output: [
+        { text: '1. SSRF trong ứng dụng → lẽ ra phải chặn' },
+        { text: '2. IMDSv1 còn bật → nên bắt buộc IMDSv2' },
+        { text: '3. Role quá quyền → nên theo quyền tối thiểu', hit: true },
+      ],
+      takeaway: 'Không khâu nào là lỗi của AWS; cả ba đều là cấu hình của khách hàng. Cắt bất kỳ mắt xích nào cũng phá được chuỗi — đó là tư duy phòng thủ nhiều lớp.',
+      tone: 'good',
+    },
+  ]}
+/>
+
+### Các cấu hình sai hay gặp khác
+
+<ConceptMap
+  client:visible
+  title="Những chỗ hay sai trong tài khoản đám mây"
+  width={660}
+  height={300}
+  nodes={[
+    { id: 's3', label: 'S3 để công khai', sub: 'ai cũng đọc được', x: 130, y: 70, w: 180, tone: 'warn', detail: 'Bucket cấu hình công khai làm lộ dữ liệu cho bất kỳ ai biết đường dẫn. Bật "Block Public Access" ở cấp tài khoản để chặn diện rộng.' },
+    { id: 'key', label: 'Khoá lọt vào mã nguồn', sub: 'commit lên Git', x: 130, y: 150, w: 180, tone: 'warn', detail: 'Access key bị đẩy lên repo công khai bị quét và lạm dụng trong vài phút. Dùng secret scanning và role thay vì khoá cứng.' },
+    { id: 'iam', label: 'IAM quá quyền', sub: 'Allow * trên *', x: 130, y: 230, w: 180, tone: 'warn', detail: 'Chính sách cho phép mọi hành động trên mọi tài nguyên biến một chỗ đứng nhỏ thành kiểm soát toàn tài khoản. Nền của hầu hết leo thang đám mây.' },
+    { id: 'fix', label: 'Phòng thủ', sub: 'least privilege + log', x: 460, y: 150, w: 180, tone: 'accent', detail: 'Quyền tối thiểu, bật CloudTrail ghi lại mọi lời gọi API, phát hiện bất thường (GuardDuty), quản lý secret tập trung.' },
+  ]}
+  edges={[
+    { from: 's3', to: 'fix' },
+    { from: 'key', to: 'fix' },
+    { from: 'iam', to: 'fix' },
+  ]}
+/>
+
+<LabBrief
+  ten="Tự kiểm tra cấu hình trên tài khoản AWS free tier của chính bạn"
+  muctieu="Không tấn công ai cả: dựng một tài khoản AWS free tier của riêng bạn, rồi tự rà ba cấu hình hay bị khai thác nhất trong bài, xem mặc định của AWS hôm nay đã an toàn tới đâu"
+  may="Tài khoản AWS free tier của bạn (tạo mới, không dùng tài khoản công ty)"
+  thoigian="35 phút"
+  xong="Bạn có kết quả của ba lệnh audit dưới đây chạy trên chính tài khoản mình, và ghi lại mặc định hiện tại là IMDSv1 hay IMDSv2, bucket có public hay không"
+>
+
+1. Tạo một S3 bucket test, kiểm tra cài đặt "Block Public Access" đang bật hay tắt theo mặc định.
+2. Dựng một máy EC2 nhỏ nhất (free tier), kiểm tra bằng CLI xem instance đang bắt buộc IMDSv2 hay vẫn cho IMDSv1.
+3. Gắn một IAM role cho máy đó, rồi đọc lại chính sách quyền của role bằng CLI để xem nó có rộng hơn mức cần không.
+4. Sửa lại cả ba điểm theo phần Góc phòng thủ ngay dưới, rồi kiểm tra lại để thấy khác biệt.
+
+<div slot="goiy1">
+AWS Console có mục "Block Public Access" ngay khi tạo bucket, và mục "Metadata options" ngay khi tạo EC2 instance — không cần CLI cho bước kiểm tra đầu.
+</div>
+
+<div slot="goiy2">
+`aws s3api get-public-access-block --bucket <tên>`, `aws ec2 describe-instances --query 'Reservations[].Instances[].MetadataOptions'`, `aws iam get-role-policy`.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: bạn có output JSON thật của cả ba lệnh, không phải suy đoán.
+- `HttpTokens` trong `MetadataOptions` là `optional`: IMDSv1 vẫn bật, đây chính là điều kiện cho chuỗi SSRF ở phần Thực hành phía trên. Đổi sang `required` để bắt buộc IMDSv2.
+- Role có `"Action": "*"` hoặc `"Resource": "*"`: quyền quá rộng, đúng dấu hiệu mà phần Góc phòng thủ nhắc tới.
+- Nhớ xoá bucket và tắt EC2 instance sau khi xong để không phát sinh phí.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người quản trị đám mây của đơn vị, phần lớn việc bảo vệ không phải là cài phần mềm chống mã độc mà là đóng đúng các thiết lập mặc định. Đầu tiên, hãy <strong>bắt buộc IMDSv2</strong> trên mọi máy ảo EC2 để chặn đứt phần lớn đường SSRF nhắm vào khoá tạm của role. Thứ hai, áp dụng <strong>quyền tối thiểu cho IAM</strong> (tuyệt đối không để <code>Allow *</code> trên <code>*</code>) và bật <strong>Block Public Access cho S3</strong> ngay ở cấp toàn tài khoản để không ai vô tình mở công khai một bucket.
+
+Thứ ba, không bao giờ nhét khoá cứng vào mã nguồn; hãy dùng role, kho quản lý bí mật tập trung (như Secrets Manager) kèm công cụ quét khoá lộ trước khi commit (nối tiếp bài 7.1). Cuối cùng, <strong>bật CloudTrail</strong> ở mọi vùng để ghi lại toàn bộ lời gọi API, đẩy về SOC (bài 8.1) kết hợp công cụ phát hiện bất thường như GuardDuty, và có sẵn quy trình thu hồi ngay phiên của role tạm khi nghi ngờ lộ khoá.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Rà soát nhanh một tài khoản AWS"
+  storageKey="aws-review"
+  items={[
+    { label: 'Mọi máy ảo đã bắt buộc IMDSv2 chưa', hint: 'Chặn SSRF tới metadata' },
+    { label: 'Có chính sách IAM nào Allow * trên * không', hint: 'Dấu hiệu quyền quá rộng' },
+    { label: 'Đã bật Block Public Access cho S3 ở cấp tài khoản chưa' },
+    { label: 'Có khoá truy cập nào nằm trong mã nguồn hoặc kho Git không' },
+    { label: 'CloudTrail đã bật và log được đẩy về nơi phân tích chưa', hint: 'Bài 8.1' },
+    { label: 'Khoá truy cập có được xoay vòng định kỳ không' },
+    { label: 'Dữ liệu nhạy cảm trong S3 đã được mã hoá khi lưu chưa' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ "lên đám mây là nhà cung cấp lo hết".** Đây là hiểu nhầm phổ biến nhất, cả ở người mới học lẫn ở không ít doanh nghiệp thật. Thực ra phần lớn cấu hình và dữ liệu là trách nhiệm của khách hàng, và phần lớn sự cố nằm đúng ở đó.
+- **Săn lỗ hổng phần mềm trong khi đường vào thật là một bucket công khai hay một khoá lọt vào Git.** Thói quen từ Cấp 2 (tìm CVE, thử payload) không phải lúc nào cũng đúng chỗ trong đám mây; đôi khi việc đáng làm nhất chỉ là thử liệt kê xem bucket có mở công khai không.
+- **Quên rằng SSRF trong đám mây nguy hiểm hơn nhiều so với nơi khác.** Ở một ứng dụng thường, SSRF có thể chỉ đọc được vài trang nội bộ. Trong đám mây, nó với tới dịch vụ metadata và lấy được cả khoá của role.
+- **Để role EC2 quá quyền "cho tiện".** Đặt quyền rộng để đỡ phải nghĩ lúc lập trình là thói quen rất hay gặp, và chính nó biến một SSRF nhỏ thành rò rỉ dữ liệu lớn.
+- **Kiểm thử tài khoản đám mây không phải của mình mà chưa được phép.** Khác với một máy ảo trong lab của bạn, một tài khoản AWS thật có thể dính tới hạ tầng của nhà cung cấp và của người khác; luôn đọc chính sách kiểm thử của họ trước.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Theo mô hình trách nhiệm chung, ai lo cấu hình phân quyền và dữ liệu?', options: ['Nhà cung cấp đám mây', 'Khách hàng', 'Không ai'], answer: 1, explain: 'Nhà cung cấp lo an ninh của đám mây (hạ tầng); khách hàng lo an ninh trong đám mây (cấu hình, quyền, dữ liệu).' },
+    { q: 'Vì sao địa chỉ metadata 169.254.169.254 là mục tiêu của SSRF?', options: ['Vì nó chứa mật khẩu root', 'Vì nó trả về thông tin xác thực tạm thời của role gắn trên máy ảo', 'Vì nó mở cổng 22'], answer: 1, explain: 'Khiến máy chủ tự gọi tới đó, kẻ tấn công lấy được khoá của role rồi dùng với aws cli.' },
+    { q: 'Biện pháp nào chặn phần lớn kiểu SSRF tới dịch vụ metadata?', options: ['Đổi vùng (region)', 'Bắt buộc IMDSv2, yêu cầu lấy token trước khi hỏi metadata', 'Tắt S3'], answer: 1, explain: 'IMDSv2 buộc một bước lấy token mà nhiều SSRF đơn giản không làm được.' },
+    { q: 'Nguyên nhân gốc khiến một SSRF nhỏ dẫn tới rò rỉ bản sao lưu cơ sở dữ liệu là gì?', options: ['AWS có lỗ hổng', 'Role gắn trên máy ảo được cấp quá nhiều quyền, vi phạm quyền tối thiểu', 'Mạng quá nhanh'], answer: 1, explain: 'Nếu role chỉ có đúng quyền cần, khoá lấy được cũng không đọc được bucket sao lưu.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Đám mây đổi ranh giới tấn công: không còn tường biên để vượt qua, IAM quyết định ai làm được gì. Vì vậy phần lớn sự cố là cấu hình sai, không phải lỗ hổng phần mềm.
+- Dịch vụ metadata (169.254.169.254) trả khoá tạm của role đang gắn trên máy ảo; SSRF + IMDSv1 còn bật + role quá quyền là chuỗi kinh điển dẫn tới rò rỉ dữ liệu.
+- Cắt một mắt xích là phá cả chuỗi: chặn SSRF, bắt buộc IMDSv2, hoặc siết quyền của role, bất kỳ cái nào trong ba cũng đủ.
+- Cấu hình sai hay gặp khác: S3 để công khai, khoá truy cập lọt vào mã nguồn, chính sách IAM cho phép mọi hành động trên mọi tài nguyên.

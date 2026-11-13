@@ -1,0 +1,341 @@
+---
+title: "Thu thập thông tin thụ động"
+code: "2.1"
+level: 2
+summary: "Làm sao vẽ được bức tranh về một mục tiêu (tên miền con, nhân sự, công nghệ đang dùng) chỉ từ những nguồn công khai trên Internet, mà không để lại dấu vết nào trên hệ thống của họ."
+duration: "60 phút"
+updated: "2026-11-12"
+prereq: ["1.3", "0.3"]
+objectives:
+  - "Giải thích được vì sao tra cứu công khai không để lại dấu vết còn quét cổng thì có"
+  - "Tự tra cứu được hồ sơ tên miền, danh sách máy chủ ẩn và quy tắc đặt email của một tổ chức qua whois, crt.sh và theHarvester"
+  - "Viết được vài câu Google dork để tìm tài liệu, thư mục và trang quản trị bị lộ"
+  - "Ghép các mẩu thông tin lẻ thành hồ sơ mục tiêu, và ghi lại nguồn của từng mẩu để dùng ở bài sau"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+
+## Hình dung trước
+
+Trước khi đi phỏng vấn ở một công ty hay gặp một đối tác mới, phản xạ tự nhiên của chúng ta là lên mạng tìm thử tên của họ: đọc trang giới thiệu, xem tin tuyển dụng, lướt qua vài bài viết công khai.
+
+Việc này hoàn toàn bình thường vì bạn chỉ đọc những gì đã được đăng sẵn trên Internet, và người kia cũng không hề biết bạn vừa tìm hiểu về họ.
+
+Trong kiểm thử xâm nhập, giai đoạn này gọi là **thu thập thông tin thụ động** (*passive reconnaissance*, hay *OSINT* — Open Source Intelligence, tình báo từ nguồn mở). Khi mới bắt đầu một dự án pentest thực tế, thứ duy nhất khách hàng giao cho bạn thường chỉ là tên công ty hoặc một tên miền chính.
+
+Trước khi đụng tay vào bất kỳ công cụ quét mạng nào, người làm nghề kinh nghiệm sẽ dành thời gian "đọc báo giùm" mục tiêu để trả lời câu hỏi: *Tổ chức này có những máy chủ nào đang phơi ra ngoài, dùng công nghệ gì, và ai đang làm việc ở đó?*
+
+## Kiến thức chính
+
+### Ranh giới giữa thụ động và chủ động
+
+Tại sao phải tách bạch chuyện "ngồi ngoài quan sát" và "chạm vào mục tiêu"? Hãy nhìn vào nơi gói tin của bạn đi tới:
+
+- **Thu thập thụ động (passive recon):** Bạn chỉ hỏi thông tin từ **bên thứ ba**, chẳng hạn hỏi Google, hỏi cơ sở dữ liệu tên miền quốc tế, hay đọc bảng tin tuyển dụng. Vì máy tính của bạn không gửi bất kỳ gói tin nào tới máy chủ của mục tiêu, tường lửa và hệ thống giám sát (SOC/SIEM) của họ hoàn toàn không ghi nhận được dấu vết gì.
+- **Thu thập chủ động (active recon):** Bạn gửi gói tin **trực tiếp tới máy chủ của mục tiêu** để gõ cửa từng dịch vụ (như dùng `nmap` quét cổng ở bài 2.2). Hành động này giống như tới tận toà nhà và vặn thử từng tay nắm cửa: camera an ninh (nhật ký hệ thống) sẽ ghi lại địa chỉ IP của bạn ngay lập tức, nên bắt buộc chỉ được làm khi đã nằm trong phạm vi cho phép.
+
+### Ngoài đời và trong phòng thi OSCP
+
+Bài này khác các bài sau ở một điểm đáng nói thẳng. Trong một dự án pentest thật, thu thập thụ động là bước đầu tiên và thường cho nhiều thông tin nhất.
+
+Nhưng trong phòng thi OSCP, bạn nhận địa chỉ IP của các máy nằm trong một mạng cô lập, không có Internet và không có tên miền công khai nào để tra, nên gần như không có chỗ cho `crt.sh` hay Google dork.
+
+Vậy học bài này để làm gì? Để có tư duy "đọc kỹ trước khi chạm" mà bạn sẽ dùng lại ở bài 2.2: trong thi, thứ thay chỗ của việc đọc báo công khai là đọc kỹ từng trang web và banner dịch vụ trên chính máy mục tiêu. Còn khi đi làm, bài này là kỹ năng dùng hằng ngày.
+
+### Các nguồn công khai, và mỗi nguồn giúp gì cho bước sau
+
+Mỗi nguồn dưới đây trả lời một câu hỏi khác nhau. Điều quan trọng không phải là thuộc tên công cụ mà là biết mẩu thông tin đó sẽ được dùng ở đâu tiếp theo:
+
+| Nguồn | Cho biết | Giúp ích gì cho bước tấn công tiếp theo | Công cụ |
+|---|---|---|---|
+| WHOIS (tra cứu thông tin đăng ký tên miền) | Ai đăng ký tên miền, từ ngày nào, máy chủ DNS nào quản lý | Có máy chủ DNS để thử xin chuyển vùng (bài 1.3); ngày tạo quá mới giúp nhận ra tên miền lừa đảo | `whois` |
+| Log Certificate Transparency (sổ công khai ghi mọi chứng chỉ HTTPS đã được cấp) | Các subdomain (tên miền con như `dev.congty.vn`) từng được cấp chứng chỉ | Ra danh sách máy cụ thể để quét ở bài 2.2, trong đó có cả máy nội bộ mà tổ chức không định để lộ | crt.sh |
+| Công cụ tìm kiếm | File, thư mục, trang quản trị bị lộ | Tài liệu có tên người, phiên bản phần mềm, đường dẫn nội bộ | Google dork (cách gõ lệnh tìm kiếm đặc biệt) |
+| Email và nhân sự | Tài khoản, quy tắc đặt email | Dựng danh sách tài khoản để thử mật khẩu (bài 2.6) và soạn email lừa đảo đúng tên người nhận (bài 2.4) | theHarvester |
+| Tin tuyển dụng | Công nghệ và phiên bản đang dùng | Biết nên tra lỗ hổng của phần mềm nào (bài 2.5) | đọc tay |
+
+## Thực hành: gom thông tin về một tên miền
+
+Các công cụ dưới đây đều truy vấn dữ liệu công khai **trên Internet**, nên bài này không cần bật máy ảo nào trong lab.
+
+Tên miền `megacorp.lab` chỉ tồn tại trong ví dụ, và phần output là tình huống mô phỏng để bạn tập đọc kết quả; nếu gõ thật lệnh với tên miền này, công cụ sẽ báo không có dữ liệu. Muốn tập với dữ liệu thật, hãy dùng tên miền của chính bạn hoặc của tổ chức đã cho phép bằng văn bản.
+
+<Callout type="note" label="Từ bài 2.2 trở đi bạn cần máy mục tiêu trong lab">
+Chưa có máy mục tiêu nào? Quay lại bài 0.2 cài Metasploitable 2 trước, mất khoảng 15 phút. Nó dùng cho các bài 2.2, 2.5, 2.6 và 2.7 (dò dịch vụ, tra mã khai thác, bẻ mật khẩu, lấy shell). Bài 2.3 và 2.8 dùng DVWA hoặc OWASP Juice Shop mở trên <code>127.0.0.1</code>. Bài 2.9 dùng một tài khoản AWS của riêng bạn hoặc môi trường cố tình để lỗi như CloudGoat; hãy xoá tài nguyên sau khi học để khỏi tốn tiền.
+</Callout>
+
+### 1. Bắt đầu từ hồ sơ đăng ký tên miền (WHOIS)
+
+Giả sử khách hàng chỉ đưa bạn một cái tên: `megacorp.lab`. Câu hỏi đầu tiên giống hệt khi bạn tìm hiểu một công ty lạ: tên miền này do ai đăng ký, từ bao giờ, và ai đang điều hành máy chủ tên miền cho họ? WHOIS là cuốn sổ đăng ký công khai trả lời đúng ba câu đó, và câu trả lời sẽ chỉ bạn tới bước kế tiếp.
+
+<Lenh noi="Terminal trên máy Kali (có kết nối Internet khi tra cứu tên miền thật)" muc="Xem ai đăng ký tên miền, khi nào, và máy chủ DNS nào quản lý nó">
+
+<Terminal title="whois tra thông tin tên miền">
+
+```text
+kali@lab:~$ whois megacorp.lab | grep -iE "registrar|name server|creation"
+Registrar: Example Registrar Inc.
+Creation Date: 2015-03-12
+Name Server: NS1.MEGACORP.LAB
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `whois megacorp.lab`: hỏi cơ sở dữ liệu đăng ký tên miền công khai. Câu trả lời thật dài cả trăm dòng, đa phần là thông tin hành chính.
+- `grep -iE "registrar|name server|creation"`: vì output quá dài nên ta lọc, chỉ giữ dòng chứa một trong ba cụm này. `-i` bỏ qua phân biệt hoa thường (vì máy chủ trả `NS1` viết hoa, nhãn lại viết thường) và `-E` cho phép dùng dấu `|` với nghĩa "hoặc".
+
+</div>
+
+<div slot="doc">
+
+- `Registrar: Example Registrar Inc.`: công ty bán tên miền. Ít khi dùng ngay, nhưng đáng ghi lại vì khi cần báo lạm dụng (ví dụ tên miền lừa đảo) thì đây là nơi gửi.
+- `Creation Date: 2015-03-12`: ngày tạo. Một công ty hoạt động nhiều năm thường có tên miền cũ; nếu bạn đang soi một email lạ mà tên miền **mới tạo vài ngày** hoặc **vừa đổi chủ**, đó là dấu hiệu đáng ngờ của email lừa đảo.
+- `Name Server: NS1.MEGACORP.LAB`: máy chủ DNS đang quản lý tên miền. Đây là thứ có ích nhất: bạn ghi lại để hỏi nó ở bài 1.3 (thử xin "chuyển vùng" xem nó có đưa hết danh sách tên miền không).
+- Nhiều tên miền che tên chủ sở hữu bằng "dịch vụ bảo vệ quyền riêng tư". Thấy tên một công ty lạ ở phần chủ sở hữu thay vì tên khách hàng là bình thường, đừng nghĩ mình tra nhầm.
+
+</div>
+
+</Lenh>
+
+### 2. Săn tìm các máy chủ "khuất" qua nhật ký chứng chỉ (crt.sh)
+
+Trang chủ `www.megacorp.lab` thường được đội ngũ IT chăm chút và bảo vệ rất kỹ. Thứ mà một pentester thực sự tìm kiếm là các **tên miền con (subdomain)** phục vụ nội bộ hoặc đang thử nghiệm, kiểu như `dev.`, `staging.`, `vpn.` hay `old-portal.`. Đây là những nơi lập trình viên hay bật tạm rồi quên, cấu hình lỏng lẻo hơn trang chính rất nhiều.
+
+Làm sao biết công ty có những subdomain nào mà không cần dò mò từng tên? Mỗi khi một tổ chức đăng ký chứng chỉ bảo mật HTTPS (TLS) cho bất kỳ tên miền nào của họ, cơ quan cấp phát bắt buộc phải ghi tên miền đó vào một cuốn sổ cái công khai toàn cầu gọi là **Certificate Transparency log**. Trang `crt.sh` cho phép ta tra cứu cuốn sổ này hoàn toàn miễn phí:
+
+<Lenh noi="Terminal trên máy Kali (có kết nối Internet)" muc="Lấy danh sách mọi subdomain từng được cấp chứng chỉ HTTPS của mục tiêu thông qua cơ sở dữ liệu công khai crt.sh">
+
+<Terminal title="Lấy subdomain từ crt.sh">
+
+```text
+kali@lab:~$ curl -s "https://crt.sh/?q=%.megacorp.lab&output=json" | jq -r '.[].name_value' | sort -u
+dev.megacorp.lab
+mail.megacorp.lab
+vpn.megacorp.lab
+www.megacorp.lab
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `curl -s "https://crt.sh/?q=%.megacorp.lab&output=json"`: gửi yêu cầu tới crt.sh để hỏi "có chứng chỉ nào cấp cho tên nào đó kết thúc bằng `.megacorp.lab` không". `%` là ký tự đại diện cho "bất kỳ chữ gì", `output=json` xin kết quả dạng dữ liệu có cấu trúc để máy xử lý được, còn `-s` tắt thanh tiến trình cho đỡ rối màn hình.
+- `jq -r '.[].name_value'`: kết quả JSON gốc dài hàng trăm dòng, mỗi chứng chỉ một khối đầy trường kỹ thuật. `jq` là công cụ đọc JSON: `.[]` đi qua từng chứng chỉ, `.name_value` chỉ lấy trường tên máy, và `-r` in chữ trần không dấu nháy.
+- `sort -u`: một tên máy thường xuất hiện trong nhiều chứng chỉ (gia hạn nhiều lần) nên bị trùng. Sắp xếp rồi bỏ dòng trùng cho ra danh sách sạch. Đó là lý do ta cần ghép cả ba lệnh bằng dấu `|`: mỗi lệnh dọn một phần cho lệnh sau.
+
+</div>
+
+<div slot="doc">
+
+- `dev.megacorp.lab`: **đáng chú ý nhất**. Máy dùng để phát triển thường ít được vá, hay có tài khoản mặc định hoặc tính năng gỡ lỗi chưa tắt. Đây là ứng viên số một để quét ở bài 2.2.
+- `vpn.megacorp.lab`: cổng vào mạng nội bộ cho nhân viên làm từ xa. Nếu sau này bạn lấy được tên người dùng và đoán được mật khẩu yếu (bài 2.6), đây là cánh cửa để thử.
+- `mail.megacorp.lab`: máy chủ thư, liên quan tới email lừa đảo ở bài 2.4.
+- `www.megacorp.lab`: trang chủ, thường đã được bảo vệ kỹ, chưa cần dồn sức vào đây trước.
+- Danh sách có thể có cả dòng bắt đầu bằng `*.` (chứng chỉ dùng chung cho mọi subdomain); đó không phải tên máy cụ thể, bỏ qua.
+- Nếu danh sách trống: tổ chức chưa từng xin chứng chỉ công khai cho miền này, hoặc crt.sh đang quá tải (thử lại sau vài phút).
+- Một tên có trong danh sách **không đảm bảo** máy còn sống, vì chứng chỉ có thể được cấp từ nhiều năm trước. Bước kiểm tra xem máy nào thật sự còn trả lời sẽ làm bằng `dig` hoặc `nmap`.
+
+</div>
+
+</Lenh>
+
+### 3. Tìm người đằng sau các máy chủ (theHarvester)
+
+Giờ bạn đã biết công ty có những máy nào, nhưng chưa biết ai làm ở đó. Với kẻ tấn công, tên người và cách đặt email quan trọng không kém tên máy: chúng là nguyên liệu để dựng danh sách tài khoản cần thử mật khẩu (bài 2.6) và để soạn email lừa đảo gọi đúng tên người nhận (bài 2.4).
+
+**theHarvester** là công cụ gom các địa chỉ email và tên máy xuất hiện công khai trên nhiều nguồn, thay bạn mở từng trang tìm kiếm bằng tay:
+
+<Lenh noi="Terminal trên máy Kali (có kết nối Internet khi tra cứu tên miền thật)" muc="Gom email và tên máy của một tổ chức từ nhiều nguồn công khai (công cụ tìm kiếm, mạng xã hội, dữ liệu chứng chỉ)">
+
+<Terminal title="theHarvester gom email và host">
+
+```text
+kali@lab:~$ theHarvester -d megacorp.lab -b all
+[*] Emails found:
+j.doe@megacorp.lab
+admin@megacorp.lab
+[*] Hosts found:
+dev.megacorp.lab:10.10.14.32
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `theHarvester`: công cụ gom thông tin công khai (OSINT). Nó không "hack" gì cả, chỉ hỏi hộ bạn nhiều trang công khai cùng lúc rồi gộp kết quả.
+- `-d megacorp.lab`: miền mục tiêu (d = domain).
+- `-b all`: dùng mọi nguồn (b = backend). Chạy `all` cho đầy đủ ở lần đầu; những lần sau có thể chọn một nguồn, ví dụ `-b crtsh`, để chạy nhanh và ít ồn hơn.
+
+</div>
+
+<div slot="doc">
+
+- `j.doe@megacorp.lab`: một email thật của nhân sự. Quan trọng không phải người này là ai mà là **quy tắc đặt tên**: chữ cái đầu, dấu chấm, họ. Biết quy tắc này thì chỉ cần biết tên một nhân viên là đoán được email của họ.
+- `admin@megacorp.lab`: hộp thư dùng chung theo chức năng. Loại này hay bị đoán mật khẩu yếu, và là mục tiêu của email lừa đảo vì nhiều người cùng đọc nên khó phát hiện ai bấm nhầm.
+- `dev.megacorp.lab:10.10.14.32`: tên máy kèm địa chỉ IP. Máy này vừa xuất hiện ở crt.sh, nay lại ở đây với một IP cụ thể, tức hai nguồn độc lập cùng xác nhận nó có thật. Ghi IP lại để quét ở bài 2.2.
+- Một số nguồn cần khoá API và sẽ in cảnh báo "missing API key". Bỏ qua cũng được, chỉ là kết quả ít hơn một chút.
+
+</div>
+
+</Lenh>
+
+### 4. Để Google làm nốt phần việc
+
+Công cụ tìm kiếm đã duyệt qua cả những thứ tổ chức không hề định công khai: tài liệu nội bộ lỡ để ở thư mục mở, trang quản trị chưa đặt mật khẩu. Bạn không cần công cụ gì thêm, chỉ cần biết cách hỏi cho đúng. **Google dork** là cách dùng các toán tử tìm kiếm của Google (`site:`, `filetype:`, `inurl:`...) để lọc đúng loại kết quả đó:
+
+<Lenh noi="Ô tìm kiếm của Google (không phải terminal)" muc="Dùng toán tử tìm kiếm để lọc ra những thứ tổ chức vô tình để lộ ra Internet">
+
+<Terminal title="Các câu truy vấn Google dork thường dùng">
+
+```text
+site:megacorp.lab filetype:pdf          # tài liệu công khai
+site:megacorp.lab intitle:"index of"    # thư mục để mở
+site:megacorp.lab inurl:admin           # trang quản trị
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `site:megacorp.lab`: chỉ tìm trong trang của miền này. Không có phần này Google sẽ trả cả thế giới.
+- `filetype:pdf`: chỉ lấy file PDF. Tài liệu PDF, Word, Excel của công ty hay chứa tên người soạn, phiên bản phần mềm, đôi khi cả tài liệu nội bộ lỡ đăng lên.
+- `intitle:"index of"`: trang có tiêu đề "Index of", thường là thư mục máy chủ để mở cho mọi người xem danh sách file, do cấu hình quên tắt.
+- `inurl:admin`: địa chỉ có chữ `admin`, gợi ý trang quản trị.
+- Phần sau `#` là chú thích của bài, **không gõ**.
+
+</div>
+
+<div slot="doc">
+
+- Kết quả là trang web bình thường. Với mỗi kết quả, hãy hỏi: tài liệu này có nên công khai không? Có tên người, phiên bản phần mềm, đường dẫn nội bộ không? Mỗi thứ đó là một mẩu cho hồ sơ.
+- Với `intitle:"index of"`: thấy danh sách file nghĩa là máy chủ đang cho xem thư mục, hãy nhìn có file nhạy cảm (sao lưu, cấu hình, dữ liệu) không. Đây thường là phát hiện có giá trị cao nhất trong cả bài.
+- Với `inurl:admin`: chỉ ghi lại địa chỉ, đừng thử đăng nhập. Thử mật khẩu vào đó đã là chủ động và chưa chắc nằm trong phạm vi.
+
+</div>
+
+</Lenh>
+
+### 5. Đọc siêu dữ liệu của tài liệu công khai (exiftool)
+
+Mỗi file PDF, Word hay ảnh mà công ty đăng lên web đều mang theo siêu dữ liệu (metadata): ai tạo, bằng phần mềm gì, lúc nào. Tải vài file về (tìm bằng `site:megacorp.example filetype:pdf` ở bước 4) rồi đọc:
+
+```text
+kali@lab:~$ exiftool -a -u bao-cao-2024.pdf
+Author                          : nguyen.van.an
+Creator                         : Microsoft Word 2016
+Producer                        : Microsoft: Print To PDF
+Create Date                     : 2024:03:11 09:14:02+07:00
+```
+
+`-a` in cả các thẻ trùng tên, `-u` in cả thẻ exiftool không nhận ra. Hai dòng đáng ghi lại: `Author` cho bạn một **tên đăng nhập thật** và cả quy tắc đặt tên của công ty (`ho.tendem.ten`), dùng để dựng danh sách tài khoản cho bài 2.6 và 3.4; `Creator`/`Producer` cho biết **phần mềm và phiên bản** trên máy nhân viên, tức là biết nên chuẩn bị loại tệp mồi nào ở bài 2.4. Trong lab và đề thi, một file tải được từ web hay từ share SMB cũng nên cho qua `exiftool` trước khi bỏ qua.
+
+### Ghi chép lại để mang sang bài sau
+
+Bốn bước trên cho bạn bốn nguồn rời rạc. Việc cuối cùng, và là việc nhiều người bỏ quên, là gom chúng vào một sổ tay kèm **nguồn** của từng thông tin. Khi viết báo cáo (bài 4.1) bạn sẽ cần chỉ ra mình biết điều này từ đâu, và khi quét ở bài 2.2 bạn sẽ mở lại đúng sổ tay này:
+
+```text
+Mục tiêu: megacorp.lab
+Đăng ký:   2015-03-12, Example Registrar         [whois]
+DNS:       ns1.megacorp.lab                      [whois]  -> thử zone transfer (bài 1.3)
+Máy chủ:   dev, mail, vpn, www                   [crt.sh] -> quét: dev, vpn (bài 2.2)
+Dev IP:    10.10.14.32                           [theHarvester]
+Email:     j.doe@, admin@ ; quy tắc: chữ-đầu.họ@ [theHarvester] -> bài 2.4, 2.6
+```
+
+<LabBrief
+  ten="Tự lập hồ sơ một tên miền, không nhìn lại bài mẫu ở trên"
+  muctieu="Gom đủ thông tin công khai cho một tên miền của chính bạn, bằng đúng bốn bước vừa học, không gửi gói nào tới máy chủ thật"
+  may="Một tên miền bạn sở hữu, hoặc tên miền lab.local bạn tự khai báo trong /etc/hosts"
+  thoigian="30 phút"
+  xong="Bạn điền được đủ một bảng ghi chú như mẫu ở trên: ngày đăng ký, máy chủ tên, ít nhất một tên miền con tìm thêm được, và quy tắc email — mỗi dòng ghi rõ lấy từ nguồn nào"
+>
+
+1. Chạy WHOIS, ghi lại ngày đăng ký và máy chủ tên (DNS).
+2. Tra crt.sh, liệt kê mọi tên miền con xuất hiện trong chứng chỉ.
+3. Chạy theHarvester, ghi lại địa chỉ email và IP tìm được.
+4. Nếu có file PDF hoặc Word công khai của tổ chức, đọc siêu dữ liệu bằng exiftool.
+5. Gộp cả bốn nguồn vào một bảng ghi chú, mỗi dòng có cột "nguồn" như ví dụ phía trên.
+
+<div slot="goiy1">
+Làm lại đúng thứ tự bốn mục trong phần "Thực hành" bên trên, chỉ đổi tên miền của bạn vào chỗ <code>megacorp.lab</code>.
+</div>
+
+<div slot="goiy2">
+Bốn lệnh cần dùng đã có tên đầy đủ ở các đề mục con của phần Thực hành: tra cứu WHOIS, truy vấn crt.sh, chạy theHarvester, đọc siêu dữ liệu tài liệu.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: bảng ghi chú của bạn có ít nhất một dòng crt.sh ghi ra một tên miền con mà bạn không biết từ trước.
+- crt.sh trả về rỗng: tên miền mới hoặc chưa có chứng chỉ công khai, đó vẫn là một kết quả hợp lệ, ghi "không có".
+- theHarvester không ra email nào: bình thường với tổ chức nhỏ hoặc tên miền cá nhân; thử lại với một tổ chức có chương trình bug bounty công khai để có đối chứng.
+
+</div>
+
+</LabBrief>
+
+## Sơ đồ: từ mảnh ghép tới bức tranh
+
+Mỗi mẩu ở trên một mình thì vô hại. Điều làm chúng nguy hiểm là khi ghép lại. Bấm vào từng ô để xem mẩu đó đóng góp gì và được dùng ở bước nào sau đó:
+
+<ConceptMap
+  client:visible
+  title="Các mảnh thông tin công khai ghép thành hồ sơ mục tiêu"
+  width={640}
+  height={320}
+  nodes={[
+    { id: 'whois', label: 'WHOIS', x: 110, y: 60, detail: 'Cho biết tổ chức đăng ký, ngày tạo và máy chủ DNS. Máy chủ DNS là đầu mối để hỏi tiếp ở bài 1.3.' },
+    { id: 'cert', label: 'crt.sh', x: 110, y: 150, detail: 'Liệt kê subdomain từng được cấp chứng chỉ TLS, kể cả máy nội bộ như dev hay vpn mà tổ chức không định để lộ.' },
+    { id: 'job', label: 'theHarvester / tuyển dụng', x: 115, y: 240, w: 200, detail: 'Email, tên nhân sự, công nghệ và phiên bản đang dùng. Từ một email suy ra được quy tắc đặt tên cho cả công ty.' },
+    { id: 'profile', label: 'Hồ sơ mục tiêu', x: 360, y: 150, tone: 'accent', detail: 'Ghép lại: máy chủ, công nghệ, nhân sự, quy tắc email. Đây là nền để bạn biết nhìn vào đâu ở các bước sau.' },
+    { id: 'enum', label: 'Liệt kê chủ động', x: 548, y: 80, tone: 'warn', detail: 'Bài 2.2: tới đây mới thật sự chạm vào hệ thống, nhưng bạn đã biết nên quét máy nào thay vì quét mù.' },
+    { id: 'social', label: 'Kỹ thuật xã hội', x: 548, y: 220, tone: 'warn', detail: 'Bài 2.4: dùng tên nhân sự và quy tắc email để soạn email lừa đảo gọi đúng tên người nhận.' },
+  ]}
+  edges={[
+    { from: 'whois', to: 'profile' },
+    { from: 'cert', to: 'profile' },
+    { from: 'job', to: 'profile' },
+    { from: 'profile', to: 'enum' },
+    { from: 'profile', to: 'social' },
+  ]}
+/>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hãy tự đặt mình vào vị trí người quản trị hệ thống của megacorp. Bạn không cấm được ai tra crt.sh hay Google, vì đó là dữ liệu công khai của người khác giữ, và bạn cũng không xoá được dòng nào khỏi sổ Certificate Transparency. Điều bạn làm được là khiến những thông tin đó **vô dụng với kẻ tấn công**. Đặt tên subdomain nội bộ khó đoán và tách khỏi tên miền chính, để cả khi nó lộ ra thì kẻ tấn công không biết đó là máy gì.
+
+Đừng ghi phiên bản phần mềm trong tin tuyển dụng, vì "thành thạo Apache 2.4.49" chính là mục lục để tra lỗ hổng. Định kỳ tự chạy lại đúng các lệnh ở bài này lên tên miền của mình, để biết kẻ tấn công nhìn thấy gì trước khi họ nhìn thấy. Và dặn nhân viên cân nhắc những gì đăng công khai, vì họ cũng là một nguồn thông tin.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Chê thụ động là "nhàm" và nhảy ngay vào quét.** Quét mù cả dải địa chỉ vừa ồn vừa dễ lệch phạm vi, trong khi chỉ mười phút với crt.sh đã cho bạn danh sách máy cần nhìn. Ngoài đời, lỗi này hay làm bạn phải xin lỗi khách hàng vì quét nhầm máy không thuộc hợp đồng.
+- **Coi output mô phỏng là thật.** Gõ lệnh với `megacorp.lab` rồi thấy báo trống hoặc lỗi, nhiều bạn nghĩ mình gõ sai. Tên miền này không tồn tại công khai; hãy dùng tên miền của chính bạn nếu muốn tập với dữ liệu thật.
+- **Nhầm ranh giới giữa đọc và dùng.** Xem một trang công khai là hợp pháp, nhưng lấy thông tin lộ ra đó để đăng nhập tài khoản người khác thì không, kể cả khi mật khẩu "đang nằm đó".
+- **Không ghi nguồn.** Tới lúc viết báo cáo, bạn không nhớ danh sách subdomain lấy từ đâu và không dẫn chứng được. Mất cả buổi chạy lại, mà dữ liệu có thể đã đổi.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Điểm khác biệt chính giữa thụ động và chủ động?', options: ['Thụ động nhanh hơn', 'Thụ động không chạm hệ thống mục tiêu', 'Thụ động cần công cụ đắt tiền'], answer: 1, explain: 'Thụ động hỏi bên thứ ba nên không để dấu vết trên hệ thống mục tiêu. Chủ động gửi gói tin tới họ nên để lại log.' },
+    { q: 'crt.sh hữu ích vì nó lộ ra thứ gì?', options: ['Mật khẩu', 'Danh sách subdomain từ log Certificate Transparency', 'Số thẻ tín dụng'], answer: 1, explain: 'Log Certificate Transparency công khai liệt kê các tên miền con từng được cấp chứng chỉ, trong đó có cả máy nội bộ.' },
+    { q: 'Email j.doe@megacorp.lab gợi ý quy tắc đặt tên nào?', options: ['Ngẫu nhiên', 'chữ-cái-đầu.họ@', 'Số nhân viên@'], answer: 1, explain: 'Suy ra quy tắc giúp bạn đoán email của nhân viên khác, và dựng danh sách tài khoản cho các bước sau.' },
+    { q: 'Trong phòng thi OSCP bạn nhận địa chỉ IP trong một mạng cô lập, không có Internet. Kỹ thuật nào ở bài này ít có chỗ dùng nhất?', options: ['Ghi chép có nguồn', 'Tra crt.sh để tìm subdomain', 'Đọc kỹ trước khi chạm vào hệ thống'], answer: 1, explain: 'Mạng thi không có tên miền công khai nên crt.sh không có gì để tra. Thói quen đọc kỹ và ghi chép thì vẫn dùng nguyên vẹn.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Trước khi chạm vào mục tiêu, hãy hỏi những nơi không phải mục tiêu: càng nhiều thứ biết được từ bên ngoài thì càng ít phải gõ cửa ồn ào ở bên trong.
+- Mẩu thông tin nào cũng nên kèm một câu hỏi "dùng nó ở đâu": subdomain để quét ở bài 2.2, quy tắc email để thử mật khẩu và soạn thư giả.
+- Thông tin lẻ thì vô hại, ghép lại mới thành hồ sơ có giá trị. Ghi lại nguồn để viết báo cáo được.
+- Ngoài đời đây là bước đầu tiên; trong phòng thi thì không có Internet để tra, nên thứ mang theo là thói quen đọc kỹ.

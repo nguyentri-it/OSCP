@@ -1,0 +1,246 @@
+---
+title: "Capstone: diễn tập ứng phó một chiến dịch có dùng AI"
+code: "8.7"
+level: 8
+summary: "Một buổi diễn tập trên bàn tại ngân hàng hư cấu Sao Mai: theo dõi tín hiệu ở từng lớp, ra quyết định, ngăn chặn, và viết báo cáo sau sự cố."
+duration: "90 phút"
+updated: "2026-11-09"
+objectives:
+  - "Nắm quy trình ứng phó sự cố: chuẩn bị, phát hiện, ngăn chặn, khắc phục, rút kinh nghiệm"
+  - "Thấy các lớp phòng thủ ở bài 6.1–6.4 phối hợp với nhau ra sao"
+  - "Biết tổ chức một buổi diễn tập trên bàn cho đơn vị mình"
+  - "Viết được báo cáo sau sự cố ngắn gọn, có hành động cụ thể"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Walkthrough from '../../components/sim/Walkthrough.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Đội cứu hoả không đợi có cháy mới tập. Họ tập thường xuyên để khi chuông reo, ai cũng biết mình cầm vòi nào, đứng ở đâu.
+
+**Diễn tập trên bàn** (tabletop exercise) là buổi tập như vậy cho sự cố an ninh: các bộ phận ngồi quanh bàn, người điều phối đưa ra tình huống từng bước, mỗi bên nói mình thấy gì và làm gì. Không đụng vào hệ thống thật, nhưng lộ ra rất nhiều lỗ hổng trong quy trình.
+
+<Callout type="warn">
+Ngân hàng Sao Mai, mọi người, tài khoản, địa chỉ và số liệu trong bài đều là hư cấu. Bài nhìn sự cố từ phía đội phòng thủ; hành động của kẻ tấn công chỉ được mô tả ở mức tín hiệu mà đội phòng thủ quan sát được.
+</Callout>
+
+## Quy trình ứng phó sự cố
+
+Hầu hết ngân hàng làm theo một khung tương tự hướng dẫn của NIST (một cơ quan chuẩn của Mỹ, tài liệu SP 800-61), gồm năm bước:
+
+1. **Chuẩn bị:** có sẵn người, công cụ, quy trình, liên lạc trước khi có sự cố.
+2. **Phát hiện và phân tích:** nhận ra có chuyện, xác định phạm vi.
+3. **Ngăn chặn:** không cho sự cố lan rộng, không cho tiền tiếp tục bị chuyển đi.
+4. **Loại bỏ và khắc phục:** dọn sạch kẻ tấn công, đóng lỗ hổng đã bị lợi dụng, rồi đưa hệ thống hoạt động lại.
+5. **Rút kinh nghiệm:** điều gì hoạt động, điều gì hở, ai sửa gì, hạn khi nào.
+
+## Diễn tập: một buổi chiều thứ Năm tại Sao Mai
+
+<Walkthrough
+  client:visible
+  title="Sự cố hư cấu tại Ngân hàng Sao Mai, nhìn từ phía SOC"
+  steps={[
+    {
+      phase: 'Chuẩn bị',
+      title: 'Những gì đã có trước sự cố',
+      prompt: '(hồ sơ chuẩn bị)',
+      output: [
+        { text: '✓ Khoá FIDO2 cho khối tài chính và toàn bộ tài khoản quản trị' },
+        { text: '✗ Ngoại lệ: 3 tài khoản IT vẫn dùng OTP SMS "tạm thời" từ năm ngoái', hit: true },
+        { text: '✓ Quy định: lệnh trên 1 tỷ phải gọi lại qua số lưu sẵn + duyệt hai người' },
+        { text: '✓ SIEM có luật Kerberoasting, DCSync (bài 8.1); log DC đã bật' },
+        { text: '✓ Mô hình chấm điểm giao dịch + phát hiện tài khoản mule (bài 6.2)' },
+        { text: '✓ Trợ lý AI nội bộ chỉ có quyền đọc (bài 6.4)' },
+      ],
+      takeaway: 'Phòng thủ tốt nhưng có một ngoại lệ "tạm thời" bị quên. Diễn tập giỏi nhất là tìm ra những chỗ như vậy trước kẻ tấn công.',
+      tone: 'warn',
+    },
+    {
+      phase: 'Phát hiện',
+      title: '13:05 · Bộ lọc thư gắn cờ một đợt email "kiểm toán"',
+      prompt: '(bảng điều khiển lọc thư)',
+      output: [
+        { text: 'Người gửi : kiemtoan-noibo[.]com   (tên miền đăng ký 3 ngày trước)', hit: true },
+        { text: 'Người nhận: 37 nhân viên khối tài chính và IT' },
+        { text: 'Nội dung  : văn phong chuẩn, gọi đúng tên, nhắc đúng dự án đang làm' },
+        { text: 'Liên kết  : trang đăng nhập giả giao diện cổng nội bộ' },
+        { text: 'Kết quả   : 2 người nhập thông tin; 1 trong 2 là tài khoản IT dùng OTP SMS', hit: true },
+      ],
+      takeaway: 'Email không có lỗi chính tả nào; tín hiệu đáng tin là tên miền mới và đường dẫn lạ. Người dùng FIDO2 an toàn dù đã nhập mật khẩu; tài khoản thuộc diện ngoại lệ thì không. (Bài 2.4, 6.1)',
+      tone: 'bad',
+    },
+    {
+      phase: 'Phát hiện',
+      title: '13:40 · Kế toán trưởng nhận cuộc gọi video từ "Phó tổng giám đốc"',
+      prompt: '(báo cáo từ khối tài chính)',
+      output: [
+        { text: 'Yêu cầu : chuyển 18 tỷ cho "đối tác nước ngoài" trước 15:00, giữ kín' },
+        { text: 'Xử lý   : kế toán trưởng gọi lại số PTGĐ trong danh bạ nội bộ', hit: true },
+        { text: 'Kết quả : PTGĐ thật đang họp, không hề gọi. Không lệnh nào được tạo.' },
+        { text: '13:52   : báo bộ phận an toàn thông tin' },
+      ],
+      takeaway: 'Quy trình gọi lại chặn đứng mà không cần ai nhận ra video là giả. Báo cáo ngay cũng quan trọng: SOC giờ biết đây là một chiến dịch có chủ đích, không phải phishing ngẫu nhiên. (Bài 6.2)',
+      tone: 'good',
+    },
+    {
+      phase: 'Phát hiện',
+      title: '14:10 · SIEM báo: tài khoản IT xin vé RC4 hàng loạt',
+      prompt: 'soc@saomai:~$',
+      cmd: 'chạy luật "Nhiều vé dịch vụ Kerberos mã hoá RC4"',
+      output: [
+        { text: 'TargetUserName  IpAddress     SoDichVu  Khoảng' },
+        { text: 'it.hoang        10.20.5.41    14        14:02–14:09', hit: true },
+        { text: '' },
+        { text: '[Trợ lý AI] Mẫu khớp Kerberoasting (T1558.003). it.hoang là một trong 2' },
+        { text: 'người nhập thông tin vào trang giả lúc 13:05. Đề xuất: cô lập, khoá, đổi' },
+        { text: 'mật khẩu các tài khoản dịch vụ bị xin vé. (Nguồn: 14 sự kiện 4769)' },
+      ],
+      takeaway: 'Luật ở bài 8.1 bắt đúng kỹ thuật ở bài 3.5. Trợ lý AI nối nhanh hai sự kiện cách nhau một giờ; analyst mở log gốc để kiểm chứng trước khi hành động.',
+      tone: 'warn',
+    },
+    {
+      phase: 'Ngăn chặn',
+      title: '14:16 · Kích hoạt playbook phản ứng (SOAR)',
+      prompt: 'soc@saomai:~$',
+      cmd: 'chạy playbook "Tài khoản nội bộ bị chiếm" cho it.hoang (analyst đã duyệt)',
+      output: [
+        { text: '[tự động] Thu hồi mọi phiên đăng nhập của it.hoang ........ xong' },
+        { text: '[tự động] Khoá tạm tài khoản it.hoang ...................... xong' },
+        { text: '[đã duyệt] Cô lập máy trạm 10.20.5.41 khỏi mạng .............. xong' },
+        { text: '[giao việc] Đổi mật khẩu 14 tài khoản dịch vụ bị xin vé ........ IT trực', hit: true },
+        { text: '[giao việc] Tìm đăng nhập khác từ IP của trang giả ............ SOC' },
+      ],
+      takeaway: 'Từ email tới khoá tài khoản mất 71 phút; từ cảnh báo Kerberoasting tới cô lập mất 6 phút. Đổi mật khẩu tài khoản dịch vụ là bắt buộc, vì vé đã xin có thể đang bị bẻ khoá ngoại tuyến.',
+      tone: 'good',
+    },
+    {
+      phase: 'Ngăn chặn',
+      title: '15:30 · Song song: khách hàng bị "nhân viên Sao Mai" gọi video',
+      prompt: '(hệ thống chống gian lận)',
+      output: [
+        { text: 'Tổng đài nhận 9 cuộc gọi khách báo bị mạo danh nhân viên ngân hàng' },
+        { text: 'Mô hình đồ thị gắn cờ 6 tài khoản nhận tiền từ các khách này', hit: true },
+        { text: '→ 4 tài khoản tại ngân hàng khác: gửi yêu cầu phối hợp tạm giữ' },
+        { text: '→ 2 tài khoản tại Sao Mai: tạm giữ, giữ lại được 212 triệu' },
+        { text: '→ Đẩy cảnh báo trong ứng dụng tới toàn bộ khách hàng' },
+      ],
+      takeaway: 'Chiến dịch nhắm cả nhân viên lẫn khách hàng. Phát hiện tài khoản mule và phối hợp liên ngân hàng là cơ hội cuối để giữ tiền lại. (Bài 6.2)',
+      tone: 'warn',
+    },
+    {
+      phase: 'Khắc phục',
+      title: 'Hôm sau · Đóng lỗ hổng và săn dấu vết còn sót',
+      prompt: 'soc@saomai:~$',
+      cmd: 'tìm kiếm chủ động 30 ngày gần nhất',
+      output: [
+        { text: 'Đăng nhập từ IP trang giả ngoài it.hoang ............... 0' },
+        { text: 'Yêu cầu sao chép thư mục (4662) từ tài khoản không phải DC .. 0' },
+        { text: 'Tài khoản, dịch vụ, tác vụ lịch mới tạo bất thường ........ 0' },
+        { text: 'Ngoại lệ OTP SMS: đã xoá, 3 tài khoản IT chuyển sang FIDO2', hit: true },
+        { text: '14 tài khoản dịch vụ: chuyển sang gMSA, bỏ hỗ trợ RC4' },
+      ],
+      takeaway: 'Không có dấu hiệu kẻ tấn công đã leo tới DCSync hay cài cách quay lại. Lỗ hổng gốc (ngoại lệ MFA) và điều kiện cho Kerberoasting (mật khẩu dịch vụ, RC4) đều được đóng. (Bài 3.5)',
+      tone: 'good',
+    },
+    {
+      phase: 'Rút kinh nghiệm',
+      title: 'Tuần sau · Họp rút kinh nghiệm, không đổ lỗi',
+      prompt: '(biên bản)',
+      output: [
+        { text: 'Hoạt động tốt : quy trình gọi lại; luật 4769; FIDO2; báo cáo sớm' },
+        { text: 'Còn hở       : ngoại lệ MFA bị quên; 71 phút từ email tới khoá' },
+        { text: 'Hành động    : rà ngoại lệ bảo mật hằng quý (IT, hạn 30/11)', hit: true },
+        { text: '               tự động thu hồi phiên khi người dùng báo đã nhập' },
+        { text: '               thông tin vào trang lạ (SOC, hạn 15/12)' },
+        { text: '               diễn tập deepfake cho chi nhánh (ATTT, hạn Q1)' },
+      ],
+      takeaway: 'Mỗi hành động có người phụ trách và hạn chót. Họp "không đổ lỗi" để mọi người dám báo cáo sớm; người nhập mật khẩu vào trang giả rồi báo ngay đã giúp SOC rất nhiều.',
+      tone: 'good',
+    },
+  ]}
+/>
+
+## Ba điều quyết định kết quả
+
+1. **Quy trình chặn được thứ công nghệ không chặn được.** Cuộc gọi deepfake thất bại vì quy định gọi lại, không vì phần mềm nào.
+2. **Phát hiện nhiều lớp bù cho nhau.** Lọc thư không chặn hết, nhưng luật Kerberoasting bắt được bước tiếp theo. Không lớp nào hoàn hảo; chuỗi các lớp mới đáng tin.
+3. **Ngoại lệ là kẻ thù.** Cả sự cố xoay quanh ba tài khoản "tạm thời" chưa có FIDO2.
+
+<Callout type="note" label="Nếu kẻ tấn công nhanh hơn">
+Trong buổi diễn tập này, Kerberoasting bị chặn sau 6 phút nhờ analyst duyệt nhanh. Một AI agent có thể đi từ bước đó tới máy chủ dữ liệu trong ít phút hơn. Khi diễn tập lại, hãy nén dòng thời gian: nếu mỗi bước của kẻ tấn công chỉ mất vài phút, quy trình của bạn còn kịp không? Bài 8.4 (mồi nhử, ngăn chặn tự động) và bài 8.6 (sao lưu bất biến, phát hiện dữ liệu ra ngoài) bàn cách trả lời câu hỏi đó.
+</Callout>
+
+## Báo cáo sau sự cố
+
+Giống báo cáo pentest ở bài 4.1, báo cáo sau sự cố viết cho hai loại người đọc: lãnh đạo cần biết mức độ và việc phải làm; đội kỹ thuật cần dòng thời gian và chi tiết.
+
+```text
+BÁO CÁO SAU SỰ CỐ — SM-2026-014 (hư cấu)
+Mức độ      : Cao (có tài khoản nội bộ bị chiếm; không mất tiền của ngân hàng)
+Tóm tắt     : Chiến dịch lừa đảo có chủ đích kết hợp email cá nhân hoá và
+              cuộc gọi video mạo danh lãnh đạo. Một tài khoản IT bị chiếm do
+              thuộc diện ngoại lệ MFA; kẻ tấn công thử Kerberoasting và bị
+              chặn sau 6 phút. Song song, 9 khách hàng bị mạo danh nhân viên gọi.
+Dòng thời gian: 13:05 email · 13:40 cuộc gọi deepfake · 14:10 cảnh báo SIEM
+              · 14:16 cô lập · 15:30 tạm giữ tài khoản mule
+Ảnh hưởng   : 1 tài khoản IT, 1 máy trạm; khách hàng mất 1,1 tỷ, giữ lại 212 triệu
+Nguyên nhân gốc: ngoại lệ MFA không được rà soát; tài khoản dịch vụ dùng RC4
+Hành động   : (bảng hành động, người phụ trách, hạn chót)
+Thông báo   : cơ quan quản lý và khách hàng bị ảnh hưởng theo quy định hiện hành
+```
+
+<Callout type="note">
+Ngân hàng có nghĩa vụ báo cáo sự cố và vi phạm dữ liệu cá nhân cho cơ quan quản lý trong thời hạn ngắn theo quy định. Quy trình diễn tập nên có sẵn mẫu thông báo và người chịu trách nhiệm liên lạc, để không mất thời gian giữa lúc sự cố. Khi làm thật, luôn đối chiếu văn bản hiện hành.
+</Callout>
+
+## Tổ chức một buổi diễn tập cho đơn vị bạn
+
+<Checklist
+  client:visible
+  title="Chuẩn bị một buổi diễn tập trên bàn"
+  storageKey="tabletop-prep"
+  items={[
+    { label: 'Chọn một kịch bản sát thực tế của đơn vị', hint: 'Ví dụ: deepfake lãnh đạo, chiếm tài khoản quản trị, chatbot lộ dữ liệu' },
+    { label: 'Mời đủ bộ phận', hint: 'SOC, IT, tài chính, thanh toán, pháp chế, truyền thông, chăm sóc khách hàng, lãnh đạo' },
+    { label: 'Chỉ định người điều phối và người ghi chép', hint: 'Người điều phối không tham gia trả lời' },
+    { label: 'Chia kịch bản thành 5–8 diễn biến, đưa ra từng cái một', hint: 'Mỗi diễn biến hỏi: bạn thấy gì, làm gì, báo ai?' },
+    { label: 'Thêm ít nhất một tình huống "trục trặc"', hint: 'Người phụ trách nghỉ phép, công cụ không chạy, số điện thoại sai' },
+    { label: 'Ghi lại quyết định và thời gian từng bước' },
+    { label: 'Kết thúc bằng họp rút kinh nghiệm không đổ lỗi' },
+    { label: 'Mỗi phát hiện thành một hành động có người phụ trách và hạn chót' },
+    { label: 'Lên lịch buổi tiếp theo, ít nhất mỗi năm hai lần' },
+  ]}
+/>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Cả bài là phòng thủ. Nếu chỉ nhớ một điều: <strong>sự cố được quyết định ở giai đoạn chuẩn bị</strong>. Quy trình gọi lại, FIDO2, log đã bật, luật phát hiện, mô hình chống gian lận, trợ lý AI chỉ đọc đều được làm từ trước. Diễn tập là cách rẻ nhất để biết chuẩn bị của mình còn hở ở đâu.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Chỉ mời đội kỹ thuật ngồi diễn tập với nhau mà bỏ quên tài chính, pháp chế, truyền thông và chăm sóc khách hàng.** Trong một vụ sự cố thực tế tại ngân hàng hay doanh nghiệp lớn, những quyết định căng thẳng nhất như tạm dừng cổng thanh toán, thông báo cho cơ quan quản lý hay trả lời báo chí đều nằm ngoài thẩm quyền của phòng IT.
+- **Thiết kế kịch bản diễn tập quá êm đềm, mọi công cụ và quy trình đều chạy đúng như sách giáo khoa.** Nếu không cố tình cài vào những tình huống trắc trở như người giữ quyền phê duyệt đang nghỉ phép hay ngoại lệ bảo mật bị bỏ quên, buổi diễn tập sẽ biến thành buổi đọc kịch bản hình thức và không bộc lộ được điểm mù nào.
+- **Biến cuộc họp rút kinh nghiệm sau sự cố thành buổi truy tìm và kỷ luật cá nhân trót bấm nhầm link lừa đảo.** Văn hoá đổ lỗi sẽ khiến nhân viên giấu nhẹm sai sót vào lần sau, làm SOC mất đi khoảng thời gian vàng quý giá nhất từ lúc người dùng phát hiện bất thường rồi tự giác báo cáo sớm.
+- **Ghi biên bản hàng chục điểm yếu cần khắc phục sau diễn tập nhưng không gắn người chịu trách nhiệm cụ thể và hạn chót hoàn thành.** Một danh sách việc cần làm mà không có chủ sở hữu rõ ràng thì sáu tháng sau tới kỳ diễn tập tiếp theo, mọi lỗ hổng vẫn sẽ nằm nguyên ở chỗ cũ.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Trong diễn tập, vì sao cuộc gọi deepfake thất bại?', options: ['Phần mềm phát hiện deepfake chặn được', 'Kế toán trưởng làm theo quy định gọi lại qua số lưu sẵn', 'Cuộc gọi bị rớt mạng'], answer: 1, explain: 'Quy trình xác minh ngoài kênh chặn được mà không cần nhận ra video là giả.' },
+    { q: 'Nguyên nhân gốc để một tài khoản IT bị chiếm là gì?', options: ['Nhân viên kém', 'Tài khoản thuộc diện ngoại lệ MFA "tạm thời" không được rà soát', 'Tường lửa hỏng'], answer: 1, explain: 'Người dùng FIDO2 an toàn dù nhập mật khẩu vào trang giả; tài khoản ngoại lệ dùng OTP SMS thì không.' },
+    { q: 'Sau khi phát hiện Kerberoasting, vì sao phải đổi mật khẩu các tài khoản dịch vụ bị xin vé?', options: ['Để làm đẹp báo cáo', 'Vì vé đã xin có thể đang bị bẻ khoá ngoại tuyến, khoá tài khoản người xin vé không ngăn được việc đó', 'Vì mật khẩu hết hạn'], answer: 1, explain: 'Bẻ khoá ngoại tuyến (bài 2.6) diễn ra trên máy kẻ tấn công; chỉ đổi mật khẩu mới làm vé cũ vô giá trị.' },
+    { q: 'Họp rút kinh nghiệm "không đổ lỗi" nhằm mục đích gì?', options: ['Để không ai phải làm gì', 'Để mọi người dám báo cáo sớm và tập trung sửa quy trình', 'Để rút ngắn cuộc họp'], answer: 1, explain: 'Báo cáo sớm là tín hiệu quý; trừng phạt người báo cáo khiến lần sau không ai lên tiếng.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Kết quả của một ca ứng phó sự cố từ phát hiện, ngăn chặn, khắc phục cho tới rút kinh nghiệm thực chất đã được định đoạt từ giai đoạn chuẩn bị trước khi tiếng chuông đầu tiên vang lên.
+- Quy trình nghiệp vụ chặt chẽ giúp chặn đứng đòn lừa đảo deepfake, nhiều lớp phát hiện nối tiếp sẽ bọc lót cho nhau, còn những ngoại lệ bảo mật "tạm thời" bị lãng quên luôn là tử huyệt nguy hiểm nhất.
+- Hãy tổ chức diễn tập trên bàn định kỳ với đầy đủ các phòng ban, và biến mỗi lỗ hổng tìm thấy thành một đầu việc có người phụ trách cùng hạn chót cụ thể.

@@ -1,0 +1,449 @@
+---
+title: "Hardening AD, Windows và Linux theo chuẩn"
+code: "7.2"
+level: 7
+summary: "Mỗi thiết lập mặc định để cho tiện là một cửa sổ để mở. Bài này đi qua những thiết lập chặn được phần lớn kỹ thuật ở Cấp 2–3: phân tầng quản trị, LAPS, SMB signing, tắt giao thức cũ, bảo vệ LSASS, luật ASR của Defender, chặn ClickFix, hardening SSH và sudo, cùng cách bật chúng mà không làm sập hệ thống."
+duration: "100 phút"
+updated: "2026-11-09"
+objectives:
+  - "Hiểu baseline hardening (CIS Benchmarks, Microsoft Security Baselines) và vì sao không áp nguyên si"
+  - "Nối mỗi kỹ thuật tấn công ở Cấp 2–3 với thiết lập hardening chặn nó"
+  - "Hardening Active Directory: phân tầng quản trị, Protected Users, gMSA, rà quyền DCSync, đo bằng PingCastle"
+  - "Hardening Windows: LAPS, SMB signing, tắt LLMNR và NTLM dần, Credential Guard, luật ASR, chặn ClickFix"
+  - "Hardening Linux: SSH, sudo, SUID, cập nhật tự động, và đo bằng Lynis"
+  - "Bật thiết lập theo thứ tự audit trước, chặn sau, theo vòng, có đường lùi"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Checklist from '../../components/sim/Checklist.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Một căn nhà có hai mươi cửa sổ. Bạn có thể gắn chuông báo trộm lên cả hai mươi, rồi thuê người trực nghe chuông. Hoặc bạn đi một vòng, đóng chốt mười lăm cái không bao giờ mở, và chỉ gắn chuông cho năm cái còn lại.
+
+Hệ thống cũng vậy. Windows, Active Directory và Linux được cài sẵn để **chạy được ở mọi nơi**, nên bật nhiều thứ phần lớn doanh nghiệp không dùng: giao thức cũ, mật khẩu quản trị dùng chung, quyền quản trị cho người dùng thường.
+
+**Hardening** (cứng hoá hệ thống) là đóng những cửa sổ đó: tắt, gỡ hoặc siết lại mọi thứ không cần. Cách này rẻ hơn việc phát hiện, không cần người trực, và chặn được cả kẻ tấn công dùng AI, vì AI cũng không đi qua được cửa đã khoá.
+
+## Kiến thức chính
+
+### Baseline hardening
+
+Bạn không cần tự nghĩ ra từng thiết lập. Đã có các bộ **baseline**, tức bộ thiết lập an toàn khuyến nghị cho từng hệ điều hành, được cộng đồng và nhà sản xuất duy trì:
+
+- **CIS Benchmarks:** bộ khuyến nghị miễn phí cho Windows, Linux, trình duyệt, đám mây, chia hai mức. Mức 1 ít ảnh hưởng tới công việc hằng ngày; mức 2 chặt hơn, dành cho hệ thống nhạy cảm.
+- **Microsoft Security Baselines** (trong Security Compliance Toolkit): bộ Group Policy dựng sẵn cho từng bản Windows. Group Policy (GPO) là công cụ để quản trị viên đặt một thiết lập một lần rồi áp cho hàng loạt máy trong domain.
+- **DISA STIG:** bộ của quân đội Mỹ, rất chặt, hay dùng làm tham khảo.
+
+Đừng áp nguyên si cả bộ lên toàn công ty trong một ngày. Một thiết lập đúng ở chỗ này có thể làm hỏng một phần mềm cũ ở chỗ khác. Cách làm đúng nằm ở cuối bài: **audit trước, chặn sau, theo vòng**. "Audit" ở đây là bật thiết lập ở chế độ chỉ ghi log, chưa chặn, để xem nó sẽ ảnh hưởng ai.
+
+### Mỗi kỹ thuật tấn công, một thiết lập chặn
+
+Đây là lý do bạn học tấn công ở Cấp 2–3: để biết thiết lập nào đáng ưu tiên. Đọc bảng này từ trái sang phải: cột đầu là chiêu tấn công bạn đã gặp, cột giữa là thiết lập chặn đúng chiêu đó, cột cuối là bài đã học chiêu đó. Từng thiết lập sẽ được hướng dẫn ở các phần sau.
+
+| Kỹ thuật | Thiết lập chặn | Bài |
+|---|---|---|
+| Bắt mã Net-NTLMv2 bằng Responder | Tắt LLMNR, NBT-NS | 2.6 |
+| NTLM relay | Bắt buộc SMB signing; LDAP signing và channel binding; giảm NTLM | 2.6 |
+| Pass-the-Hash giữa các máy trạm | Windows LAPS; chặn cổng 445 giữa máy trạm; phân tầng quản trị | 3.5, 3.9 |
+| Đọc bộ nhớ LSASS lấy hash | Credential Guard; LSA Protection; luật ASR chặn đọc LSASS | 3.5 |
+| Kerberoasting | gMSA, hoặc mật khẩu tài khoản dịch vụ từ 25 ký tự; ưu tiên AES | 3.5 |
+| AS-REP roasting | Bật Kerberos pre-authentication cho mọi tài khoản | 3.5 |
+| DCSync | Rà quyền sao chép thư mục; quản trị Tier 0 chỉ dùng máy Tier 0 | 3.5 |
+| Leo quyền qua dịch vụ cấu hình sai | Người dùng không có quyền quản trị máy; rà quyền dịch vụ | 3.2 |
+| Leo quyền qua sudo, SUID | Sudoers tối thiểu; rà danh sách SUID | 3.1 |
+| Tài liệu Office độc hại | Chặn macro từ Internet; luật ASR chặn Office tạo tiến trình con | 2.4 |
+| ClickFix: trang giả bảo người dùng tự dán lệnh | Tắt hộp Run cho người không cần; giới hạn PowerShell; luật phát hiện | 2.4 |
+
+### Active Directory
+
+**Phân tầng quản trị.** Ý tưởng cốt lõi: tài khoản quản trị chỉ đăng nhập vào máy cùng tầng hoặc tầng cao hơn, không bao giờ đăng nhập xuống tầng thấp hơn, vì tầng thấp dễ bị chiếm.
+
+Mỗi lần đăng nhập vào một máy, "dấu vân tay" mật khẩu (hash) của tài khoản đó có thể nằm lại trong bộ nhớ máy. Nếu hash của quản trị domain không bao giờ chạm tới máy trạm, thì kẻ chiếm được máy trạm cũng không lấy được nó để dùng Pass-the-Hash (bài 3.5).
+
+<ConceptMap
+  client:visible
+  title="Ba tầng quản trị: tài khoản không được đi xuống"
+  width={690}
+  height={340}
+  zones={[
+    { label: "Tier 0: kiểm soát danh tính", x: 10, y: 10, w: 670, h: 100 },
+    { label: "Tier 1: máy chủ", x: 10, y: 120, w: 670, h: 100 },
+    { label: "Tier 2: máy trạm", x: 10, y: 230, w: 670, h: 100 },
+  ]}
+  nodes={[
+    { id: 'dc', label: 'Domain Controller', sub: 'AD CS, Entra Connect, sao lưu', x: 135, y: 70, w: 180, tone: 'warn', detail: 'Mọi thứ mà chiếm được là chiếm được cả domain. Gồm cả hệ thống sao lưu và công cụ quản lý có quyền trên DC.' },
+    { id: 'a0', label: 'Quản trị Tier 0', sub: 'máy quản trị riêng', x: 560, y: 70, w: 180, tone: 'accent', detail: 'Chỉ đăng nhập DC và máy quản trị chuyên dụng (PAW). Không đọc email, không lướt web bằng tài khoản này.' },
+    { id: 'srv', label: 'Máy chủ ứng dụng', sub: 'web, CSDL, file', x: 135, y: 180, w: 180, detail: 'Quản trị bằng tài khoản Tier 1 riêng.' },
+    { id: 'a1', label: 'Quản trị Tier 1', x: 390, y: 180, w: 180, tone: 'accent', detail: 'Đăng nhập máy chủ được. Bị chặn đăng nhập máy trạm bằng quyền "Deny log on" trong Group Policy.' },
+    { id: 'ws', label: 'Máy trạm nhân viên', sub: 'nơi dễ bị chiếm nhất', x: 560, y: 290, w: 180, tone: 'warn', detail: 'Nơi email độc, ClickFix, tài liệu độc hại rơi vào. Mọi hash để lại ở đây nên coi như đã lộ.' },
+    { id: 'a2', label: 'Hỗ trợ IT', sub: 'Tier 2', x: 135, y: 290, w: 180, tone: 'accent', detail: 'Tài khoản hỗ trợ máy trạm. Lộ hash ở đây thì kẻ tấn công chỉ có thêm máy trạm, không có máy chủ hay DC.' },
+  ]}
+  edges={[
+    { from: 'a0', to: 'dc' },
+    { from: 'a1', to: 'srv' },
+    { from: 'a2', to: 'ws' },
+    { from: 'a0', to: 'ws', label: 'cấm đăng nhập', dashed: true },
+  ]}
+/>
+
+Cách triển khai: tạo tài khoản quản trị riêng cho từng tầng, rồi dùng Group Policy gán quyền "Deny log on locally", "Deny log on through Remote Desktop Services" và "Deny access to this computer from the network" cho tài khoản tầng cao trên máy tầng thấp.
+
+**Những việc khác cho AD:**
+
+- **Nhóm Protected Users** dành cho tài khoản quản trị của người thật: tài khoản trong nhóm này không dùng được NTLM (giao thức đăng nhập cũ, dễ bị lợi dụng), không bị uỷ quyền đi nơi khác, và không để lại thông tin đăng nhập lưu sẵn trên máy. Thử với một tài khoản trước; không đưa tài khoản dịch vụ vào nhóm này.
+- **gMSA** (*group Managed Service Account*) cho tài khoản dịch vụ: Windows tự đặt một mật khẩu rất dài (240 byte), tự đổi định kỳ, không ai phải biết hay nhớ. Kẻ tấn công dùng Kerberoasting xin được "vé" cũng không bẻ ra nổi mật khẩu.
+- **Đổi mật khẩu tài khoản krbtgt** (tài khoản đặc biệt dùng để ký mọi "vé" đăng nhập trong domain) định kỳ. Khi nghi domain đã bị chiếm thì đổi **hai lần**, cách nhau ít nhất bằng thời hạn tối đa của một vé, để vô hiệu golden ticket (vé giả do kẻ tấn công tự làm ra, bài 3.9).
+- **Tắt dịch vụ Print Spooler trên DC.** DC không cần in, và dịch vụ này từng là đường tấn công.
+- **Nếu có AD CS** (dịch vụ cấp chứng chỉ số của Windows), hãy rà các mẫu chứng chỉ cấu hình sai bằng công cụ mã nguồn mở như Locksmith. Một mẫu sai có thể cho người dùng thường xin được chứng chỉ mang danh quản trị domain.
+
+**Ai có quyền DCSync?** DCSync là chiêu giả làm một DC để "xin" bản sao toàn bộ mật khẩu của domain (bài 3.5). Quyền sao chép đó chỉ nên thuộc về các DC và vài tài khoản hệ thống đã biết rõ. Lệnh sau liệt kê ai đang có quyền này:
+
+**Liệt kê ai có quyền "Replicating Directory Changes All" trên domain**
+
+<Lenh noi="PowerShell trên một máy trong domain (chỉ cần quyền đọc thư mục AD)" muc="Kiểm tra xem ngoài các Domain Controller ra còn tài khoản nào đang giữ quyền thực hiện DCSync">
+
+<Terminal title="Kiểm tra quyền DCSync trên domain">
+
+```text
+Import-Module ActiveDirectory
+# GUID của quyền mở rộng DS-Replication-Get-Changes-All
+$guid = [Guid]'1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'
+(Get-Acl 'AD:\DC=saomai,DC=lab').Access |
+  Where-Object { $_.ObjectType -eq $guid } |
+  Select-Object IdentityReference, AccessControlType
+
+IdentityReference                       AccessControlType
+-----------------                       -----------------
+SAOMAI\Domain Controllers                           Allow
+BUILTIN\Administrators                              Allow
+SAOMAI\svc-dongbo-cu                                Allow   ← tài khoản đồng bộ cũ, còn dùng không?
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `1131f6ad-9c07-11d1-f79f-00c04fc2dcd2`: mã định danh (GUID) của quyền mở rộng `DS-Replication-Get-Changes-All` — quyền cho phép yêu cầu Domain Controller gửi toàn bộ hash mật khẩu về (bài 3.5).
+- `(Get-Acl 'AD:\DC=saomai,DC=lab').Access`: đọc danh sách kiểm soát truy cập (ACL) ngay tại gốc của domain.
+- `Where-Object { $_.ObjectType -eq $guid }`: lọc đúng những mục đang giữ quyền sao chép nhạy cảm này.
+
+</div>
+
+<div slot="doc">
+
+- `SAOMAI\Domain Controllers` và `BUILTIN\Administrators`: hai nhóm mặc định hợp lệ.
+- `SAOMAI\svc-dongbo-cu`: một tài khoản dịch vụ đồng bộ cũ vẫn còn giữ quyền DCSync — nếu kẻ tấn công chiếm được tài khoản này, chúng rút được toàn bộ hash của miền ngay lập tức.
+
+</div>
+
+</Lenh>
+
+**Đo cả domain bằng PingCastle.** PingCastle là công cụ miễn phí cho việc tự kiểm tra trong nội bộ. Nó chấm điểm rủi ro domain (càng thấp càng tốt) và liệt kê từng vấn đề kèm cách sửa:
+
+```powershell
+.\PingCastle.exe --healthcheck --server saomai.lab
+# Sinh báo cáo HTML ad_hc_saomai.lab.html: điểm theo bốn nhóm (tài khoản đặc quyền,
+# đối tượng cũ, quan hệ tin cậy, điểm bất thường) và danh sách việc cần làm
+```
+
+Chạy lại sau mỗi đợt sửa để thấy điểm giảm. Kết hợp với BloodHound (bài 3.5) để tìm đường đi tấn công còn sót.
+
+### Windows
+
+**Windows LAPS.** Có sẵn trong Windows từ bản cập nhật tháng 4/2023 cho Windows 10, 11 và Windows Server 2019 trở lên. Nếu mọi máy dùng chung một mật khẩu quản trị cục bộ, kẻ tấn công lấy được ở một máy là mở được tất cả.
+
+LAPS cho mỗi máy một mật khẩu quản trị riêng, dài, tự đổi định kỳ, lưu trong AD hoặc Entra ID, và chỉ người được phép mới đọc được.
+
+```powershell
+# Một lần cho cả domain: thêm thuộc tính LAPS vào schema, cho máy trong OU tự ghi mật khẩu
+Update-LapsADSchema
+Set-LapsADComputerSelfPermission -Identity 'OU=May tram,DC=saomai,DC=lab'
+# Sau đó bật chính sách LAPS bằng Group Policy cho OU đó.
+# Bộ phận hỗ trợ đọc mật khẩu của một máy khi thật sự cần:
+Get-LapsADPassword -Identity 'PC-KETOAN-07' -AsPlainText
+```
+
+**SMB signing.** SMB là giao thức chia sẻ file của Windows (cổng 445). "Signing" bắt mỗi gói tin phải có chữ ký xác nhận, nên kẻ đứng giữa không thể chen vào sửa hay chuyển tiếp (chặn kiểu tấn công NTLM relay). Windows 11 bản 24H2 và Windows Server 2025 mặc định bắt buộc signing; các bản cũ hơn thì không. Kiểm tra và bật:
+
+```powershell
+Get-SmbServerConfiguration | Select-Object EnableSMB1Protocol, RequireSecuritySignature
+Get-SmbClientConfiguration | Select-Object RequireSecuritySignature
+# Bật bằng Group Policy cho cả công ty; trên một máy lẻ:
+Set-SmbServerConfiguration -RequireSecuritySignature $true -Force
+```
+
+Tắt luôn SMBv1 nếu vẫn còn (`Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol`), trừ khi còn thiết bị quá cũ cần nó; khi đó cô lập thiết bị đó.
+
+**Tắt LLMNR và NBT-NS.** Đây là hai cơ chế cũ giúp máy tính "hô to" hỏi cả mạng khi không tìm ra tên một máy, và kẻ tấn công dùng Responder chỉ cần lên tiếng trả lời giả để bắt mật khẩu băm (bài 2.6).
+
+Cách tắt, LLMNR: Group Policy *Computer Configuration → Administrative Templates → Network → DNS Client → Turn off multicast name resolution* = Enabled. NBT-NS: tắt NetBIOS qua TCP/IP trên card mạng, hoặc qua tuỳ chọn DHCP. Responder (bài 2.6) mất đất diễn.
+
+**Giảm NTLM theo hai bước.** NTLM là gốc của chuyển tiếp và Pass-the-Hash, và Microsoft đã công bố lộ trình bỏ dần nó. Nhưng tắt ngay sẽ làm hỏng ứng dụng cũ. Bước 1: bật audit policy NTLM (*Network security: Restrict NTLM: Audit NTLM authentication in this domain*), đọc kênh log `Microsoft-Windows-NTLM/Operational` vài tuần để biết ai còn dùng. Bước 2: chuyển từng ứng dụng sang Kerberos, rồi mới hạn chế NTLM.
+
+**Bảo vệ thông tin đăng nhập trong bộ nhớ.** LSASS là tiến trình của Windows giữ các hash đăng nhập trong bộ nhớ, nên là mục tiêu số một của kẻ tấn công (bài 3.5).
+
+Credential Guard cất bí mật của LSASS vào một vùng cách ly bằng công nghệ ảo hoá; nó được bật mặc định trên Windows 11 bản 22H2 trở lên, phiên bản Enterprise và Education, nếu phần cứng đáp ứng. LSA Protection (chạy LSASS ở chế độ tiến trình được bảo vệ) chặn công cụ đọc bộ nhớ thông thường. Kiểm tra Credential Guard đang chạy:
+
+```powershell
+(Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard).SecurityServicesRunning
+# Có số 1 trong kết quả nghĩa là Credential Guard đang chạy
+```
+
+**Luật ASR (Attack Surface Reduction, tức "thu hẹp bề mặt tấn công") của Defender.** Mỗi luật chặn một hành vi mà phần mềm bình thường hiếm khi cần, nhưng mã độc thì rất hay dùng. Ba luật đáng bật trước:
+
+| Luật | Mã GUID (dùng khi bật luật bằng lệnh) |
+|---|---|
+| Chặn ứng dụng Office tạo tiến trình con | `D4F940AB-401B-4EFC-AADC-AD5F3C50688A` |
+| Chặn đánh cắp thông tin đăng nhập từ LSASS | `9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2` |
+| Chặn tiến trình tạo ra từ lệnh PsExec và WMI | `D1E49AAC-8F56-4280-B9BA-993A6D77406C` |
+
+```powershell
+# Bật chế độ audit trước: chỉ ghi lại chứ chưa chặn (sự kiện 1122 trong log của Defender)
+Add-MpPreference -AttackSurfaceReductionRules_Ids D4F940AB-401B-4EFC-AADC-AD5F3C50688A `
+  -AttackSurfaceReductionRules_Actions AuditMode
+# Vài tuần sau, không có gì hợp lệ bị ảnh hưởng thì chuyển sang Enabled (sự kiện 1121 khi chặn)
+```
+
+Luật PsExec và WMI có thể chặn cả công cụ quản trị hợp lệ của bộ phận IT; audit thật kỹ trước khi bật. Song song đó, bật **Tamper Protection** để mã độc không tự tắt Defender, và **chặn macro trong file tải từ Internet** (mặc định trên bản Office mới, kiểm tra lại các bản cũ).
+
+**Chặn ClickFix.** Từ năm 2024, chiêu này lan rất nhanh: một trang web giả hiện ra "xác minh bạn không phải robot" hoặc "lỗi hiển thị, bấm để sửa", lặng lẽ chép một lệnh PowerShell vào bộ nhớ tạm, rồi bảo người dùng bấm **Win+R, Ctrl+V, Enter**. Người dùng tự tay chạy mã độc, nên lọc thư và lọc tải file đều không thấy gì. AI giúp kẻ gian dựng hàng loạt trang giả trông chuyên nghiệp bằng mọi ngôn ngữ.
+
+Ba lớp chặn:
+
+1. **Tắt hộp Run** cho người dùng không cần nó: Group Policy *User Configuration → Administrative Templates → Start Menu and Taskbar → Remove Run menu from Start Menu*. Thiết lập này cũng vô hiệu phím Win+R.
+2. **Giới hạn PowerShell** với người dùng thường bằng App Control hoặc AppLocker: chế độ ngôn ngữ giới hạn, chặn `mshta.exe` với người không cần.
+3. **Phát hiện**, vì kẻ gian đã có biến thể dùng thanh địa chỉ của File Explorer hoặc Windows Terminal thay cho hộp Run. Lệnh gõ vào hộp Run được Windows ghi vào khoá `RunMRU`:
+
+**Luật phát hiện (định dạng Sigma): lệnh đáng ngờ dán vào hộp Run (Sysmon Event ID 13, ghi lại thay đổi trong registry)**
+
+```yaml
+title: Lệnh tải hoặc chạy script dán vào hộp Run, nghi ClickFix
+logsource:
+  product: windows
+  category: registry_set
+detection:
+  selection:
+    TargetObject|contains: '\Explorer\RunMRU\'
+    Details|contains:
+      - 'powershell'
+      - 'mshta'
+      - 'curl'
+      - 'http'
+  condition: selection
+level: high
+tags:
+  - attack.execution
+  - attack.t1204.004
+```
+
+Và cuối cùng, nền móng của mọi thứ trên: **người dùng thường không có quyền quản trị máy của mình**.
+
+### Linux
+
+**SSH** (cách đăng nhập từ xa vào Linux). Không cho tài khoản root đăng nhập thẳng, không dùng mật khẩu mà dùng khoá (kèm MFA), và chỉ cho một nhóm người được phép. Kiểm tra cấu hình **thật sự đang chạy**, không chỉ đọc file:
+
+<Lenh noi="Terminal trên máy chủ Linux" muc="In cấu hình SSH thực tế đang có hiệu lực sau khi gộp mọi file cấu hình phụ">
+
+<Terminal title="Kiểm tra cấu hình SSH thật sự đang chạy">
+
+```text
+sudo sshd -T | grep -Ei '^(permitrootlogin|passwordauthentication|allowgroups|maxauthtries)'
+# permitrootlogin no
+# passwordauthentication yes      ← vẫn còn mật khẩu?
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sudo sshd -T`: yêu cầu tiến trình `sshd` tự đọc toàn bộ `sshd_config` và các thư mục `Include`, rồi in ra giá trị **thật sự đang áp dụng**.
+- `grep -Ei '^(permitrootlogin|passwordauthentication|allowgroups|maxauthtries)'`: lọc đúng bốn thông số quan trọng nhất khi cứng hoá SSH.
+
+</div>
+
+<div slot="doc">
+
+- `permitrootlogin no`: đã chặn đăng nhập trực tiếp bằng `root`.
+- `passwordauthentication yes`: máy chủ vẫn đang cho phép đăng nhập bằng mật khẩu (dù bạn có thể tưởng mình đã tắt trong file chính).
+
+</div>
+
+</Lenh>
+
+<Callout type="warn">
+Trên nhiều bản Ubuntu, <code>sshd_config</code> có dòng <code>Include /etc/ssh/sshd_config.d/*.conf</code> ở đầu file, và sshd dùng giá trị <strong>gặp đầu tiên</strong>. Một file như <code>50-cloud-init.conf</code> đặt <code>PasswordAuthentication yes</code> sẽ thắng dòng <code>no</code> bạn sửa ở cuối file chính. Vì vậy luôn kiểm bằng <code>sshd -T</code>, và chạy <code>sudo sshd -t</code> trước khi khởi động lại để không tự khoá mình ngoài máy.
+</Callout>
+
+**sudo và SUID.** Không cấp `NOPASSWD` cho trình thông dịch hay công cụ có trong GTFOBins (bài 3.1). Kiểm cú pháp bằng `sudo visudo -c`. Lưu danh sách file SUID lúc máy mới cài làm baseline, rồi so định kỳ:
+
+```bash
+find / -perm -4000 -type f 2>/dev/null | sort > suid-hom-nay.txt
+diff suid-co-so.txt suid-hom-nay.txt     # dòng mới xuất hiện là việc phải giải thích
+```
+
+**Cập nhật bảo mật tự động.** Ubuntu và Debian: `unattended-upgrades` (bật bằng `sudo dpkg-reconfigure -plow unattended-upgrades`). RHEL và các bản tương tự: `dnf-automatic`. Máy chủ quan trọng vẫn đi theo vòng triển khai ở bài 7.1.
+
+**Tường lửa trên máy** chặn mọi kết nối vào trừ dịch vụ cần thiết (`ufw default deny incoming`), và **auditd** với bộ luật ở bài 8.2.
+
+**Đo bằng Lynis.** Công cụ mã nguồn mở, chạy ngay trên máy cần kiểm tra, cho ra "chỉ số hardening" (càng cao càng tốt) và danh sách gợi ý cần sửa:
+
+```bash
+sudo lynis audit system
+#   Hardening index : 58 [###########         ]
+#   Suggestions (31): SSH-7408 Consider hardening SSH configuration ...
+```
+
+### Bật mà không làm sập
+
+Thứ tự an toàn cho mọi thiết lập ở trên:
+
+1. **Đo trước:** PingCastle, Lynis, báo cáo tuân thủ baseline. Ghi lại con số.
+2. **Chạy chế độ audit trước khi chặn thật:** NTLM có chế độ audit, ASR có `AuditMode`, nhiều chính sách có thể bật ở chế độ chỉ ghi log mà chưa chặn. Đọc log vài tuần để biết thiết lập đó có làm hỏng việc của ai không.
+3. **Theo vòng** như bài 7.1: lab, nhóm thí điểm, rồi rộng dần. Mỗi vòng có đường lùi (gỡ GPO, bỏ luật).
+4. **Đo lại** và báo cáo thay đổi bằng con số.
+
+| Chỉ số (Lúa Vàng, hư cấu) | Trước | Sau 60 ngày |
+|---|---|---|
+| Điểm rủi ro PingCastle (thấp là tốt) | 78 | 31 |
+| Máy trạm có LAPS | 0% | 96% |
+| Máy chưa bắt buộc SMB signing | 140 | 6 (thiết bị cũ, đã cô lập) |
+| Ứng dụng còn dùng NTLM | chưa biết | 4, có kế hoạch chuyển |
+| Chỉ số hardening Lynis trung bình | 58 | 76 |
+
+## Mô phỏng: Lựa chọn thứ tự Hardening không làm gián đoạn kinh doanh
+
+<DecisionTree
+  client:visible
+  title="Chiến lược triển khai Hardening hệ thống doanh nghiệp"
+  start="start_hardening"
+  nodes={{
+    start_hardening: {
+      q: 'Doanh nghiệp muốn siết bảo mật Active Directory và hệ thống Windows. Bạn nên bắt đầu từ thiết lập nào trước?',
+      options: [
+        { label: 'Bật bắt buộc SMB Signing và chặn NTLM ngay lập tức trên toàn hệ thống', next: 'break_prod' },
+        { label: 'Triển khai Windows LAPS và tắt LLMNR/NBT-NS qua Group Policy', next: 'safe_quick_win' },
+      ],
+    },
+    break_prod: {
+      result: 'Thảm họa vận hành! Ép tắt NTLM và bắt buộc SMB Signing đột ngột làm tê liệt máy in mạng cũ, hệ thống chia sẻ file NAS cũ và các ứng dụng kế toán lâu năm, gây gián đoạn kinh doanh nghiêm trọng.',
+      tone: 'bad',
+    },
+    safe_quick_win: {
+      q: 'Lựa chọn xuất sắc! Windows LAPS triệt tiêu Pass-the-Hash giữa các máy trạm mà không ảnh hưởng người dùng. Tiếp theo, bạn muốn triển khai các luật Giảm bề mặt tấn công (ASR Rules) của Defender. Quy trình chuẩn là gì?',
+      options: [
+        { label: 'Bật thẳng chế độ Block Mode (Chặn ngay) trên toàn bộ máy trạm', next: 'block_panic' },
+        { label: 'Bật Audit Mode (Ghi log) trong 30 ngày, phân tích Event 1121 rồi mới chuyển Block Mode', next: 'audit_first' },
+      ],
+    },
+    block_panic: {
+      result: 'Hàng trăm cuộc gọi phàn nàn tới Help Desk! Các file Excel macro hợp lệ của phòng tài chính bị Defender chặn đứng vì hành vi giống mã độc. Giám đốc yêu cầu gỡ bỏ toàn bộ chính sách bảo mật.',
+      tone: 'warn',
+    },
+    audit_first: {
+      result: 'Chuẩn mực kỹ sư an ninh thông tin! Bật Audit Mode giúp bạn thống kê chính xác các file macro hợp lệ để đưa vào danh sách ngoại lệ (exclusion). Khi chuyển sang Block Mode, hệ thống được bảo vệ vững chắc mà người dùng không hề gặp phiền toái.',
+      tone: 'good',
+    },
+  }}
+/>
+
+<LabBrief
+  ten="Đo baseline, cứng hoá SSH/AD và tự tấn công lại để kiểm chứng"
+  muctieu="Tự đo điểm bảo mật trước khi sửa, bật các thiết lập chặn SSH mật khẩu (trên Ubuntu) và bắt buộc SMB signing + tắt LLMNR (trên lab AD), rồi đứng từ Kali kiểm chứng các đòn tấn công cũ không còn chạy được"
+  may="Ubuntu mục tiêu và/hoặc lab AD tự dựng (bài 3.4), cộng máy Kali để kiểm chứng"
+  thoigian="45 phút"
+  xong="Điểm Lynis/PingCastle tăng lên rõ rệt; sshd -T xác nhận PasswordAuthentication no; từ Kali chạy nxc smb thấy signing:True và SSH từ chối đăng nhập bằng mật khẩu"
+>
+
+1. Chụp snapshot sạch cho máy mục tiêu trước khi sửa cấu hình.
+2. Trên Ubuntu: chạy `sudo lynis audit system` và lưu lại chỉ số `Hardening index` ban đầu.
+3. Sửa `/etc/ssh/sshd_config` (và kiểm tra `/etc/ssh/sshd_config.d/*.conf`) để tắt đăng nhập mật khẩu và tắt đăng nhập `root`, chạy `sudo sshd -T | grep -E 'passwordauthentication|permitrootlogin'` để xác nhận cấu hình hiệu lực, rồi tải lại dịch vụ `ssh`.
+4. Trên lab Windows/AD: bật bắt buộc SMB signing và tắt LLMNR qua Group Policy, chạy `gpupdate /force`.
+5. Từ Kali: thử `ssh user@<IP>` (phải bị từ chối với `Permission denied (publickey)`), và chạy `nxc smb <IP>` để xác nhận `(signing:True)`.
+
+<div slot="goiy1">
+Nếu <code>sshd -T</code> vẫn in ra <code>passwordauthentication yes</code> dù bạn đã sửa <code>/etc/ssh/sshd_config</code>, mở các file trong <code>/etc/ssh/sshd_config.d/</code> — file nào được nạp trước sẽ thắng.
+</div>
+
+<div slot="goiy2">
+Trên Windows, mục bắt buộc SMB signing nằm trong GPO tại <code>Computer Configuration → Policies → Windows Settings → Security Settings → Local Policies → Security Options → Microsoft network server: Digitally sign communications (always)</code>.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: `sshd -T` trả về `passwordauthentication no` và `permitrootlogin no`; Kali thử SSH không dùng key bị từ chối ngay; `nxc smb` báo `signing:True`; chạy lại `lynis audit system` thấy `Hardening index` tăng.
+- Tự khoá mất quyền vào máy Ubuntu: khôi phục lại từ snapshot ở bước 1 — đây là lý do luôn kiểm tra đăng nhập bằng khóa công khai ở một terminal khác trước khi đóng phiên cũ.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Hardening thực chất là việc <strong>đóng trước những cánh cửa không ai dùng</strong> trước khi kẻ tấn công kịp chạm tay vào nắm đấm.
+
+Thay vì tự nghĩ ra từng thiết lập rời rạc, hãy lấy các bộ baseline chuẩn (CIS Benchmarks, Microsoft Security Baselines) làm khung, rồi ưu tiên bật trước những thiết lập chặn thẳng các kỹ thuật tấn công thực chiến ở Cấp 2–3: triển khai Windows LAPS để mỗi máy có mật khẩu quản trị riêng, bắt buộc SMB signing và tắt LLMNR/NBT-NS để triệt tiêu Responder cùng NTLM relay, phân tầng quản trị kết hợp Credential Guard để bảo vệ bộ nhớ LSASS, và dùng gMSA cho tài khoản dịch vụ.
+
+Trên máy trạm nhân viên, việc thu hồi quyền quản trị cục bộ, chặn macro từ Internet, bật các luật ASR trọng yếu và tắt hộp thoại Run sẽ chặn đứng phần lớn đường vào ban đầu kể cả biến thể ClickFix. Với máy chủ Linux, hãy khóa SSH chỉ nhận khóa công khai (luôn kiểm chứng lại bằng `sshd -T`), giữ `/etc/sudoers` tối thiểu và bật cập nhật bảo mật tự động.
+
+Quan trọng nhất: mọi thiết lập đều phải đi theo lộ trình <strong>đo trước — bật chế độ audit ghi log — triển khai theo vòng có đường lùi — rồi mới bật chặn thật</strong> để bảo mật không bao giờ làm đứt gãy hoạt động kinh doanh.
+</Callout>
+
+<Checklist
+  client:visible
+  title="Baseline hardening tối thiểu"
+  storageKey="hardening-baseline"
+  items={[
+    { label: 'Đã chạy PingCastle và Lynis, lưu điểm ban đầu' },
+    { label: 'Tài khoản quản trị tách theo tầng; tầng cao bị chặn đăng nhập máy tầng thấp' },
+    { label: 'Quản trị viên người thật ở trong Protected Users (đã thử trước)' },
+    { label: 'Tài khoản dịch vụ dùng gMSA hoặc mật khẩu từ 25 ký tự', hint: 'Bài 3.5' },
+    { label: 'Chỉ DC và tài khoản hệ thống đã biết có quyền DCSync' },
+    { label: 'Windows LAPS bật cho mọi máy trạm và máy chủ' },
+    { label: 'Bắt buộc SMB signing; SMBv1 đã tắt' },
+    { label: 'LLMNR và NBT-NS đã tắt' },
+    { label: 'Audit NTLM đang chạy, có danh sách ứng dụng còn dùng NTLM' },
+    { label: 'Credential Guard hoặc LSA Protection đang chạy' },
+    { label: 'Luật ASR quan trọng ở chế độ chặn; Defender bật Tamper Protection' },
+    { label: 'Hộp Run tắt với người dùng không cần; có luật phát hiện ClickFix' },
+    { label: 'Người dùng thường không có quyền quản trị máy' },
+    { label: 'SSH: không root, không mật khẩu, đã kiểm bằng sshd -T' },
+    { label: 'Cập nhật bảo mật tự động trên Linux; có danh sách SUID cơ sở' },
+  ]}
+/>
+
+## Lỗi người mới hay gặp
+
+- **Áp nguyên si toàn bộ CIS Benchmark mức 2 lên cả công ty chỉ trong một đêm.** Sáng hôm sau khi phần mềm kế toán hay máy in nội bộ ngừng chạy hàng loạt, đội IT sẽ buộc phải gỡ bỏ toàn bộ chính sách trong hoảng loạn và từ đó lãnh đạo không bao giờ dám duyệt dự án hardening nữa.
+- **Tắt thẳng giao thức NTLM trên domain mà không chạy chế độ audit trước.** Rất nhiều thiết bị và ứng dụng nội bộ lâu năm vẫn âm thầm dùng NTLM; tắt đột ngột khi chưa đọc log `Operational` vài tuần sẽ làm gián đoạn sản xuất ngay lập tức.
+- **Triển khai Windows LAPS nhưng lại cấp quyền đọc mật khẩu LAPS cho toàn bộ nhóm người dùng rộng.** Khi ai cũng đọc được mật khẩu quản trị cục bộ lưu trong AD thì kẻ tấn công chỉ cần một tài khoản thường là lại đi ngang được khắp mạng như lúc chưa có LAPS.
+- **Tạo tài khoản quản trị Tier 0 riêng biệt nhưng vẫn dùng nó đăng nhập vào máy trạm nhân viên "để cài phần mềm cho nhanh".** Chỉ một lần đăng nhập sai tầng là hash của tài khoản tối cao đã nằm lại trong bộ nhớ máy trạm, xóa sạch mọi ý nghĩa của mô hình phân tầng.
+- **Sửa `PasswordAuthentication no` ở cuối file `/etc/ssh/sshd_config` rồi yên tâm đóng máy.** Vì `sshd` lấy giá trị gặp đầu tiên mà đầu file lại có dòng `Include /etc/ssh/sshd_config.d/*.conf`, một file cấu hình phụ của nhà cung cấp cloud vẫn âm thầm giữ cổng đăng nhập mật khẩu mở toang nếu bạn không kiểm lại bằng `sudo sshd -T`.
+- **Coi cứng hóa hệ thống là dự án làm một lần rồi cất vào ngăn kéo.** Mỗi máy chủ mới dựng, mỗi phần mềm mới cài hay một lần gỡ tạm chính sách để sửa lỗi đều làm cấu hình trôi dần (configuration drift); phải đo lại định kỳ bằng PingCastle và Lynis.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Thiết lập nào chặn gốc việc Pass-the-Hash từ một máy trạm sang các máy trạm khác bằng tài khoản quản trị cục bộ?', options: ['Đổi tên tài khoản Administrator', 'Windows LAPS: mỗi máy một mật khẩu quản trị cục bộ riêng, tự đổi', 'Tắt tường lửa'], answer: 1, explain: 'Khi mọi máy dùng chung một mật khẩu quản trị cục bộ, lấy được hash một máy là vào được mọi máy. LAPS phá mắt xích đó.' },
+    { q: 'Vì sao nên bật luật ASR ở chế độ AuditMode trước?', options: ['Vì chế độ chặn không hoạt động', 'Để biết luật có chặn nhầm phần mềm hợp lệ nào không trước khi chặn thật', 'Vì AuditMode nhanh hơn'], answer: 1, explain: 'Audit vài tuần cho biết luật sẽ ảnh hưởng ai. Chặn ngay có thể làm hỏng công việc và khiến cả dự án hardening bị huỷ.' },
+    { q: 'Nhân viên được một trang "xác minh không phải robot" bảo bấm Win+R, Ctrl+V, Enter. Chuyện gì đang xảy ra?', options: ['Một bước xác minh bình thường', 'ClickFix: trang giả đã chép lệnh độc vào bộ nhớ tạm để người dùng tự chạy', 'Trình duyệt bị lỗi'], answer: 1, explain: 'Người dùng tự chạy mã độc nên lọc thư và lọc tải file không thấy. Tắt hộp Run, giới hạn PowerShell và phát hiện qua RunMRU.' },
+    { q: 'Sửa PasswordAuthentication no trong sshd_config nhưng vẫn đăng nhập bằng mật khẩu được. Lý do hay gặp nhất?', options: ['SSH không hỗ trợ tắt mật khẩu', 'Một file trong sshd_config.d được nạp trước và đặt yes; sshd dùng giá trị gặp đầu tiên', 'Phải khởi động lại máy chủ'], answer: 1, explain: 'Luôn kiểm cấu hình thật bằng sshd -T thay vì chỉ đọc file.' },
+    { q: 'Tài khoản quản trị domain đăng nhập vào máy trạm của kế toán để sửa máy in. Rủi ro là gì?', options: ['Không có rủi ro', 'Thông tin đăng nhập của quản trị domain có thể bị lấy từ máy trạm, nơi dễ bị chiếm nhất', 'Máy in bị hỏng'], answer: 1, explain: 'Đó là lý do phân tầng: tài khoản tầng cao không bao giờ đăng nhập máy tầng thấp.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Hardening là chủ động khóa chặt những tính năng và giao thức mặc định không cần thiết — rẻ hơn, bền vững hơn và chặn được tấn công ngay trước khi cảnh báo kịp kêu.
+- Hãy dựa trên các bộ baseline chuẩn (CIS, Microsoft) nhưng ưu tiên triển khai theo đúng những kỹ thuật tấn công thực tế đã học ở Cấp 2 và Cấp 3.
+- Với Active Directory và Windows: kết hợp phân tầng quản trị, nhóm Protected Users, gMSA, rà quyền DCSync, bật LAPS, bắt buộc SMB signing, tắt LLMNR, bảo vệ LSASS bằng Credential Guard, bật luật ASR và chặn ClickFix.
+- Với Linux: khóa SSH chỉ nhận khóa và kiểm tra hiệu lực thực tế bằng `sshd -T`, thu hẹp `sudoers`, đối chiếu danh sách SUID định kỳ và duy trì cập nhật bảo mật tự động.
+- Mọi thay đổi cứng hóa hệ thống đều phải tuân theo quy trình: đo điểm ban đầu (PingCastle, Lynis), bật chế độ audit trước, triển khai từng vòng có đường lùi, rồi mới bật chặn thật và đo lại định kỳ.

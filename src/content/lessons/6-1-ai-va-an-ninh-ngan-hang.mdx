@@ -1,0 +1,189 @@
+---
+title: "AI và bức tranh mối đe doạ: điều gì thực sự thay đổi"
+code: "6.1"
+level: 6
+summary: "AI không phát minh ra kiểu tấn công mới, nhưng làm các chiêu cũ nhanh hơn, rẻ hơn và khó nhận ra hơn. Hiểu điều gì thay đổi để biết phòng thủ phải đổi theo hướng nào, ở ngân hàng cũng như ở một công ty nhỏ."
+duration: "50 phút"
+updated: "2026-11-09"
+objectives:
+  - "Giải thích vì sao ngân hàng là mục tiêu hàng đầu, vì sao doanh nghiệp nhỏ cũng không thoát, và AI thay đổi điều gì"
+  - "Nhận diện bốn nhóm mối đe doạ có dùng AI ở mức khái niệm"
+  - "Biết các khung tham chiếu: MITRE ATT&CK, MITRE ATLAS, NIST AI RMF"
+  - "Hiểu nguyên tắc dùng AI để phòng thủ và giới hạn của nó"
+---
+import Callout from '../../components/ui/Callout.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import DecisionTree from '../../components/sim/DecisionTree.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Ngày trước, kẻ lừa đảo viết một email vụng về rồi gửi cho một nghìn người, chờ vài người cả tin. Giờ hãy hình dung kẻ đó có một trợ lý không biết mệt: đọc hồ sơ công khai của từng nhân viên, viết cho mỗi người một email riêng bằng tiếng Việt trơn tru, rồi gọi điện bằng giọng giống hệt sếp của họ.
+
+Chiêu không mới: vẫn là mạo danh, vẫn là dụ chuyển tiền hay lấy mật khẩu. Cái mới là **quy mô, tốc độ và độ thuyết phục**. Cấp 6 bàn về chuyện đó, và chủ yếu về phía phòng thủ.
+
+<Callout type="note" label="Cấp này khác các cấp trước">
+Cấp 6 đến Cấp 8 không thuộc đề thi OSCP. Đây là phần mở rộng cho người làm bảo mật ở doanh nghiệp, nối các kỹ thuật bạn đã học ở Cấp 2–5 với bối cảnh AI. Cấp 6 nói về mối đe doạ mới, Cấp 7 về phòng ngừa, Cấp 8 về phát hiện, phản ứng và phục hồi. Ví dụ hay lấy ở ngân hàng hư cấu Sao Mai vì ngành tài chính bị nhắm nhiều nhất, nhưng nguyên tắc dùng được cho mọi ngành. Phía tấn công chỉ trình bày ở mức nhận diện; trọng tâm là phát hiện, quy trình và thiết kế an toàn.
+</Callout>
+
+## Kiến thức chính
+
+### Vì sao là ngân hàng
+
+Ngân hàng giữ thứ kẻ tấn công muốn nhất: **tiền chuyển được ngay**, **dữ liệu khách hàng**, và **quyền truy cập hệ thống thanh toán liên ngân hàng**. Một lần thành công đáng giá rất lớn, nên các nhóm có tổ chức sẵn sàng đầu tư thời gian.
+
+Chuyện này có từ trước khi có AI. Năm 2016, kẻ tấn công nằm trong mạng của Ngân hàng Trung ương Bangladesh nhiều tháng, rồi gửi các lệnh thanh toán SWIFT giả và lấy đi khoảng 81 triệu USD. Mọi bước họ dùng đều là những thứ bạn đã học: xâm nhập, leo thang, di chuyển ngang, ẩn mình.
+
+### Không chỉ ngân hàng
+
+Ngân hàng bị nhắm có chủ đích. Còn lại phần lớn doanh nghiệp bị nhắm **vì có cửa mở**: kẻ tấn công quét hàng loạt rồi đánh vào ai có VPN chưa vá, tài khoản email không có MFA, hay một kế toán tin cuộc gọi của "giám đốc".
+
+AI làm việc quét, viết thư lừa đảo và thử khai thác gần như miễn phí, nên đánh một xưởng 100 người giờ cũng rẻ như đánh một tập đoàn. Thứ kẻ tấn công lấy được ở đó vẫn đáng tiền: tiền trong tài khoản công ty, dữ liệu khách hàng để tống tiền, hoặc một chỗ đứng để đi tiếp sang khách hàng và đối tác lớn hơn.
+
+### AI thay đổi điều gì
+
+AI hạ chi phí và tăng tốc cho kẻ tấn công ở bốn điểm:
+
+- **Quy mô:** cá nhân hoá hàng loạt. Một người làm được việc của cả nhóm.
+- **Độ thuyết phục:** câu chữ không lỗi, giọng nói và hình ảnh tổng hợp giống người thật.
+- **Tốc độ:** các bước kỹ thuật lặp đi lặp lại được tự động hoá, nên khoảng thời gian từ xâm nhập tới gây hại ngắn lại.
+- **Thêm chỗ để bị tấn công:** chính các hệ thống AI mà ngân hàng đưa vào dùng (chatbot, trợ lý nội bộ) cũng có thể bị lợi dụng. Người ta gọi tổng các chỗ kẻ xấu có thể thử là "bề mặt tấn công" (attack surface); AI làm bề mặt này rộng thêm.
+
+Một ví dụ thật cho thấy điểm thứ hai: tháng 2/2024, một nhân viên tài chính của tập đoàn Arup tại Hồng Kông chuyển khoảng 25 triệu USD sau một cuộc họp video mà "giám đốc tài chính" và các "đồng nghiệp" đều là hình ảnh giả tạo bằng AI. Không máy tính nào bị hack. Thứ bị khai thác là một quy trình cho phép chuyển số tiền lớn chỉ dựa trên một cuộc gọi.
+
+### Bốn nhóm mối đe doạ
+
+| Nhóm | Ở ngân hàng trông như thế nào | Lớp chặn chính | Bài |
+|---|---|---|---|
+| Lừa đảo được cá nhân hoá | Email giả đối tác, kiểm toán, khách VIP viết hoàn hảo | Không dựa vào lỗi chính tả; xác minh bằng một kênh khác (gọi điện lại); MFA chống phishing | 2.4, 6.2 |
+| Mạo danh bằng giọng nói, video tổng hợp | Cuộc gọi "lãnh đạo" yêu cầu chuyển gấp; kẻ gian mạo danh khách hàng; ứng viên giả qua phỏng vấn video để được tuyển | Gọi lại số đã lưu sẵn, bắt buộc hai người duyệt, nhận diện khuôn mặt có kiểm tra "người thật đang ngồi trước camera" (liveness), xác minh danh tính kỹ khi tuyển người | 6.2, 6.3 |
+| Tự động hoá tấn công kỹ thuật | Các bước ở Cấp 2–3 diễn ra nhanh hơn | Phát hiện và phản ứng tính bằng phút: SOC (đội trực giám sát an ninh) có công cụ tự động, mồi nhử (bẫy giả), ngăn chặn tự động đã được duyệt sẵn, sao lưu bất biến (không ai sửa hay xoá được) | 8.1, 8.4, 8.6 |
+| Tấn công vào hệ thống AI của ngân hàng | Trợ lý AI bị dụ làm điều không được phép, lộ dữ liệu | Quyền tối thiểu, kiểm soát truy cập ở máy chủ, người duyệt | 6.4 |
+
+Báo cáo của các nhà cung cấp AI cũng xác nhận xu hướng thứ ba: năm 2025, Anthropic công bố đã phát hiện và chặn một chiến dịch gián điệp mạng trong đó kẻ tấn công dùng AI agent để tự động hoá phần lớn các bước kỹ thuật.
+
+Bài học cho phía phòng thủ: đừng giả định mình có vài ngày để phát hiện. Bài 8.4 bàn cách phòng thủ ở tốc độ đó; bài 8.6 bàn chặng cuối hay gặp của các chiến dịch này là tống tiền dữ liệu.
+
+### Mỗi mối đe doạ, một lớp chặn
+
+Bấm vào từng ô để xem vì sao lớp chặn đó hiệu quả:
+
+<ConceptMap
+  client:visible
+  title="Mối đe doạ có dùng AI và lớp phòng thủ tương ứng"
+  width={660}
+  height={380}
+  zones={[
+    { label: 'Mối đe doạ', x: 20, y: 14, w: 230, h: 356 },
+    { label: 'Lớp phòng thủ', x: 380, y: 14, w: 260, h: 356 },
+  ]}
+  nodes={[
+    { id: 't1', label: 'Lừa đảo cá nhân hoá', sub: 'email, tin nhắn', x: 135, y: 70, w: 190, tone: 'warn', detail: 'Câu chữ hoàn hảo nên mẹo "tìm lỗi chính tả" hết tác dụng. Phải dựa vào tín hiệu khác: tên miền gửi, đường dẫn thật, yêu cầu bất thường.' },
+    { id: 't2', label: 'Mạo danh deepfake', sub: 'giọng nói, video giả', x: 135, y: 155, w: 190, tone: 'warn', detail: 'Nghe và nhìn không còn là bằng chứng đủ tin cậy. Mắt thường và công cụ phát hiện đều có thể bị qua mặt.' },
+    { id: 't3', label: 'Tấn công tự động', sub: 'nhanh, ít người', x: 135, y: 240, w: 190, tone: 'warn', detail: 'Các bước liệt kê, khai thác, di chuyển ngang diễn ra nhanh hơn. Khoảng thời gian để phát hiện bị rút ngắn.' },
+    { id: 't4', label: 'Tấn công hệ thống AI', sub: 'chatbot, trợ lý', x: 135, y: 325, w: 190, tone: 'warn', detail: 'Ngân hàng triển khai AI thì AI đó thành bề mặt tấn công mới: bị dụ làm theo chỉ dẫn lạ, lộ dữ liệu, dùng quá quyền.' },
+    { id: 'd1', label: 'MFA chống phishing', sub: 'khoá FIDO2, passkey', x: 510, y: 70, w: 200, tone: 'accent', detail: 'Khoá bảo mật FIDO2 và passkey gắn với đúng tên miền thật, nên trang giả không dùng được. Mật khẩu có lộ cũng chưa đủ đăng nhập.' },
+    { id: 'd2', label: 'Xác minh ngoài kênh', sub: 'gọi lại, duyệt hai người', x: 510, y: 155, w: 200, tone: 'accent', detail: 'Không cần nhận ra hàng giả: cứ gọi lại số đã lưu sẵn và yêu cầu người thứ hai duyệt. Kẻ mạo danh không kiểm soát được kênh thứ hai.' },
+    { id: 'd3', label: 'SOC có AI', sub: 'phát hiện, phản ứng nhanh', x: 510, y: 240, w: 200, tone: 'accent', detail: 'Dùng học máy và tự động hoá để lọc hàng tỉ sự kiện và phản ứng trong vài phút. Bài 8.1.' },
+    { id: 'd4', label: 'Quyền tối thiểu cho AI', sub: 'kiểm soát ở máy chủ', x: 510, y: 325, w: 200, tone: 'accent', detail: 'Giới hạn những gì AI làm được, thay vì hy vọng nó không bị lừa. Bài 6.4.' },
+  ]}
+  edges={[
+    { from: 't1', to: 'd1' },
+    { from: 't2', to: 'd2' },
+    { from: 't3', to: 'd3' },
+    { from: 't4', to: 'd4' },
+    { from: 't1', to: 'd3', dashed: true },
+  ]}
+/>
+
+Để ý: hai lớp chặn đầu (**MFA chống phishing** và **xác minh ngoài kênh**, tức kiểm tra lại bằng một kênh liên lạc khác với kênh vừa nhận yêu cầu) hoàn toàn không cần AI. Chúng hiệu quả vì không phụ thuộc vào việc nhận ra hàng giả.
+
+### Phòng thủ cũng có AI
+
+Phía phòng thủ có cùng đòn bẩy, và ở vài chỗ còn có lợi thế vì nắm dữ liệu của chính mình:
+
+- **Lọc khối lượng khổng lồ:** phần mềm học máy (machine learning) đọc hàng tỉ dòng log (nhật ký hoạt động của hệ thống) mỗi ngày để tìm chỗ khác thường, việc mà người không làm xuể (bài 8.1).
+- **Chấm điểm giao dịch theo thời gian thực:** mô hình đánh giá mức rủi ro của từng giao dịch trong chưa đầy một giây (bài 6.2).
+- **Trợ lý cho analyst:** tóm tắt cảnh báo, viết truy vấn, soạn báo cáo, giúp một người xử lý nhiều việc hơn.
+- **Tìm lỗi trước kẻ xấu:** năm 2024, dự án Big Sleep của Google dùng AI tìm ra một lỗ hổng thật trong SQLite trước khi phần mềm phát hành; cuộc thi AIxCC của DARPA thúc đẩy các hệ thống AI tự tìm và vá lỗi.
+
+Nhưng AI phòng thủ **không thay được quy trình và nền tảng**. Vụ Arup không cần thuật toán nào để chặn, chỉ cần một quy định "lệnh lớn phải gọi lại xác minh".
+
+### Khung tham chiếu nên biết
+
+- **MITRE ATT&CK:** danh mục kỹ thuật tấn công thật, là ngôn ngữ chung để mô tả cuộc tấn công và đo xem SOC phát hiện được bao nhiêu kỹ thuật. Ví dụ Kerberoasting ở bài 3.5 là T1558.003.
+- **MITRE ATLAS:** tương tự ATT&CK nhưng dành riêng cho tấn công vào hệ thống AI và học máy.
+- **NIST AI RMF 1.0:** khung quản lý rủi ro AI với bốn việc: Govern (đặt quy tắc), Map (xác định rủi ro), Measure (đo), Manage (xử lý). Hữu ích khi ngân hàng cần chính sách cho việc dùng AI.
+- **OWASP Top 10 cho ứng dụng LLM:** mười rủi ro phổ biến nhất của ứng dụng dùng mô hình ngôn ngữ (bài 6.4).
+
+Ở Việt Nam, Quyết định 2345/QĐ-NHNN (hiệu lực từ 1/7/2024) yêu cầu xác thực sinh trắc học khi chuyển tiền trực tuyến trên 10 triệu đồng mỗi lần hoặc tổng trên 20 triệu đồng mỗi ngày. Đây là một lớp chặn chiếm tài khoản ở quy mô toàn ngành. Quy định thay đổi theo thời gian, nên khi làm thật hãy đối chiếu văn bản hiện hành.
+
+## Mô phỏng: Ra quyết định khi nhận yêu cầu chuyển tiền qua Deepfake
+
+<DecisionTree
+  client:visible
+  title="Xử lý tình huống: Cuộc gọi video Deepfake từ Tổng Giám đốc"
+  start="urgent_call"
+  nodes={{
+    urgent_call: {
+      q: '17h chiều thứ Sáu, bạn (kế toán trưởng) nhận cuộc gọi video trên Teams từ Tổng Giám đốc. Khuôn mặt và giọng nói giống hệt, yêu cầu chuyển gấp 5 tỷ đồng vào tài khoản đối tác để kịp ký hợp đồng trước 17h30. Bạn làm gì?',
+      options: [
+        { label: 'Thực hiện chuyển khoản ngay lập tức vì sếp đang giục gấp và hình ảnh rất thật', next: 'transfer_trap' },
+        { label: 'Yêu cầu gọi lại theo kênh thứ hai đã thỏa thuận trước (Out-of-band Verification)', next: 'verify_call' },
+      ],
+    },
+    transfer_trap: {
+      result: 'Bạn vừa rơi vào bẫy Deepfake tương tự vụ Arup Hồng Kông 25 triệu USD! Kẻ tấn công dùng công nghệ hoán đổi khuôn mặt thời gian thực và huấn luyện giọng nói từ video họp báo của sếp. Số tiền 5 tỷ đã bị tẩu tán qua mạng lưới tài khoản rác trong 3 phút.',
+      tone: 'bad',
+    },
+    verify_call: {
+      q: 'Đầu dây bên kia bắt đầu cáu gắt: "Tôi đang đi tiếp khách không nghe máy bàn được, cô muốn bị kỷ luật vì làm hỏng hợp đồng chiến lược của tập đoàn không?". Bạn phản ứng thế nào?',
+      options: [
+        { label: 'Hoảng sợ trước áp lực sa thải, bấm lệnh chuyển tiền ngay', next: 'fear_trap' },
+        { label: 'Bình tĩnh giữ nguyên quy trình: Yêu cầu sếp đọc mã số an toàn bí mật (Duress/Safe Word)', next: 'safe_word' },
+      ],
+    },
+    fear_trap: {
+      result: 'Khai thác tâm lý sợ hãi (Urgency & Authority Bias) là đòn kết liễu kinh điển của kỹ nghệ xã hội. Thiệt hại tài chính thuộc về công ty, và trách nhiệm quy trình thuộc về bạn.',
+      tone: 'bad',
+    },
+    safe_word: {
+      result: 'Thành công tuyệt đối! Kẻ mạo danh không thể trả lời mã bí mật và lập tức cúp máy. Quy trình xác thực đa kênh (Dual-Control & Out-of-band) luôn là lá chắn thép vững chắc hơn bất kỳ thuật toán nhận diện nào.',
+      tone: 'good',
+    },
+  }}
+/>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Xuyên suốt Cấp 6, tư duy phòng thủ gói gọn trong bốn nguyên tắc thực tế. Trước hết, hãy <strong>giả định đối phương luôn viết email trơn tru, giả giọng giống hệt và thao tác cực nhanh</strong> — tuyệt đối không để một quyết định chuyển tiền hay cấp quyền phụ thuộc vào cảm giác chủ quan rằng "nghe giọng có vẻ đúng là sếp thật".
+
+Thay vào đó, hãy <strong>đặt những chốt chặn không cần phân biệt thật giả bằng mắt thường</strong>: bắt buộc gọi lại vào số điện thoại đã lưu sẵn trong danh bạ nội bộ, áp dụng nguyên tắc hai người duyệt độc lập cho giao dịch lớn, và trang bị khóa xác thực chống phishing (FIDO2/passkey).
+
+Ở chiều ngược lại, hãy <strong>dùng AI phòng thủ ở những nơi sức người không theo kịp</strong> như lọc hàng tỉ dòng log tại SOC hay chấm điểm gian lận giao dịch theo mili-giây, nhưng giữ con người ở khâu ra quyết định cuối cùng. Và cuối cùng, hãy <strong>coi chính các hệ thống AI nội bộ mà đơn vị triển khai là một bề mặt tấn công mới</strong> cần được giới hạn quyền tối thiểu, kiểm thử và ghi log chặt chẽ ngay từ ngày đầu.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ rằng "tấn công bằng AI" là một phép thuật hoàn toàn mới khiến mọi kiến thức bảo mật cũ đều lỗi thời.** Thực tế phần lớn chiến dịch vẫn đi qua những mắt xích quen thuộc ở Cấp 2 và Cấp 3 (như lừa lấy mật khẩu, khai thác VPN chưa vá, leo thang trong AD), chỉ diễn ra nhanh hơn và thuyết phục hơn — nên những nền tảng như vá lỗi, phân quyền và MFA vẫn là trụ cột.
+- **Đặt trọn niềm tin vào mắt thường hoặc một phần mềm "chấm điểm phát hiện deepfake".** Các công cụ nhận diện ảnh và giọng nói giả luôn chạy sau công nghệ tạo sinh một bước; thứ giữ an toàn cho tài khoản ngân hàng không phải là phần mềm soi video, mà là quy trình bắt buộc xác minh qua một kênh độc lập thứ hai.
+- **Đổ ngân sách mua các giải pháp "AI bảo mật" đắt đỏ trong khi những lỗ hổng cơ bản vẫn bỏ ngỏ.** Không một hệ thống AI tối tân nào cứu được một doanh nghiệp vẫn để cổng quản trị lộ ra Internet, dùng chung mật khẩu quản trị hoặc tắt log trên máy chủ.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'AI thay đổi bức tranh tấn công chủ yếu theo cách nào?', options: ['Tạo ra loại lỗ hổng hoàn toàn mới trong mọi hệ thống', 'Làm các chiêu cũ nhanh hơn, rẻ hơn, quy mô lớn hơn và thuyết phục hơn', 'Khiến tường lửa không còn tác dụng'], answer: 1, explain: 'Phần lớn vẫn là mạo danh, phishing, xâm nhập như cũ; AI tăng quy mô, tốc độ và độ thuyết phục.' },
+    { q: 'Bài học chính từ vụ Arup năm 2024 là gì?', options: ['Cần phần mềm diệt virus tốt hơn', 'Quy trình cho phép chuyển tiền lớn chỉ dựa trên một cuộc gọi là điểm yếu; cần xác minh ngoài kênh', 'Không nên họp video'], answer: 1, explain: 'Không máy tính nào bị hack. Một quy định gọi lại và duyệt hai người đã đủ chặn.' },
+    { q: 'Vì sao MFA chống phishing (FIDO2, passkey) mạnh hơn mã OTP gõ tay trước lừa đảo?', options: ['Vì nó dài hơn', 'Vì khoá gắn với đúng tên miền thật, nên trang giả không dùng được', 'Vì nó không cần mật khẩu nên không ai đoán được'], answer: 1, explain: 'Trình duyệt chỉ cho khoá ký với tên miền đã đăng ký; trang giả khác tên miền nên không nhận được gì dùng được.' },
+    { q: 'MITRE ATLAS dùng để làm gì?', options: ['Chấm điểm CVSS', 'Mô tả các kỹ thuật tấn công vào hệ thống AI và học máy', 'Quét cổng mạng'], answer: 1, explain: 'ATLAS là "ATT&CK cho AI": danh mục kỹ thuật nhắm vào mô hình và hệ thống học máy.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- AI không thay thế các kỹ thuật tấn công cốt lõi mà làm chúng rẻ hơn, nhanh hơn, thuyết phục hơn ở quy mô lớn, đồng thời mở ra bề mặt tấn công mới ngay trên các trợ lý AI của doanh nghiệp.
+- Bốn nhóm mối đe dọa trọng tâm gồm: lừa đảo cá nhân hóa hàng loạt, mạo danh bằng âm thanh và video tổng hợp (deepfake), tự động hóa chuỗi tấn công kỹ thuật, và tấn công trực tiếp vào hệ thống AI nội bộ.
+- Những chốt chặn hiệu quả nhất trước làn sóng AI lại rất căn bản: khóa xác thực chống phishing (FIDO2/passkey) và quy trình xác minh ngoài kênh độc lập, kết hợp dùng AI phòng thủ ở tầng phân tích log và giao dịch tốc độ cao.

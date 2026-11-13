@@ -1,0 +1,345 @@
+---
+title: "TCP, UDP và bắt tay ba bước"
+code: "1.2"
+level: 1
+summary: "Địa chỉ IP đưa bạn tới đúng máy, còn số cổng đưa bạn tới đúng dịch vụ trên máy đó. Hiểu bắt tay ba bước của TCP là hiểu vì sao công cụ quét biết một cổng đang mở, đóng hay bị tường lửa chặn."
+duration: "60 phút + 40 phút bài tập"
+updated: "2026-11-09"
+prereq: ["1.1"]
+objectives:
+  - "Giải thích được TCP và UDP khác nhau thế nào, và vì sao quét mạng phải xét cả hai"
+  - "Mô tả bắt tay ba bước và đoán được trạng thái mở, đóng hay bị lọc của một cổng từ cách máy kia phản ứng"
+  - "Tự xem được những cổng đang mở trên máy mình bằng ss, và nhận ra cổng nào đang lộ ra mạng"
+  - "Dùng nc để thử một cổng từ xa và đọc banner, tức tên và phiên bản dịch vụ đang chạy sau cổng đó"
+---
+import Callout from '../../components/ui/Callout.astro';
+import Terminal from '../../components/ui/Terminal.astro';
+import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import Quiz from '../../components/sim/Quiz.tsx';
+import Lenh from '../../components/ui/Lenh.astro';
+
+## Hình dung trước
+
+Gửi hàng có hai kiểu. Kiểu chuyển phát có ký nhận: trước khi giao, shipper gọi điện xác nhận bạn có nhà không, giao xong thì bạn ký, và nếu thiếu hàng thì họ gửi lại. Kiểu thả tờ rơi vào hòm thư: nhanh, rẻ, nhưng không ai xác nhận có người nhận hay không. TCP là kiểu thứ nhất, UDP là kiểu thứ hai.
+
+Với người làm pentest, sự khác biệt này không chỉ là chuyện kỹ thuật. Vì TCP phải "gọi điện xác nhận" trước khi gửi, nên cách máy kia phản ứng với cuộc gọi đó cho bạn biết rất nhiều: có người nghe máy (cổng mở), từ chối thẳng (cổng đóng), hay cuộc gọi biến mất không ai trả lời (tường lửa chặn).
+
+Đây chính là cách mọi công cụ quét cổng hoạt động. Bài này cho bạn hiểu cơ chế đó, để sang bài 2.2 bạn đọc được kết quả `nmap` chứ không chỉ chép lệnh.
+
+## Kiến thức chính
+
+### Cổng (port)
+
+Một máy chạy nhiều dịch vụ cùng lúc: web, SSH, chia sẻ file, cơ sở dữ liệu. Giống như một toà nhà có nhiều phòng, địa chỉ IP là địa chỉ toà nhà, còn số cổng là số phòng. Những cổng bạn sẽ gặp đi gặp lại trong OSCP, kèm điều người làm nghề thường hỏi khi thấy chúng mở:
+
+| Cổng | Dịch vụ | Ghi chú cho pentester |
+|---|---|---|
+| 21 | FTP | Có cho đăng nhập ẩn danh (anonymous) không? |
+| 22 | SSH | Đăng nhập từ xa; mục tiêu của thử mật khẩu |
+| 25 | SMTP | Email; có thể liệt kê tài khoản |
+| 53 | DNS | Thử chuyển vùng (zone transfer) |
+| 80 / 443 | HTTP / HTTPS | Web; bề mặt tấn công lớn nhất |
+| 139 / 445 | SMB | Chia sẻ file Windows; rất giàu thông tin |
+| 3389 | RDP | Màn hình từ xa Windows |
+
+Địa chỉ IP đưa dữ liệu tới đúng máy; số cổng đưa tới đúng dịch vụ. Hãy tập thói quen: thấy cổng nào mở thì tự hỏi ngay "dịch vụ này có thể sai ở đâu".
+
+### TCP và UDP
+
+Mỗi dịch vụ chọn một trong hai cách gửi dữ liệu, tuỳ nó cần "chắc chắn" hay cần "nhanh". Điều này ảnh hưởng thẳng tới việc bạn quét: dịch vụ chạy trên UDP sẽ không lộ ra nếu bạn chỉ quét TCP.
+
+| | TCP | UDP |
+|---|---|---|
+| Có xác nhận nhận được? | Có | Không |
+| Thứ tự dữ liệu được đảm bảo? | Có | Không |
+| Tốc độ | Chậm hơn | Nhanh hơn |
+| Hợp với | Web, email, SSH, tải file | DNS, SNMP, gọi video, game |
+
+### Bắt tay ba bước
+
+Trước khi truyền dữ liệu, TCP thiết lập kết nối bằng ba bước, giống như cuộc gọi: "Alô, có nghe không?", "Nghe rõ, bạn nghe tôi không?", "Nghe rõ, nói đi". Bấm "Tiếp" để xem từng bước:
+
+<SequenceDiagram
+  client:visible
+  title="Bắt tay ba bước của TCP"
+  actors={['Máy khách', 'Máy chủ']}
+  steps={[
+    { from: 0, to: 1, label: 'SYN', note: 'Máy khách gửi SYN: "Tôi muốn mở kết nối, số thứ tự của tôi bắt đầu từ x."' },
+    { from: 1, to: 0, label: 'SYN + ACK', note: 'Máy chủ trả lời: "Nhận được. Số của tôi là y, và tôi xác nhận x của bạn." Việc máy chủ trả lời nghĩa là cổng này đang mở.', tone: 'good' },
+    { from: 0, to: 1, label: 'ACK', note: 'Máy khách xác nhận y. Kết nối sẵn sàng, hai bên truyền dữ liệu thật.', tone: 'good' },
+  ]}
+/>
+
+Khi quét cổng ở bài 2.2, công cụ thực chất đang thử gửi SYN và xem phản ứng: trả lời SYN+ACK → cổng **mở**; trả lời RST → cổng **đóng**; không trả lời → thường bị firewall **lọc**. Ba kết quả này khác nhau về ý nghĩa, và phân biệt được chúng giúp bạn khỏi kết luận vội rằng một cổng "không có gì" chỉ vì nó im lặng.
+
+## Thực hành: tự quan sát cổng và kết nối
+
+Ba lệnh dưới đây đi từ gần ra xa. Đầu tiên bạn nhìn vào chính máy mình để biết mình đang mở những cánh cửa nào. Rồi bạn gõ cửa một máy khác và nghe dịch vụ trả lời gì. Cuối cùng bạn nhìn tận mắt những gói tin của cái bắt tay ở trên. Cả ba chạy trong lab của bạn (bài 0.2), nên mọi địa chỉ đều thuộc mạng cô lập.
+
+### 1. Máy mình đang mở những cổng nào?
+
+Kẻ tấn công xem máy bạn từ ngoài; còn bạn có thể xem từ trong, rõ hơn nhiều. Lệnh `ss` liệt kê mọi dịch vụ đang chờ kết nối trên máy này (thay cho lệnh `netstat` cũ). Điều đáng chú ý nhất không phải số lượng cổng mà là mỗi cổng mở cho **ai**: chỉ chính máy này, hay cả mạng:
+
+<Lenh noi="Terminal trên máy Kali (thêm `sudo` nếu muốn thấy tên tiến trình của người dùng khác)" muc="Xem máy mình đang mở những cổng nào cho người khác kết nối vào">
+
+<Terminal title="ss liệt kê cổng đang lắng nghe">
+
+```text
+kali@lab:~$ ss -tlnp
+State   Recv-Q  Local Address:Port   Process
+LISTEN  0       0.0.0.0:22           users:(("sshd",pid=712))
+LISTEN  0       127.0.0.1:3306       users:(("mysqld",pid=980))
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `ss`: công cụ liệt kê kết nối mạng (thay cho `netstat` cũ).
+- `-t`: chỉ TCP. `-l`: chỉ cổng đang **lắng nghe** (chờ kết nối). `-n`: in số cổng (22) thay vì tên (ssh). `-p`: kèm tên tiến trình đang giữ cổng.
+- Hay gõ liền thành `-tlnp`: gộp bốn cờ thành một.
+
+</div>
+
+<div slot="doc">
+
+- `Local Address:Port`: **cột quan trọng nhất**, gồm địa chỉ đang nghe và số cổng.
+  - `0.0.0.0:22`: lắng nghe trên **mọi card mạng**. SSH (22) ở đây nghĩa là máy khác trong mạng kết nối vào được.
+  - `127.0.0.1:3306`: chỉ lắng nghe **nội bộ**. MySQL (3306) ở đây chỉ chương trình trên chính máy này dùng được. Đây là cấu hình tốt.
+- `Process`: tiến trình giữ cổng (`sshd`, `mysqld`) và mã số `pid` của nó.
+- Kiểm tra phòng thủ: dòng nào nghe trên `0.0.0.0` mà bạn không nhận ra là dịch vụ đáng nghi, cần xem lại.
+
+</div>
+
+</Lenh>
+
+### 2. Gõ cửa một máy khác và nghe dịch vụ nói gì
+
+Giờ đổi vai sang người ngoài: bạn biết một máy mục tiêu ở `10.10.14.20` và muốn xem một cổng có thật sự mở không, và nếu mở thì ai đang chạy sau đó. `nc` (netcat) kết nối thẳng tới cổng đó. Nhiều dịch vụ vừa nhận kết nối là tự giới thiệu tên và phiên bản, gọi là **banner**, và đó là thứ bạn cần để tra lỗ hổng ở bài 2.5:
+
+<Lenh noi="Terminal trên máy Kali, nhắm vào máy mục tiêu trong lab" muc="Kết nối thẳng tới một cổng và đọc &quot;lời chào&quot; (banner) của dịch vụ để biết nó là phần mềm gì">
+
+<Terminal title="nc kết nối tới cổng và đọc banner dịch vụ">
+
+```text
+kali@lab:~$ nc -nv 10.10.14.20 22
+(UNKNOWN) [10.10.14.20] 22 (ssh) open
+SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3
+
+kali@lab:~$ nc -nv 10.10.14.20 80
+(UNKNOWN) [10.10.14.20] 80 (http) open
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `nc` (netcat): công cụ mở kết nối TCP/UDP tới một cổng, như "điện thoại" cho mạng.
+- `-n`: không tra tên miền (nhanh hơn, chỉ dùng IP). `-v`: in thêm thông tin (verbose).
+- `10.10.14.20 22`: địa chỉ máy đích rồi số cổng, cách nhau bằng dấu cách (không dùng dấu hai chấm).
+
+</div>
+
+<div slot="doc">
+
+- Dòng `(UNKNOWN) [10.10.14.20] 22 (ssh) open`: **kết nối thành công**, cổng mở. `(ssh)` là tên dịch vụ nc đoán từ số cổng.
+- Dòng ngay dưới, `SSH-2.0-OpenSSH_7.6p1 Ubuntu-...`: **banner**, do chính dịch vụ gửi. Đọc ra phần mềm là OpenSSH bản 7.6p1 trên Ubuntu. Đây là dữ liệu để tra lỗ hổng.
+- Cổng 80 chỉ in `open` mà không có banner: web server chờ bạn gửi yêu cầu HTTP trước mới nói. Gõ `HEAD / HTTP/1.0` rồi Enter hai lần để nó trả lời.
+- Cổng đóng sẽ báo `Connection refused`; cổng bị firewall lọc thì treo một lúc rồi hết thời gian. Thoát nc bằng `Ctrl+C`.
+
+</div>
+
+</Lenh>
+
+Banner cho bạn tên và phiên bản dịch vụ ngay lập tức, đúng thứ cần để tra CVE ở bài 2.5. `nc` cũng là cách kiểm tra nhanh một cổng có thật sự mở không khi nghi kết quả nmap.
+
+### 3. Nhìn tận mắt cái bắt tay (tuỳ chọn)
+
+Phần này không bắt buộc, nhưng đáng làm một lần. Sơ đồ ở trên là lý thuyết; còn `tcpdump` cho bạn nghe lén chính máy mình và thấy ba gói SYN, SYN+ACK, ACK chạy qua dây thật khi bạn mở một kết nối. Sau khi thấy tận mắt, bạn sẽ không bao giờ nhầm các trạng thái cổng nữa:
+
+<Lenh noi="Terminal trên máy Kali (cần `sudo`); mở thêm một cửa sổ khác để tạo kết nối tới cổng 80" muc="Nhìn tận mắt ba gói tin của cái bắt tay TCP">
+
+<Terminal title="tcpdump bắt gói khi mở một kết nối">
+
+```text
+kali@lab:~$ sudo tcpdump -ni eth0 'tcp and host 10.10.14.20 and port 80'
+IP 10.10.14.7.51000 > 10.10.14.20.80: Flags [S], seq 12345        # SYN
+IP 10.10.14.20.80 > 10.10.14.7.51000: Flags [S.], seq 98765, ack  # SYN+ACK
+IP 10.10.14.7.51000 > 10.10.14.20.80: Flags [.], ack              # ACK
+```
+
+</Terminal>
+
+<div slot="giai">
+
+- `sudo`: chạy với quyền root, vì bắt gói tin cần quyền cao.
+- `tcpdump`: chương trình bắt và in các gói tin đi qua card mạng.
+- `-n`: không đổi IP thành tên (nhanh, gọn). `-i eth0`: bắt trên card `eth0`.
+- `'tcp and host 10.10.14.20 and port 80'`: **bộ lọc**: chỉ lấy gói TCP, liên quan máy `10.10.14.20`, cổng 80. Phải để trong dấu nháy đơn.
+
+</div>
+
+<div slot="doc">
+
+Lệnh chạy rồi **đứng chờ** gói tin, không trả lại dấu nhắc. Sang cửa sổ khác gõ `curl http://10.10.14.20/` thì các dòng mới hiện ra. Dừng bằng `Ctrl+C`.
+- Mỗi dòng có dạng `IP nguồn.cổng > IP đích.cổng: Flags [...]`. Phần sau dấu chấm cuối của IP là **số cổng**: `10.10.14.7.51000` là Kali, cổng tạm 51000; `10.10.14.20.80` là máy đích, cổng 80.
+- `Flags [S]`: SYN, "tôi muốn kết nối". `[S.]`: SYN+ACK, "đồng ý, tôi cũng sẵn sàng". `[.]`: ACK, "đã nhận". Ba dòng này chính là cái bắt tay ba bước.
+- Đoạn `# SYN` ở cuối dòng là chú thích của bài, không có trong output thật.
+- Nếu không thấy gì: sai tên card (`ip addr` để kiểm tra) hoặc quên tạo kết nối ở cửa sổ kia.
+
+</div>
+
+</Lenh>
+
+Đây chính là sơ đồ ở trên, quan sát trên dây thật.
+
+## Góc phòng thủ
+
+<Callout type="defense">
+Nếu bạn là người quản trị một máy chủ, hãy nhìn bài này bằng hai câu hỏi. Thứ nhất, máy bạn có cổng nào mở mà bạn không nhớ đã mở? Mỗi cổng thừa là một cửa sổ cho kẻ tấn công, nên cách đơn giản nhất là chạy `ss -tlnp` định kỳ và hỏi "dịch vụ này có ai cần không?". Thứ hai, cổng đó mở cho ai? Dịch vụ chỉ cần dùng nội bộ thì nên lắng nghe trên `127.0.0.1`, như MySQL ở ví dụ trên, thay vì mở ra cả mạng.
+
+Ở tầng mạng, tường lửa có thể lặng lẽ bỏ gói SYN tới những cổng không mở cho bên ngoài. Kẻ tấn công khi đó không biết cổng đóng hay bị chặn, và quét chậm đi rất nhiều. Đây là lý do một cấu hình tường lửa tốt làm kết quả quét của người ngoài "im lặng" thay vì liệt kê ra những gì bạn có.
+</Callout>
+
+## Lỗi người mới hay gặp
+
+- **Nghĩ UDP "kém hơn" TCP.** Mỗi loại hợp một nhu cầu. Nếu nghĩ UDP là thứ yếu, bạn sẽ chỉ quét TCP và bỏ lỡ DNS, SNMP, những dịch vụ hay có cấu hình yếu.
+- **Đoán dịch vụ chỉ bằng số cổng.** Cổng 80 thường là web, nhưng web cũng hay nằm ở 8080 hay 8000, và ngược lại cổng 80 có thể chạy thứ khác. Luôn đọc banner để xác minh, nếu không bạn sẽ đào sai hướng cả giờ.
+- **Bỏ qua UDP khi quét.** Vì quét UDP chậm, nhiều người bỏ luôn. Nhưng DNS, SNMP và nhiều dịch vụ quan trọng chỉ lộ trên UDP, và trong phòng thi, một dịch vụ SNMP bị bỏ sót đôi khi là chìa khoá của cả máy.
+
+## Kiểm tra nhanh
+
+<Quiz
+  client:visible
+  questions={[
+    { q: 'Trong bắt tay ba bước, gói nào cho biết cổng đang mở?', options: ['SYN từ máy khách', 'SYN+ACK từ máy chủ', 'Không gói nào'], answer: 1, explain: 'Máy chủ chỉ trả lời SYN+ACK khi có dịch vụ đang lắng nghe ở cổng đó.' },
+    { q: 'Một dịch vụ lắng nghe trên 127.0.0.1:3306 nghĩa là gì?', options: ['Cả mạng đều truy cập được', 'Chỉ máy nội bộ truy cập được', 'Dịch vụ đã tắt'], answer: 1, explain: '127.0.0.1 là địa chỉ nội bộ; dịch vụ chỉ nhận kết nối từ chính máy đó, không lộ ra mạng.' },
+    { q: 'Bạn muốn đọc nhanh banner của dịch vụ ở cổng 22. Lệnh nào hợp?', options: ['nc -nv 10.10.14.20 22', 'cat 22', 'ping 22'], answer: 0, explain: 'netcat mở kết nối tới cổng và in banner mà dịch vụ trả về.' },
+  ]}
+/>
+
+## Bài tập tự làm
+
+Làm trên Kali và Metasploitable 2 (bài 0.2). Trong các lệnh dưới, `10.10.14.20` là IP Metasploitable; thay bằng IP thật trong lab của bạn.
+
+**Bài 1 — Ai đang lắng nghe?** Trên Metasploitable chạy `sudo netstat -tlnp` (máy cũ, chưa có `ss`). Đếm số cổng TCP đang lắng nghe. Cổng nào nghe trên `0.0.0.0` (cả mạng tới được), cổng nào chỉ nghe trên `127.0.0.1`?
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu, để đọc hiểu được cả khi chưa có lab)</summary>
+
+```text
+msfadmin@metasploitable:~$ sudo netstat -tlnp
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address    Foreign Address  State   PID/Program name
+tcp        0      0 0.0.0.0:21      0.0.0.0:*        LISTEN  2869/vsftpd
+tcp        0      0 0.0.0.0:22      0.0.0.0:*        LISTEN  2851/sshd
+tcp        0      0 0.0.0.0:23      0.0.0.0:*        LISTEN  2883/telnetd
+tcp        0      0 0.0.0.0:25      0.0.0.0:*        LISTEN  2895/exim4
+tcp        0      0 127.0.0.1:3306  0.0.0.0:*        LISTEN  3005/mysqld
+tcp        0      0 0.0.0.0:445     0.0.0.0:*        LISTEN  3102/smbd
+```
+
+Cột `Local Address` là cột quan trọng nhất (giống `ss -tlnp` ở bài thực hành): `0.0.0.0:cổng` nghĩa là ai trong mạng cũng kết nối được; `127.0.0.1:cổng` chỉ chương trình trên chính máy đó dùng được. Ở đây 5/6 dịch vụ (21, 22, 23, 25, 445) nghe trên `0.0.0.0`, chỉ MySQL (3306) nghe nội bộ — nhưng Metasploitable **cố tình** để lỗi, nên con số này cao bất thường.
+
+Ghi lại danh sách này: ở bài 2.2 bạn sẽ quét từ bên ngoài bằng nmap và so xem thấy được bao nhiêu trong số đó. Trên một máy chủ thật, danh sách `0.0.0.0` phải ngắn và mỗi dòng đều có lý do tồn tại.
+
+</details>
+
+**Bài 2 — Đọc banner.** Từ Kali, dùng `nc -nv` đọc banner ở các cổng 21, 22 và 25 của Metasploitable. Ghi tên và phiên bản phần mềm của từng dịch vụ.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+kali@lab:~$ nc -nv 10.10.14.20 21
+(UNKNOWN) [10.10.14.20] 21 (ftp) open
+220 (vsFTPd 2.3.4)
+
+kali@lab:~$ nc -nv 10.10.14.20 22
+(UNKNOWN) [10.10.14.20] 22 (ssh) open
+SSH-2.0-OpenSSH_4.7p1 Debian-8ubuntu1
+
+kali@lab:~$ nc -nv 10.10.14.20 25
+(UNKNOWN) [10.10.14.20] 25 (smtp) open
+220 metasploitable.localdomain ESMTP Postfix (Ubuntu)
+```
+
+Mỗi dịch vụ tự khai tên và phiên bản ngay dòng đầu sau khi kết nối: cổng 21 là `vsFTPd 2.3.4`, cổng 22 là `OpenSSH 4.7p1`, cổng 25 là `Postfix`. Bấm `Ctrl+C` để thoát mỗi lần.
+
+Lưu ý phiên bản FTP `vsFTPd 2.3.4`: ở bài 2.5 bạn sẽ tra nó trong kho lỗ hổng và thấy một câu chuyện nổi tiếng (một bản tải về bị cài cửa hậu, cho chạy lệnh ngay khi kết nối).
+
+</details>
+
+**Bài 3 — Tận mắt thấy cổng mở và cổng đóng.** Mở hai cửa sổ terminal trên Kali. Cửa sổ 1: `sudo tcpdump -ni eth1 'host 10.10.14.20 and tcp'` (đổi `eth1` thành card nối mạng lab). Cửa sổ 2: `nc -nv 10.10.14.20 80`, rồi `Ctrl+C`; sau đó `nc -nv 10.10.14.20 81`. So sánh hai chuỗi gói tin.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+# Cửa sổ 1 (tcpdump) — khi gõ nc tới cổng 80 (mở) rồi Ctrl+C:
+10.10.14.7.51000 > 10.10.14.20.80: Flags [S]                  # Kali xin mở
+10.10.14.20.80 > 10.10.14.7.51000: Flags [S.]                 # máy đích đồng ý
+10.10.14.7.51000 > 10.10.14.20.80: Flags [.]                  # Kali xác nhận
+10.10.14.7.51000 > 10.10.14.20.80: Flags [F.]                 # Kali xin đóng (sau Ctrl+C)
+10.10.14.20.80 > 10.10.14.7.51000: Flags [F.]                 # máy đích đồng ý đóng
+
+# khi gõ nc tới cổng 81 (đóng):
+10.10.14.7.51010 > 10.10.14.20.81: Flags [S]                  # Kali xin mở
+10.10.14.20.81 > 10.10.14.7.51010: Flags [R.]                 # máy đích từ chối ngay
+```
+
+Cổng 80 (mở): bắt tay đủ ba bước `[S]` → `[S.]` → `[.]`, rồi khi bạn thoát có thêm cặp `[F.]` để đóng kết nối gọn gàng. Cổng 81 (đóng): chỉ có `[S]` → `[R.]`, máy đích trả **RST** ngay, không có bắt tay.
+
+Đây chính là cách nmap phân biệt "mở" và "đóng" ở bài 2.2. Nếu một cổng không trả lời gì cả (không `[S.]`, không `[R.]`), thường là tường lửa đã lặng lẽ bỏ gói — nmap gọi trạng thái đó là `filtered`.
+
+</details>
+
+**Bài 4 — UDP không bắt tay.** Giữ tcpdump nhưng đổi bộ lọc thành `'host 10.10.14.20 and udp port 53'`. Ở cửa sổ kia chạy `dig @10.10.14.20 localhost`. Đếm số gói và so với bài 3.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+# Cửa sổ 1 (tcpdump), khi dig chạy ở cửa sổ kia:
+10.10.14.7.52000 > 10.10.14.20.53: 1234+ A? localhost. (29)     # câu hỏi
+10.10.14.20.53 > 10.10.14.7.52000: 1234 1/0/0 A 127.0.0.1 (45)  # câu trả lời
+```
+
+Chỉ đúng **hai gói**: một câu hỏi, một câu trả lời — không có `[S]`, không có `[S.]`, không có ACK nào cả, khác hẳn ba (hoặc năm) gói của TCP ở bài 3. Vì UDP không bắt tay, một cổng UDP "im lặng" (không gói trả lời) có thể là đang **mở mà dịch vụ không thèm trả lời gói đó**, hoặc **bị tường lửa lọc** — hai trường hợp nhìn giống hệt nhau trên dây. Đó là lý do quét UDP (`nmap -sU`, bài 2.2) chậm và kém chắc chắn hơn quét TCP.
+
+</details>
+
+**Bài 5 — Góc phòng thủ: lắng nghe đúng chỗ.** Trên Kali, chạy `python3 -m http.server 8000`, rồi ở cửa sổ khác `ss -tlnp | grep 8000`. Từ Metasploitable thử `wget -qO- http://<IP Kali>:8000/`. Tắt đi, chạy lại với `python3 -m http.server 8000 --bind 127.0.0.1` và thử lại cả hai bước.
+
+<details class="hint">
+<summary>Đáp án (kèm output mẫu)</summary>
+
+```text
+# Lần 1 — không --bind:
+kali@lab:~$ ss -tlnp | grep 8000
+LISTEN  0  5  0.0.0.0:8000  0.0.0.0:*  users:(("python3",pid=1234))
+
+msfadmin@metasploitable:~$ wget -qO- http://10.10.14.7:8000/
+<!DOCTYPE HTML>
+<html><title>Directory listing for /</title> ...           # tải thành công
+
+# Lần 2 — có --bind 127.0.0.1:
+kali@lab:~$ ss -tlnp | grep 8000
+LISTEN  0  5  127.0.0.1:8000  0.0.0.0:*  users:(("python3",pid=1250))
+
+msfadmin@metasploitable:~$ wget -qO- http://10.10.14.7:8000/
+wget: unable to connect to 10.10.14.7:8000: Connection refused   # bị từ chối
+```
+
+Lần đầu: `ss` cho thấy nghe trên `0.0.0.0:8000`, Metasploitable tải được danh sách file trong thư mục bạn đang đứng. Lần hai: `ss` cho thấy nghe trên `127.0.0.1:8000`, Metasploitable bị **từ chối kết nối thẳng** — không phải lỗi mạng, mà máy chủ chủ động chỉ nhận kết nối từ chính nó.
+
+Một tham số nhỏ (`--bind 127.0.0.1`) quyết định dịch vụ có lộ ra mạng hay không. Cũng là lời nhắc: đừng chạy máy chủ web nhanh (`http.server`) trong thư mục chứa dữ liệu riêng, dù chỉ để thử trong vài phút.
+
+</details>
+
+## Ghi nhớ
+
+- IP đưa bạn tới đúng máy, cổng đưa bạn tới đúng dịch vụ. Mỗi cổng mở là một câu hỏi: dịch vụ này có thể sai ở đâu?
+- Cách máy kia phản ứng với gói SYN cho bạn biết cổng mở (SYN+ACK), đóng (RST) hay bị lọc (im lặng). Đừng coi sự im lặng là "không có gì".
+- TCP và UDP là hai thế giới khác nhau, quét cả hai. Dịch vụ chỉ nằm ở UDP sẽ không lộ nếu bạn chỉ quét TCP.
+- `ss -tlnp` nhìn cổng của mình (và mở cho ai), `nc -nv` thử cổng từ xa và đọc banner, `tcpdump` xem gói thật. Banner là nguyên liệu để tra lỗ hổng ở bài 2.5.
