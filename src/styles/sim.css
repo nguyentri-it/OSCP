@@ -585,3 +585,214 @@
 /* Sơ đồ trên màn hẹp: giữ bề rộng tối thiểu để chữ không bị thu dưới ~10px, cho cuộn ngang. */
 .sim-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .sim-scroll > svg { min-width: 560px; }
+
+/* DualMachineLab: GBA Overworld Map + CRT Computer Monitors */
+.dual-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.dual-reset { white-space: nowrap; flex-shrink: 0; }
+.dual-launcher-preview { position: relative; margin-top: 12px; border: 3px solid #1d2530; border-radius: 6px; background: #18222e; padding: 8px; cursor: pointer; overflow: hidden; box-shadow: 4px 4px 0 #1d2530; transition: transform 0.12s; }
+.dual-launcher-preview:hover { transform: translate(-1px, -1px); }
+.dual-launcher-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(16, 22, 30, 0.72), rgba(16, 22, 30, 0.1)); display: flex; align-items: flex-end; justify-content: center; padding: 14px; }
+.dual-launcher-overlay span { background: #f8f3de; color: #1a212b; border: 3px solid #1a212b; padding: 6px 14px; font-family: var(--mono); font-size: 0.82rem; font-weight: 700; box-shadow: 3px 3px 0 #1a212b; }
+
+/* Nền toàn màn hình phong cách máy Game Boy Advance (không có thanh top tốn diện tích) */
+.gba-stage { position: fixed; inset: 0; z-index: 200; background: #262b38; color: #f4f1df; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; font-family: var(--mono); }
+.gba-cart-badge { font-family: 'Press Start 2P', var(--mono); font-size: 0.56rem; background: #d83830; color: #ffffff; padding: 4px 7px; border: 2px solid #0d1118; box-shadow: inset -2px -2px 0 #8c1c18, inset 2px 2px 0 #ff7868; }
+.gba-score { font-size: 0.74rem; font-weight: 700; color: #74f29a; background: #12261c; padding: 2px 7px; border: 2px solid #2b6143; }
+
+.gba-btn { font-family: var(--mono); font-size: 0.76rem; font-weight: 700; padding: 5px 10px; background: #e8e1c8; color: #1b222c; border: 2px solid #0d1118; box-shadow: inset -2px -2px 0 #b5ad94, inset 2px 2px 0 #ffffff, 2px 2px 0 #0d1118; cursor: pointer; white-space: nowrap; }
+.gba-btn:hover { background: #fff8dc; }
+.gba-btn:active { transform: translate(1px, 1px); box-shadow: inset 2px 2px 0 #b5ad94; }
+.gba-btn.active { background: #46e87c; color: #0b1f12; box-shadow: inset -2px -2px 0 #269c4d, inset 2px 2px 0 #99ffbb, 2px 2px 0 #0d1118; }
+.gba-btn-exit { background: #e86b6b; color: #ffffff; box-shadow: inset -2px -2px 0 #a33737, inset 2px 2px 0 #ffa6a6, 2px 2px 0 #0d1118; }
+.gba-btn-sm { padding: 3px 8px; font-size: 0.72rem; }
+
+/* Khung màn hình GBA ở trên kèm bảng nút điều khiển cầm tay gắn bên cạnh */
+.gba-world-wrap { display: grid; place-items: center; padding: 6px 12px 4px; overflow: hidden; background: repeating-linear-gradient(45deg, #222733 0 8px, #262c3a 8px 16px); }
+.gba-bezel-frame { width: 100%; max-width: 1240px; background: #3b4252; border: 3px solid #0d1118; padding: 6px; box-shadow: inset 0 0 0 2px #67728a, 4px 4px 0 #0d1118; }
+.gba-bezel-shell { display: grid; grid-template-columns: minmax(0, 1fr) 295px; gap: 8px; align-items: stretch; }
+.gba-map-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.gba-map { width: auto; max-width: 100%; aspect-ratio: 880 / 264; height: auto; margin: 0 auto; display: block; border: 3px solid #0d1118; background: #18222e; }
+.gba-bezel-frame:not(.is-full) .gba-map { max-height: 30vh; }
+.gba-bezel-frame.is-full .gba-map { max-height: 58vh; }
+
+.gba-console-dock { background: #232a38; border: 2px solid #0d1118; padding: 6px 7px; display: flex; flex-direction: column; justify-content: space-between; gap: 5px; box-shadow: inset 2px 2px 0 #3a4459; min-height: 0; }
+.gba-console-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
+.gba-dock-brief { flex: 1; min-height: 0; overflow-y: auto; background: #f8f8f0; color: #1b222c; border: 2px solid #182030; box-shadow: inset 0 0 0 2px #4870b0; padding: 5px 7px; font-size: 0.68rem; line-height: 1.28; }
+.gba-dock-h { margin: 0 0 2px; font-size: 0.68rem; font-weight: 700; color: #304878; letter-spacing: 0.02em; }
+.gba-dock-p { margin: 0 0 4px; }
+.gba-dock-steps { margin: 0; padding-left: 1.25em; }
+.gba-dock-steps li { margin: 2px 0; }
+.gba-dock-steps li.is-done { color: #256b40; font-weight: 600; }
+.gba-console-btns { display: grid; gap: 4px; flex-shrink: 0; }
+.gba-dock-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.gba-dock-row .gba-btn { width: 100%; text-align: center; padding: 4px 4px; font-size: 0.7rem; }
+
+.gba-zone-txt { fill: #1b2230; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; }
+.gba-px-title { fill: #ffffff; font-family: var(--mono); font-size: 10.5px; font-weight: 700; }
+.gba-px-chip { fill: #ffffff; font-family: var(--mono); font-size: 9.5px; font-weight: 700; }
+.gba-port-txt { fill: #e6ecf5; font-family: 'Press Start 2P', var(--mono); font-size: 7px; }
+.gba-cursor-hint { fill: #ffe66d; font-family: var(--mono); font-size: 11px; font-weight: 700; paint-order: stroke; stroke: #0d1118; stroke-width: 3px; }
+
+.gba-obj { cursor: pointer; outline: none; }
+.gba-obj:hover .gba-hit-box, .gba-obj:focus-visible .gba-hit-box { stroke: #ffe66d; stroke-width: 3; stroke-dasharray: 6 4; }
+.gba-obj.is-selected .gba-hit-box { stroke: #46e87c; stroke-width: 4; }
+.gba-led-pulse rect:first-child { stroke: #ffe66d; stroke-width: 2; }
+.gba-alert-bubble text { fill: #ffffff; font-family: 'Press Start 2P', var(--mono); font-size: 8px; }
+.gba-alert-bubble text.gba-poke-excl { fill: #d83028; }
+.gba-tunnel-flow { stroke: #46e87c; stroke-width: 4; stroke-dasharray: 8 8; animation: gba-tunnel-stream 0.65s linear infinite; }
+.gba-tunnel-lbl { fill: #99ffbb; font-family: 'Press Start 2P', var(--mono); font-size: 7px; }
+@keyframes gba-tunnel-stream { to { stroke-dashoffset: -16; } }
+
+.gba-ctrl-txt { fill: #5cff96; font-family: 'Press Start 2P', var(--mono); font-size: 7.2px; }
+.gba-ctrl-cmd { fill: #0d1118; font-family: var(--mono); font-size: 10px; font-weight: 700; }
+.gba-remote-hud rect:first-child { stroke: #5cff96; stroke-width: 1.5; }
+.gba-tunnel-sign { stroke: #46e87c; stroke-width: 1.5; }
+
+.gba-hacker-jump { animation: gba-jump 0.56s steps(4) infinite; }
+.gba-hacker-shadow { animation: gba-shadow 0.56s steps(4) infinite; }
+.gba-win-sparks { animation: gba-sparks 0.8s steps(2) infinite; }
+@keyframes gba-jump {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9px); }
+}
+@keyframes gba-shadow {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.35; }
+}
+@keyframes gba-sparks {
+  0% { opacity: 1; transform: translateY(0); }
+  50% { opacity: 0.35; transform: translateY(-3px); }
+}
+
+.gba-alarm-beacon { animation: gba-siren 0.5s steps(2) infinite; }
+@keyframes gba-siren {
+  0% { fill: #ff3b3b; }
+  50% { fill: #ffe66d; }
+}
+
+.gba-pkt-fill { fill: #49b6ff; }
+.gba-pkt.good .gba-pkt-fill { fill: #46e87c; }
+.gba-pkt.warn .gba-pkt-fill { fill: #ffb84d; }
+.gba-pkt.bad .gba-pkt-fill { fill: #ff4d4d; }
+.gba-pkt text { fill: #0d1118; font-family: 'Press Start 2P', var(--mono); font-size: 8px; }
+.gba-pkt.go-right { animation: gba-pkt-right 0.85s steps(14) forwards; }
+.gba-pkt.go-left { animation: gba-pkt-left 0.85s steps(14) forwards; }
+.gba-pkt.go-roundtrip { animation: gba-pkt-roundtrip 1.15s steps(18) forwards; }
+.gba-pkt.go-roundtrip-left { animation: gba-pkt-roundtrip-left 1.05s steps(16) forwards; }
+.gba-pkt.go-blocked { animation: gba-pkt-blocked 0.8s steps(10) forwards; }
+@keyframes gba-pkt-right {
+  0% { transform: translate(316px, 148px); }
+  100% { transform: translate(564px, 148px); }
+}
+@keyframes gba-pkt-left {
+  0% { transform: translate(564px, 148px); }
+  100% { transform: translate(316px, 148px); }
+}
+@keyframes gba-pkt-roundtrip {
+  0% { transform: translate(316px, 148px); }
+  50% { transform: translate(564px, 148px); }
+  100% { transform: translate(316px, 148px); }
+}
+@keyframes gba-pkt-roundtrip-left {
+  0% { transform: translate(564px, 148px); }
+  50% { transform: translate(316px, 148px); }
+  100% { transform: translate(564px, 148px); }
+}
+@keyframes gba-pkt-blocked {
+  0% { transform: translate(316px, 148px); }
+  65% { transform: translate(404px, 148px); }
+  100% { transform: translate(382px, 148px); opacity: 0.7; }
+}
+
+.gba-ticker { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 0; padding: 5px 9px; background: #18202c; border: 2px solid #0d1118; font-size: 0.78rem; line-height: 1.3; color: #e8e1c8; }
+.gba-ticker.good { border-color: #46e87c; }
+.gba-ticker.warn { border-color: #ffb84d; }
+.gba-ticker.bad { border-color: #ff4d4d; }
+.gba-ticker-badge { font-family: var(--mono); font-size: 0.72rem; font-weight: 700; padding: 1px 7px; background: #2c384d; color: #ffe66d; border: 2px solid #0d1118; flex-shrink: 0; }
+.gba-ticker-txt { flex: 1; min-width: 220px; }
+
+/* Hộp thoại RPG GBA Pokémon Gen 3 & Khu vực CRT mở rộng hết chiều cao còn lại (không scroll cắt CRT) */
+.gba-bottom-area { background: #1a202c; border-top: 3px solid #0d1118; padding: 8px 12px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.gba-dialog-box { width: 100%; max-width: 1240px; margin: auto; background: #f8f8f0; color: #1b222c; border: 3px solid #182030; box-shadow: inset 0 0 0 3px #4870b0, inset 0 0 0 5px #a8c4e8, 4px 4px 0 #0d1118; padding: 11px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; }
+.gba-dialog-h { margin: 0 0 5px; font-size: 0.74rem; font-weight: 700; color: #304878; letter-spacing: 0.03em; }
+.gba-brief-p { margin: 4px 0 0; font-size: 0.82rem; line-height: 1.45; }
+.gba-dialog-quests ol, .gba-side-quest ol { margin: 4px 0 0; padding-left: 1.3em; font-size: 0.82rem; }
+.gba-dialog-quests li, .gba-side-quest li { margin: 2px 0; }
+.gba-dialog-quests li.is-done, .gba-side-quest li.is-done { color: #7a818c; text-decoration: line-through; }
+.gba-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Màn hình CRT cổ điển bên dưới: thuần túy dùng để chạy lệnh (không còn hộp hướng dẫn bên cạnh) */
+.crt-dock { flex: 1; min-height: 0; width: 100%; max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+.crt-dock.is-both { max-width: 1280px; }
+.crt-dock-main { min-width: 0; min-height: 0; height: 100%; }
+.crt-both-grid { height: 100%; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
+.crt-unit { height: 100%; min-height: 0; }
+.crt-casing { height: 100%; min-height: 0; display: flex; flex-direction: column; background: #d6ceb8; color: #26231d; border: 3px solid #0d1118; border-radius: 10px; padding: 8px 9px 7px; box-shadow: inset 3px 3px 0 #f2ede0, inset -3px -3px 0 #8a826f, 4px 4px 0 #0d1118; }
+.crt-screen-recess { flex: 1; min-height: 0; background: #2b2924; border-radius: 10px; padding: 5px; border: 2px solid #0d1118; box-shadow: inset 2px 2px 6px rgba(0, 0, 0, 0.7); display: flex; flex-direction: column; }
+.crt-glass { position: relative; flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; padding: 7px 9px; border: 2px solid #141412; box-shadow: inset 0 0 26px rgba(0, 0, 0, 0.88); }
+
+/* 4 màu phosphor CRT đặc trưng (kèm trạng thái màn hình đỏ khi bị chiếm quyền) */
+.crt-green .crt-glass { background: #07170c; color: #54ff8c; text-shadow: 0 0 6px rgba(84, 255, 140, 0.35); }
+.crt-amber .crt-glass { background: #191004; color: #ffbe4d; text-shadow: 0 0 6px rgba(255, 190, 77, 0.35); }
+.crt-cyan .crt-glass { background: #06161d; color: #6ef0ff; text-shadow: 0 0 6px rgba(110, 240, 255, 0.35); }
+.crt-red .crt-glass { background: #260709; color: #ff7a7a; text-shadow: 0 0 6px rgba(255, 77, 77, 0.45); border-color: #8c1d1d; }
+.crt-red .crt-casing { border-color: #a82424; box-shadow: inset 3px 3px 0 #f2ede0, inset -3px -3px 0 #8a826f, 0 0 0 2px #ff4d4d, 4px 4px 0 #0d1118; }
+.crt-red .crt-led { background: #ff3b3b; border-color: #701010; box-shadow: 0 0 8px #ff3b3b; }
+
+.crt-scanlines { position: absolute; inset: 0; pointer-events: none; z-index: 2; background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.24) 2px 4px); }
+.crt-glare { position: absolute; inset: 0; pointer-events: none; z-index: 2; background: linear-gradient(125deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 38%); }
+.crt-content { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; }
+
+.crt-log-strip { flex-shrink: 0; display: flex; align-items: center; gap: 6px; font-size: 0.74rem; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px dashed currentColor; opacity: 0.9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crt-tag { font-family: 'Press Start 2P', var(--mono); font-size: 0.56rem; padding: 2px 5px; border: 1px solid currentColor; flex-shrink: 0; }
+
+.crt-term { flex: 1; min-height: 0; height: auto; overflow-y: auto; font-size: 0.78rem; line-height: 1.45; cursor: text; }
+.crt-term code, .crt-term pre { background: none !important; padding: 0 !important; color: inherit; border: none !important; font-family: inherit; }
+.crt-both-grid .crt-term { flex: 1; min-height: 0; height: auto; }
+.crt-line { margin-bottom: 6px; }
+.crt-line pre { margin: 2px 0 0; padding: 0 !important; background: none !important; color: inherit; font: inherit; white-space: pre-wrap; word-break: break-word; }
+.crt-line.warn pre { color: #ffe066; }
+.crt-line.bad pre { color: #ff7373; }
+.crt-prompt { font-weight: 700; white-space: nowrap; }
+.crt-input-row { display: flex; align-items: center; gap: 6px; }
+.crt-input-row input { flex: 1; min-width: 60px; background: transparent; border: none; outline: none; color: inherit; font: inherit; text-shadow: inherit; padding: 0; }
+.crt-caret { animation: crt-blink 1s steps(2) infinite; font-size: 0.8em; }
+@keyframes crt-blink { 50% { opacity: 0; } }
+
+.crt-keys { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(255, 255, 255, 0.2); }
+.crt-keycap { font-family: var(--mono); font-size: 0.72rem; font-weight: 700; padding: 3px 8px; background: rgba(255, 255, 255, 0.08); color: inherit; border: 1px solid currentColor; border-radius: 3px; cursor: pointer; }
+.crt-keycap:hover { background: rgba(255, 255, 255, 0.2); }
+
+.crt-bezel-bar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 0 2px; flex-wrap: nowrap; }
+.crt-brand { display: flex; align-items: center; gap: 7px; font-size: 0.72rem; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+.crt-brand strong { font-family: 'Press Start 2P', var(--mono); font-size: 0.56rem; color: #2b2720; white-space: nowrap; }
+.crt-status { font-size: 0.68rem; color: #544e41; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crt-led { width: 8px; height: 8px; border-radius: 50%; background: #36e86b; border: 1px solid #154d25; box-shadow: 0 0 6px #36e86b; flex-shrink: 0; }
+.crt-vents { display: flex; gap: 3px; }
+.crt-vents i { display: block; width: 3px; height: 12px; background: #8a826f; border-radius: 1px; }
+
+.crt-ufw-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; font-size: 0.78rem; height: auto; }
+.crt-ufw-grid > div { display: flex; flex-direction: column; min-height: 0; }
+.crt-sec-h { margin: 0 0 6px; font-family: 'Press Start 2P', var(--mono); font-size: 0.58rem; flex-shrink: 0; }
+.crt-rule-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed rgba(110, 240, 255, 0.25); }
+.crt-dim { opacity: 0.78; font-size: 0.74rem; }
+.crt-ufw-logs { flex: 1; min-height: 0; list-style: none; padding: 0; margin: 0; overflow-y: auto; display: grid; gap: 4px; align-content: start; }
+.crt-ufw-logs li { line-height: 1.35; }
+
+.gba-side-quest { min-height: 0; overflow-y: auto; background: #f8f8f0; color: #1b222c; border: 3px solid #182030; box-shadow: inset 0 0 0 3px #4870b0, inset 0 0 0 5px #a8c4e8, 4px 4px 0 #0d1118; padding: 10px 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+.gba-side-switch { display: flex; gap: 6px; border-top: 2px dashed #b5ad94; padding-top: 8px; flex-shrink: 0; }
+.gba-side-switch .gba-btn { flex: 1; text-align: center; }
+
+@media (max-width: 900px) {
+  .gba-bezel-shell { grid-template-columns: 1fr; }
+  .gba-console-dock { flex-direction: row; align-items: center; flex-wrap: wrap; }
+  .gba-console-btns { display: flex; flex-wrap: wrap; }
+  .gba-console-btns .gba-btn { width: auto; }
+  .gba-dialog-box, .crt-dock, .crt-both-grid, .crt-ufw-grid { grid-template-columns: 1fr; }
+  .gba-bottom-area { overflow-y: auto; }
+}
+
+@media (max-height: 560px) {
+  .gba-bottom-area { overflow-y: auto; }
+}

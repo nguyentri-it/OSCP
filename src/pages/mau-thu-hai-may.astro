@@ -1,0 +1,18 @@
+---
+import Base from '../layouts/Base.astro';
+import DualMachineLab from '../components/sim/DualMachineLab';
+---
+<Base title="Mẫu thử: Lab 2 máy tương tác" description="Mẫu thử nghiệm hai khung terminal Kali và Máy mục tiêu tương tác qua lại trong trình duyệt.">
+  <div class="wrap demo-page">
+    <h1>Mẫu thử: Tương tác 2 máy (Kali ↔ Mục tiêu)</h1>
+    <p class="lead">
+      Đây là trang mẫu thử để bạn kiểm tra trải nghiệm gõ lệnh trực tiếp vào 2 thiết bị riêng biệt và thấy phản ứng qua lại theo thời gian thực.
+    </p>
+    <DualMachineLab client:load />
+  </div>
+</Base>
+
+<style>
+  .demo-page { padding-top: 24px; }
+  .lead { color: var(--muted); max-width: 72ch; margin-bottom: 18px; }
+</style>

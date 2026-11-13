@@ -4,7 +4,7 @@ code: "2.7"
 level: 2
 summary: "Khai thác được một lỗ hổng chỉ là nửa đầu. Nửa sau là có một cửa sổ dòng lệnh dùng được tử tế trên máy mục tiêu, và biết cách chuyển công cụ xuống, kéo dữ liệu về giữa hai máy."
 duration: "70 phút"
-updated: "2026-11-09"
+updated: "2026-11-14"
 prereq: ["1.4", "1.5", "1.6"]
 objectives:
   - "Phân biệt được bind shell và reverse shell, và giải thích được vì sao reverse shell phổ biến hơn trong thực tế"
@@ -17,15 +17,25 @@ import Terminal from '../../components/ui/Terminal.astro';
 import Lenh from '../../components/ui/Lenh.astro';
 import LabBrief from '../../components/ui/LabBrief.astro';
 import SequenceDiagram from '../../components/sim/SequenceDiagram.tsx';
+import DualMachineLab from '../../components/sim/DualMachineLab.tsx';
 import Quiz from '../../components/sim/Quiz.tsx';
+
+Sau khi khai thác được lỗ hổng trên máy nạn nhân, hacker không ngồi trước màn hình máy đó để thao tác mà phải điều khiển từ xa qua **shell** theo một trong hai con đường:
+
+- **Đường đi vào (Bind shell):** máy nạn nhân tự mở một cổng chờ sẵn, hacker kết nối thẳng vào. Cách này dễ thất bại vì tường lửa thường chặn kết nối lạ từ ngoài đi vào.
+- **Đường đi ra (Reverse shell):** máy hacker mở sẵn cổng lắng nghe (như `:443`), rồi khiến máy nạn nhân **chủ động gọi ngược ra** để giao quyền điều khiển. Đường này dễ lọt qua tường lửa hơn vì kết nối từ trong đi ra ngoài ít khi bị chặn.
+
+Hãy thử ngay trò chơi mô phỏng 2 máy bên dưới để thấy rõ vì sao tường lửa chặn chiều vào nhưng không cản được đường nối ngược từ máy nạn nhân ra ngoài, cùng cách tải công cụ qua lại giữa hai máy:
+
+<DualMachineLab client:visible />
 
 ## Hình dung trước
 
-Bạn vừa mở được một khe cửa vào ngôi nhà. Nhưng đứng ngoài thò tay qua khe thì làm được rất ít. Bạn cần mở hẳn cửa để ra vào thoải mái, và cần một lối chuyển đồ đạc qua lại. Trong pentest, "cửa" là một **shell** (cửa sổ dòng lệnh điều khiển máy từ xa) dùng được, còn "lối chuyển đồ" là cách **truyền file**.
+Ngay khi vừa kết nối được shell như trong mô phỏng trên, người mới thường hụt hẫng vì cửa sổ lệnh nhận được **rất bất tiện để làm việc**: không bấm được `Tab` để tự điền tên file, không dùng mũi tên lên để lấy lại lệnh cũ, và lỡ bấm `Ctrl-C` là rớt luôn cả phiên kết nối.
 
-Rất nhiều người mới khai thác được lỗ hổng rồi khựng lại ngay sau đó, vì cái shell nhận được quá thô: không gõ được tab, bấm Ctrl-C là mất kết nối, không chạy được trình soạn thảo.
+Lý do là đường kết nối mạng mới mở lúc đầu chỉ giống một "ống truyền chữ thô", chưa có lớp xử lý bàn phím và màn hình tương tác (**TTY**), nên hễ chạy lệnh như `sudo`, `su` hay `vim` là bị treo ngay.
 
-Họ tưởng mình bị kẹt kỹ thuật, trong khi chỉ cần biết ba bước nâng cấp. Bài này sửa đúng chỗ đó, rồi dạy tiếp phần hay bị quên: làm sao đưa công cụ xuống máy mục tiêu và mang dữ liệu về, khi máy đó chẳng có gì ngoài một dòng lệnh.
+Chỉ cần thực hiện đúng 3 bước nâng cấp ngắn trong bài, bạn sẽ biến ngay ống chữ thô đó thành một cửa sổ terminal hoàn chỉnh như đang ngồi gõ trực tiếp trên máy đích, rồi nắm cách truyền công cụ và kéo dữ liệu hai chiều giữa hai máy.
 
 ## Kiến thức chính
 

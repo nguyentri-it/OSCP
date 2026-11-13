@@ -87,4 +87,4 @@ npm run check:diagrams
 npm run build
 ```
 
-Cả ba phải chạy không lỗi. Nếu bạn thêm thành phần tương tác mới, nhớ truyền chỉ thị `client:visible` để nó hoạt động trên trang tĩnh.
+Cả ba phải chạy không lỗi. Nếu bạn thêm thành phần tương tác mới, nhớ truyền chỉ thị `client:visible` để nó hoạt động trên trang tĩnh. Tham khảo [docs/bo-game-mau.md](docs/bo-game-mau.md) khi nhân bản mẫu game tương tác 2 máy cho bài học mới.
