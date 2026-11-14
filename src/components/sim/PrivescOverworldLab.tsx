@@ -377,12 +377,12 @@ function drawHacker(
   ctx.restore();
 }
 
-function drawCallout(ctx: CanvasRenderingContext2D, cx: number, y: number, text: string, color: string, maxW = 360) {
+function drawCallout(ctx: CanvasRenderingContext2D, cx: number, y: number, text: string, color: string, maxW = 420) {
   ctx.save();
-  ctx.font = 'bold 12px system-ui, sans-serif';
-  const padX = 11;
+  ctx.font = 'bold 13px system-ui, sans-serif';
+  const padX = 12;
   const w = Math.min(maxW, ctx.measureText(text).width + padX * 2);
-  const h = 26;
+  const h = 28;
   const x = Math.max(8, cx - w / 2);
   ctx.fillStyle = STAGE.bubbleBg;
   ctx.strokeStyle = color;
@@ -392,7 +392,7 @@ function drawCallout(ctx: CanvasRenderingContext2D, cx: number, y: number, text:
   ctx.stroke();
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
-  ctx.fillText(text, x + w / 2, y + 17, w - 12);
+  ctx.fillText(text, x + w / 2, y + 18, w - 12);
   ctx.restore();
 }
 
@@ -456,6 +456,7 @@ export default function PrivescOverworldLab() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const barRefs = useRef<(HTMLSpanElement | null)[]>([]);
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(3);
   const [onlyCap, setOnlyCap] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -463,6 +464,7 @@ export default function PrivescOverworldLab() {
   const [activeStep, setActiveStep] = useState(0);
 
   const stateRef = useRef({
+    isFullscreen: false,
     selectedIdx: 3,
     onlyCap: false,
     isPaused: false,
@@ -474,6 +476,7 @@ export default function PrivescOverworldLab() {
     lastStep: -1,
   });
 
+  stateRef.current.isFullscreen = isFullscreen;
   stateRef.current.selectedIdx = selectedIdx;
   stateRef.current.onlyCap = onlyCap;
   stateRef.current.isPaused = isPaused;
@@ -492,6 +495,17 @@ export default function PrivescOverworldLab() {
     const open = isOpen(st.selectedIdx, st.onlyCap);
     const cycle = open ? FULL_CYCLE : STEP_DUR * 2;
     return raw % cycle;
+  }
+
+  function openFullscreen() {
+    const st = stateRef.current;
+    st.animStart = performance.now();
+    st.pausedElapsed = 0;
+    st.lastStep = -1;
+    setLockedStep(-1);
+    setIsPaused(false);
+    setActiveStep(0);
+    setIsFullscreen(true);
   }
 
   function handleSelectMethod(idx: number) {
@@ -553,6 +567,20 @@ export default function PrivescOverworldLab() {
   }
 
   useEffect(() => {
+    if (!isFullscreen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -564,7 +592,7 @@ export default function PrivescOverworldLab() {
       if (!canvas) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const rect = canvas.getBoundingClientRect();
-      if (rect.width < 10) return;
+      if (rect.width < 10 || rect.height < 10) return;
       canvas.width = Math.round(rect.width * dpr);
       canvas.height = Math.round(rect.height * dpr);
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -585,24 +613,25 @@ export default function PrivescOverworldLab() {
         }
       }
 
-      drawSprite(ctx!, 22, 38, 2, TREE_ROWS, TREE_PAL);
-      drawSprite(ctx!, W - 22, 38, 2, TREE_ROWS, TREE_PAL);
-      drawSprite(ctx!, 22, H - 38, 2, TREE_ROWS, TREE_PAL);
-      drawSprite(ctx!, W - 22, H - 38, 2, TREE_ROWS, TREE_PAL);
+      const treePx = H >= 360 ? 2 : 1.5;
+      drawSprite(ctx!, 24, 38, treePx, TREE_ROWS, TREE_PAL);
+      drawSprite(ctx!, W - 24, 38, treePx, TREE_ROWS, TREE_PAL);
+      drawSprite(ctx!, 24, H - 38, treePx, TREE_ROWS, TREE_PAL);
+      drawSprite(ctx!, W - 24, H - 38, treePx, TREE_ROWS, TREE_PAL);
 
       const tWalk = Math.min(1, elapsed / 750);
       const tDone = elapsed >= STEP_DUR * 2;
       const tFinalDash = open && tDone ? Math.min(1, (elapsed - STEP_DUR * 2) / 900) : 0;
 
-      const start = { x: W / 2, y: 40, w: 146, h: 30 };
-      const goal = { x: W / 2, y: H - 32, w: 150, h: 30 };
-      const pad = 10;
-      const gap = 5;
-      const nw = Math.min(64, (W - pad * 2 - gap * 4) / 5);
+      const start = { x: W / 2, y: Math.min(54, Math.max(36, H * 0.13)), w: 156, h: 32 };
+      const goal = { x: W / 2, y: H - Math.min(48, Math.max(30, H * 0.12)), w: 160, h: 32 };
+      const pad = 12;
+      const gap = 6;
+      const nw = Math.min(92, (W - pad * 2 - gap * 4) / 5);
       const totalW = nw * 5 + gap * 4;
       const sx = (W - totalW) / 2;
       const my = H / 2;
-      const mids = METHODS.map((_, i) => ({ x: sx + i * (nw + gap) + nw / 2, y: my, w: nw, h: 42 }));
+      const mids = METHODS.map((_, i) => ({ x: sx + i * (nw + gap) + nw / 2, y: my, w: nw, h: 44 }));
       st.hitBoxes = mids.map((m, i) => ({
         x: ox + m.x - m.w / 2,
         y: oy + m.y - m.h / 2,
@@ -643,7 +672,7 @@ export default function PrivescOverworldLab() {
       drawPanel(ctx!, start.x - start.w / 2, start.y - start.h / 2, start.w, start.h, 'www-data (1000)', '', '#143326', STAGE.good);
 
       const rootWin = open && tFinalDash >= 0.9;
-      drawSprite(ctx!, goal.x - goal.w / 2 - 18, goal.y - 2, 2, CASTLE_ROWS, rootWin ? CASTLE_WIN_PAL : CASTLE_PAL);
+      drawSprite(ctx!, goal.x - goal.w / 2 - 20, goal.y - 2, 2, CASTLE_ROWS, rootWin ? CASTLE_WIN_PAL : CASTLE_PAL);
       drawPanel(
         ctx!,
         goal.x - goal.w / 2,
@@ -676,23 +705,23 @@ export default function PrivescOverworldLab() {
       if (tWalk < 1) {
         const e = 1 - Math.pow(1 - tWalk, 2);
         hx = start.x + (sel.x - start.x) * e;
-        hy = start.y + (sel.y - 30 - start.y) * e;
+        hy = start.y + (sel.y - 32 - start.y) * e;
       } else if (tFinalDash > 0) {
         const e = tFinalDash * tFinalDash;
         hx = sel.x + (goal.x - sel.x) * e;
-        hy = sel.y + 26 + (goal.y - 24 - (sel.y + 26)) * e;
+        hy = sel.y + 28 + (goal.y - 26 - (sel.y + 28)) * e;
       } else {
         hx = sel.x;
-        hy = sel.y - 30;
+        hy = sel.y - 32;
       }
       const moving = tWalk < 1 || (tFinalDash > 0 && tFinalDash < 1);
       const bob = moving ? Math.abs(Math.sin(now * 0.02)) * -4 : (rootWin ? Math.sin(now * 0.008) * 1.5 : 0);
-      drawHacker(ctx!, hx, hy, 1.5, rootWin, bob, sel.x >= start.x ? 1 : -1);
+      drawHacker(ctx!, hx, hy, H >= 340 ? 1.8 : 1.5, rootWin, bob, sel.x >= start.x ? 1 : -1);
 
       ctx!.fillStyle = STAGE.muted;
       ctx!.font = 'bold 11px ui-monospace, monospace';
       ctx!.textAlign = 'left';
-      ctx!.fillText('BẢN ĐỒ LUỒNG', 10, 16);
+      ctx!.fillText('BẢN ĐỒ LUỒNG', 10, 18);
       ctx!.restore();
     }
 
@@ -702,22 +731,28 @@ export default function PrivescOverworldLab() {
       const step = Math.max(0, Math.min(2, Math.floor(elapsed / STEP_DUR)));
       const p = Math.max(0, Math.min(1, (elapsed - step * STEP_DUR) / (STEP_DUR * 0.78)));
 
-      barRefs.current.forEach((bar, i) => {
-        if (!bar) return;
-        if (i < step) bar.style.width = '100%';
-        else if (i === step) bar.style.width = `${Math.round(p * 100)}%`;
-        else bar.style.width = '0%';
-      });
+      if (st.isFullscreen) {
+        barRefs.current.forEach((bar, i) => {
+          if (!bar) return;
+          if (i < step) bar.style.width = '100%';
+          else if (i === step) bar.style.width = `${Math.round(p * 100)}%`;
+          else bar.style.width = '0%';
+        });
 
-      if (st.lastStep !== step) {
-        st.lastStep = step;
-        setActiveStep(step);
+        if (st.lastStep !== step) {
+          st.lastStep = step;
+          setActiveStep(step);
+        }
       }
 
       ctx!.save();
       ctx!.translate(ox, oy);
 
-      const floorY = H - 54;
+      const floorY = H - Math.max(44, Math.round(H * 0.14));
+      const sprPx = W >= 580 && H >= 380 ? 3 : 2;
+      const heroY = floorY - 9 * sprPx;
+      const labelAboveHero = floorY - 22 * sprPx - 12;
+
       ctx!.fillStyle = STAGE.sceneBg;
       ctx!.fillRect(0, 0, W, floorY);
       ctx!.fillStyle = 'rgba(255,255,255,0.025)';
@@ -729,8 +764,9 @@ export default function PrivescOverworldLab() {
       ctx!.fillStyle = '#243247';
       ctx!.fillRect(0, floorY, W, 4);
       ctx!.fillStyle = '#111924';
-      for (let row = 0; row < 3; row++) {
+      for (let row = 0; row < 4; row++) {
         const py = floorY + 8 + row * 16;
+        if (py > H) break;
         const off = (row % 2) * 16;
         for (let px = off; px < W; px += 32) ctx!.fillRect(px, py, 28, 12);
       }
@@ -747,9 +783,9 @@ export default function PrivescOverworldLab() {
       ctx!.fillText(`CẬN CẢNH CƠ CHẾ: ${METHODS[st.selectedIdx].title.toUpperCase()}`, 14, 20);
 
       if (!open && step === 0) {
-        drawHacker(ctx!, W * 0.22, floorY - 18, 2, false, Math.abs(Math.sin(now * 0.02)) * -2, 1);
-        drawScanPulse(ctx!, W * 0.22 + 18, floorY - 22, W * 0.52, floorY - 34, p, STAGE.accent);
-        drawPanel(ctx!, W * 0.52, floorY - 58, 138, 48, 'ĐANG KIỂM TRA...', METHODS[st.selectedIdx].steps[0].cmd.split(' ')[0], STAGE.nodeBg, STAGE.accent);
+        drawHacker(ctx!, W * 0.22, heroY, sprPx, false, Math.abs(Math.sin(now * 0.02)) * -2, 1);
+        drawScanPulse(ctx!, W * 0.22 + 18, heroY - 4, W * 0.52, floorY - 34, p, STAGE.accent);
+        drawPanel(ctx!, W * 0.52, floorY - 58, 146, 50, 'ĐANG KIỂM TRA...', METHODS[st.selectedIdx].steps[0].cmd.split(' ')[0], STAGE.nodeBg, STAGE.accent);
         drawCallout(ctx!, W / 2, 34, `1/2: Chạy lệnh dò ${METHODS[st.selectedIdx].steps[0].cmd.split(' ')[0]}...`, STAGE.accent, W - 28);
         ctx!.restore();
         return;
@@ -757,9 +793,9 @@ export default function PrivescOverworldLab() {
 
       if (!open && step >= 1) {
         const shake = p < 0.4 ? Math.sin(p * 40) * 4 : 0;
-        drawHacker(ctx!, W * 0.24, floorY - 18, 2, false, 0, 1);
-        drawPanel(ctx!, W * 0.52 + shake, floorY - 58, 138, 48, 'ĐÃ KHÓA / AN TOÀN', METHODS[st.selectedIdx].steps[0].cmd.split(' ')[0], STAGE.nodeBg, STAGE.warn);
-        drawSprite(ctx!, W * 0.52 + 69 + shake, floorY - 74, 2, PADLOCK_ROWS, PADLOCK_PAL);
+        drawHacker(ctx!, W * 0.24, heroY, sprPx, false, 0, 1);
+        drawPanel(ctx!, W * 0.52 + shake, floorY - 58, 146, 50, 'ĐÃ KHÓA / AN TOÀN', METHODS[st.selectedIdx].steps[0].cmd.split(' ')[0], STAGE.nodeBg, STAGE.warn);
+        drawSprite(ctx!, W * 0.52 + 73 + shake, floorY - 76, 2, PADLOCK_ROWS, PADLOCK_PAL);
         drawCallout(ctx!, W / 2, 34, '✕ Không thấy lỗ hổng để leo tiếp', STAGE.warn, W - 28);
         ctx!.restore();
         return;
@@ -773,49 +809,49 @@ export default function PrivescOverworldLab() {
       if (st.selectedIdx === 0) {
         const guardX = W * 0.36;
         const boothX = W * 0.65;
-        drawSprite(ctx!, guardX, floorY - 13, 2, OFFICER_ROWS, OFFICER_PAL, true);
-        drawPanel(ctx!, guardX - 42, floorY - 64, 84, 34, 'LÍNH SUDO', 'NOPASSWD', STAGE.nodeBg, STAGE.accent);
-        drawPanel(ctx!, boothX - 50, floorY - 82, 100, 80, 'Lệnh find', 'Chạy bằng ROOT', '#2a2210', step >= 1 ? STAGE.good : STAGE.nodeBorder);
+        drawSprite(ctx!, guardX, floorY - 7 * sprPx, sprPx, OFFICER_ROWS, OFFICER_PAL, true);
+        drawPanel(ctx!, guardX - 46, floorY - 14 * sprPx - 44, 92, 38, 'LÍNH SUDO', 'NOPASSWD', STAGE.nodeBg, STAGE.accent);
+        drawPanel(ctx!, boothX - 54, floorY - 96, 108, 92, 'Lệnh find', 'Chạy bằng ROOT', '#2a2210', step >= 1 ? STAGE.good : STAGE.nodeBorder);
         ctx!.fillStyle = step === 2 ? STAGE.good : '#334155';
-        ctx!.fillRect(Math.round(boothX + 46), Math.round(floorY - 40), 6, 36);
+        ctx!.fillRect(Math.round(boothX + 50), Math.round(floorY - 48), 6, 44);
 
         if (step === 1 && p < 0.45) {
-          const cardX = guardX - 54 + (p / 0.45) * 32;
+          const cardX = guardX - 60 + (p / 0.45) * 34;
           ctx!.fillStyle = '#4ade80';
-          ctx!.fillRect(Math.round(cardX), Math.round(floorY - 26), 12, 8);
+          ctx!.fillRect(Math.round(cardX), Math.round(floorY - 28), 14, 9);
         }
 
         let hx = W * 0.14;
         let isRoot = false;
         if (step === 0) {
-          hx = W * 0.14 + p * (guardX - 60 - W * 0.14);
-          drawScanPulse(ctx!, hx + 16, floorY - 22, guardX - 42, floorY - 42, p, STAGE.accent);
+          hx = W * 0.14 + p * (guardX - 66 - W * 0.14);
+          drawScanPulse(ctx!, hx + 18, heroY - 4, guardX - 46, floorY - 50, p, STAGE.accent);
         } else if (step === 1) {
-          hx = guardX - 60 + p * (boothX - (guardX - 60));
+          hx = guardX - 66 + p * (boothX - (guardX - 66));
           isRoot = p > 0.55;
         } else {
           hx = boothX + p * (W * 0.88 - boothX);
           isRoot = true;
         }
-        drawHacker(ctx!, hx, floorY - 18, 2, isRoot, bob, 1);
+        drawHacker(ctx!, hx, heroY, sprPx, isRoot, bob, 1);
         ctx!.fillStyle = isRoot ? STAGE.good : STAGE.muted;
         ctx!.font = 'bold 11px ui-monospace, monospace';
         ctx!.textAlign = 'center';
-        ctx!.fillText(isRoot ? 'UID 0 (/bin/sh)' : 'jdoe (1000)', hx, floorY - 54);
+        ctx!.fillText(isRoot ? 'UID 0 (/bin/sh)' : 'jdoe (1000)', hx, labelAboveHero);
       } else if (st.selectedIdx === 1) {
         const portalX = W * 0.5;
         const glowAlpha = step >= 1 ? 0.28 + Math.sin(now * 0.01) * 0.08 : 0.14;
         ctx!.fillStyle = `rgba(250, 204, 21, ${glowAlpha})`;
-        ctx!.fillRect(Math.round(portalX - 42), Math.round(floorY - 96), 84, 96);
+        ctx!.fillRect(Math.round(portalX - 48), Math.round(floorY - 110), 96, 110);
         ctx!.strokeStyle = step >= 1 ? '#facc15' : '#64748b';
         ctx!.lineWidth = 3;
-        ctx!.strokeRect(Math.round(portalX - 42), Math.round(floorY - 96), 84, 96);
-        drawPanel(ctx!, portalX - 58, floorY - 128, 116, 40, '/usr/bin/env', 'bit 4000 (root)', STAGE.nodeBg, '#facc15');
+        ctx!.strokeRect(Math.round(portalX - 48), Math.round(floorY - 110), 96, 110);
+        drawPanel(ctx!, portalX - 62, floorY - 148, 124, 42, '/usr/bin/env', 'bit 4000 (root)', STAGE.nodeBg, '#facc15');
 
         if (step >= 1) {
-          for (let s = 0; s < 4; s++) {
-            const sy = floorY - ((now * 0.06 + s * 22) % 86);
-            const sx = portalX - 28 + s * 18;
+          for (let s = 0; s < 5; s++) {
+            const sy = floorY - ((now * 0.06 + s * 22) % 98);
+            const sx = portalX - 34 + s * 17;
             ctx!.fillStyle = '#fde047';
             ctx!.fillRect(Math.round(sx), Math.round(sy), 3, 3);
           }
@@ -823,89 +859,90 @@ export default function PrivescOverworldLab() {
 
         let hx = W * 0.15;
         if (step === 0) {
-          hx = W * 0.15 + p * (portalX - 68 - W * 0.15);
-          drawScanPulse(ctx!, hx + 16, floorY - 22, portalX - 44, floorY - 54, p, '#facc15');
+          hx = W * 0.15 + p * (portalX - 76 - W * 0.15);
+          drawScanPulse(ctx!, hx + 18, heroY - 4, portalX - 48, floorY - 56, p, '#facc15');
         } else if (step === 1) {
-          hx = portalX - 68 + p * 68;
+          hx = portalX - 76 + p * 76;
         } else {
           hx = portalX + p * (W * 0.86 - portalX);
         }
         const passed = (step === 1 && p > 0.45) || step === 2;
-        drawHacker(ctx!, hx, floorY - 18, 2, passed, bob, 1);
+        drawHacker(ctx!, hx, heroY, sprPx, passed, bob, 1);
         ctx!.fillStyle = passed ? STAGE.good : STAGE.muted;
         ctx!.font = 'bold 11px ui-monospace, monospace';
         ctx!.textAlign = 'center';
-        ctx!.fillText(passed ? (step === 2 ? 'SHELL (-p) UID 0' : 'EUID=0!') : 'UID=1000', hx, floorY - 54);
+        ctx!.fillText(passed ? (step === 2 ? 'SHELL (-p) UID 0' : 'EUID=0!') : 'UID=1000', hx, labelAboveHero);
       } else if (st.selectedIdx === 2) {
         const fileX = W * 0.48;
         const clockX = W * 0.21;
-        const clockY = 118;
-        drawPanel(ctx!, fileX - 54, floorY - 56, 108, 50, 'backup.sh', '-rwxrwxrwx', STAGE.nodeBg, step >= 1 ? STAGE.bad : STAGE.warn);
+        const clockY = Math.max(96, floorY - 138);
+        drawPanel(ctx!, fileX - 58, floorY - 58, 116, 52, 'backup.sh', '-rwxrwxrwx', STAGE.nodeBg, step >= 1 ? STAGE.bad : STAGE.warn);
 
         ctx!.fillStyle = '#1e293b';
         ctx!.strokeStyle = STAGE.text;
         ctx!.lineWidth = 2;
         ctx!.beginPath();
-        ctx!.arc(clockX, clockY, 22, 0, Math.PI * 2);
+        ctx!.arc(clockX, clockY, 24, 0, Math.PI * 2);
         ctx!.fill();
         ctx!.stroke();
         const ang = -Math.PI / 2 + (step === 2 ? Math.min(1, p * 1.3) : (step === 0 ? p * 0.15 : 0.15)) * Math.PI * 2;
         ctx!.strokeStyle = step === 2 ? '#facc15' : STAGE.text;
         ctx!.beginPath();
         ctx!.moveTo(clockX, clockY);
-        ctx!.lineTo(clockX + Math.cos(ang) * 16, clockY + Math.sin(ang) * 16);
+        ctx!.lineTo(clockX + Math.cos(ang) * 18, clockY + Math.sin(ang) * 18);
         ctx!.stroke();
         ctx!.fillStyle = STAGE.muted;
         ctx!.font = '11px ui-monospace, monospace';
         ctx!.textAlign = 'center';
-        ctx!.fillText('* * * * *', clockX, clockY + 36);
+        ctx!.fillText('* * * * *', clockX, clockY + 38);
 
         let hx = W * 0.16;
-        if (step === 0) drawScanPulse(ctx!, hx + 16, floorY - 22, fileX - 54, floorY - 32, p, STAGE.accent);
-        else if (step === 1) hx = W * 0.16 + Math.sin(p * Math.PI) * (fileX - 72 - W * 0.16);
+        if (step === 0) drawScanPulse(ctx!, hx + 18, heroY - 4, fileX - 58, floorY - 32, p, STAGE.accent);
+        else if (step === 1) hx = W * 0.16 + Math.sin(p * Math.PI) * (fileX - 78 - W * 0.16);
         const won = step === 2 && p > 0.6;
-        drawHacker(ctx!, hx, floorY - 18, 2, won, step === 1 ? bob : 0, 1);
+        drawHacker(ctx!, hx, heroY, sprPx, won, step === 1 ? bob : 0, 1);
         ctx!.fillStyle = won ? STAGE.good : STAGE.muted;
         ctx!.font = 'bold 11px ui-monospace, monospace';
         ctx!.textAlign = 'center';
-        ctx!.fillText(won ? 'bash SUID → ROOT' : 'chờ Cron...', hx, floorY - 54);
+        ctx!.fillText(won ? 'bash SUID → ROOT' : 'chờ Cron...', hx, labelAboveHero);
 
         if (step >= 1) {
           ctx!.fillStyle = '#ef4444';
-          ctx!.fillRect(Math.round(fileX - 8), Math.round(floorY - 68), 16, 10);
+          ctx!.fillRect(Math.round(fileX - 9), Math.round(floorY - 72), 18, 11);
           ctx!.fillStyle = '#fca5a5';
           ctx!.font = 'bold 11px ui-monospace, monospace';
-          ctx!.fillText('+ payload', fileX, floorY - 74);
+          ctx!.fillText('+ payload', fileX, floorY - 78);
         }
         if (step === 2) {
-          const bx = W * 0.88 - Math.min(1, p * 1.45) * (W * 0.88 - (fileX + 86));
-          drawSprite(ctx!, bx, floorY - 14, 2, BOT_ROWS, BOT_PAL, false);
+          const bx = W * 0.88 - Math.min(1, p * 1.45) * (W * 0.88 - (fileX + 94));
+          drawSprite(ctx!, bx, floorY - 7 * sprPx, sprPx, BOT_ROWS, BOT_PAL, false);
           ctx!.fillStyle = '#fca5a5';
           ctx!.font = 'bold 11px ui-monospace, monospace';
-          ctx!.fillText('CRON (root)', bx, floorY - 36);
+          ctx!.fillText('CRON (root)', bx, floorY - 15 * sprPx - 8);
           if (p > 0.55) {
             ctx!.strokeStyle = STAGE.good;
             ctx!.lineWidth = 3;
             ctx!.beginPath();
-            ctx!.moveTo(fileX - 54, floorY - 30);
-            ctx!.lineTo(W * 0.16 + 16, floorY - 20);
+            ctx!.moveTo(fileX - 58, floorY - 30);
+            ctx!.lineTo(W * 0.16 + 18, heroY);
             ctx!.stroke();
           }
         }
       } else if (st.selectedIdx === 3) {
         const pyX = W * 0.46;
-        drawPanel(ctx!, pyX - 58, floorY - 134, 116, 46, 'python3.8', 'cap_setuid=ep', STAGE.nodeBg, STAGE.accent);
+        const shrineY = floorY - 148;
+        drawPanel(ctx!, pyX - 62, shrineY, 124, 48, 'python3.8', 'cap_setuid=ep', STAGE.nodeBg, STAGE.accent);
 
         let hx = W * 0.22;
         if (step === 0) {
           hx = W * 0.14 + p * (W * 0.22 - W * 0.14);
-          drawScanPulse(ctx!, hx + 16, floorY - 22, pyX - 58, floorY - 108, p, '#38bdf8');
-          drawSprite(ctx!, pyX, floorY - 76, 2, GEM_ROWS, GEM_PAL);
+          drawScanPulse(ctx!, hx + 18, heroY - 4, pyX - 62, shrineY + 24, p, '#38bdf8');
+          drawSprite(ctx!, pyX, shrineY + 62, 2.5, GEM_ROWS, GEM_PAL);
         } else if (step === 1) {
           const gemT = Math.min(1, p * 1.55);
           const gx = pyX - (pyX - hx) * gemT;
-          const gy = floorY - 76 + (floorY - 24 - (floorY - 76)) * gemT;
-          drawSprite(ctx!, gx, gy, 2, GEM_ROWS, GEM_PAL);
+          const gy = shrineY + 62 + (heroY - 4 - (shrineY + 62)) * gemT;
+          drawSprite(ctx!, gx, gy, 2.5, GEM_ROWS, GEM_PAL);
         } else {
           hx = W * 0.22 + p * (W * 0.64);
         }
@@ -916,47 +953,47 @@ export default function PrivescOverworldLab() {
         } else if (step === 2) {
           uid = 0;
         }
-        drawHacker(ctx!, hx, floorY - 18, 2, uid === 0, step === 0 || step === 2 ? bob : 0, 1);
+        drawHacker(ctx!, hx, heroY, sprPx, uid === 0, step === 0 || step === 2 ? bob : 0, 1);
         ctx!.fillStyle = uid === 0 ? STAGE.good : STAGE.warn;
         ctx!.font = 'bold 12px ui-monospace, monospace';
         ctx!.textAlign = 'center';
-        ctx!.fillText(`UID: ${uid}${uid === 0 ? ' (ROOT)' : ''}`, hx, floorY - 54);
+        ctx!.fillText(`UID: ${uid}${uid === 0 ? ' (ROOT)' : ''}`, hx, labelAboveHero);
       } else {
         const vaultX = W * 0.8;
         const contX = W * 0.48;
-        drawPanel(ctx!, vaultX - 52, floorY - 82, 104, 78, 'Ổ GỐC /', 'Khóa ngoài', '#2f141a', STAGE.bad);
-        drawSprite(ctx!, vaultX - 52, floorY - 40, 2, PADLOCK_ROWS, PADLOCK_PAL);
+        drawPanel(ctx!, vaultX - 54, floorY - 88, 108, 84, 'Ổ GỐC /', 'Khóa ngoài', '#2f141a', STAGE.bad);
+        drawSprite(ctx!, vaultX - 54, floorY - 44, 2, PADLOCK_ROWS, PADLOCK_PAL);
 
         if (step >= 1) {
-          drawPanel(ctx!, contX - 46, floorY - 56, 92, 50, 'Container', 'root trong hộp', STAGE.nodeBg, '#38bdf8');
+          drawPanel(ctx!, contX - 48, floorY - 60, 96, 54, 'Container', 'root trong hộp', STAGE.nodeBg, '#38bdf8');
           ctx!.strokeStyle = STAGE.good;
           ctx!.lineWidth = 6;
           const pipeP = step >= 2 ? 1 : p;
           ctx!.beginPath();
-          ctx!.moveTo(contX + 46, floorY - 22);
-          ctx!.lineTo(contX + 46 + (vaultX - 52 - (contX + 46)) * pipeP, floorY - 22);
+          ctx!.moveTo(contX + 48, floorY - 24);
+          ctx!.lineTo(contX + 48 + (vaultX - 54 - (contX + 48)) * pipeP, floorY - 24);
           ctx!.stroke();
           ctx!.fillStyle = STAGE.good;
           ctx!.font = 'bold 11px ui-monospace, monospace';
           ctx!.textAlign = 'center';
-          ctx!.fillText('-v /:/mnt', (contX + vaultX) / 2, floorY - 34);
+          ctx!.fillText('-v /:/mnt', (contX + vaultX) / 2, floorY - 36);
         }
 
         let hx = W * 0.16;
         if (step === 0) {
           hx = W * 0.1 + p * (W * 0.18 - W * 0.1);
-          drawScanPulse(ctx!, hx + 16, floorY - 22, vaultX - 62, floorY - 40, p, STAGE.accent);
+          drawScanPulse(ctx!, hx + 18, heroY - 4, vaultX - 64, floorY - 44, p, STAGE.accent);
         } else if (step === 1) {
           hx = W * 0.18 + p * (contX - W * 0.18);
         } else {
           hx = contX + p * (vaultX - 24 - contX);
         }
         const won = (step === 1 && p > 0.7) || step === 2;
-        drawHacker(ctx!, hx, floorY - 18, 2, won, step !== 1 || p < 0.8 ? bob : 0, 1);
+        drawHacker(ctx!, hx, heroY, sprPx, won, step !== 1 || p < 0.8 ? bob : 0, 1);
         ctx!.fillStyle = step === 0 ? STAGE.accent : STAGE.good;
         ctx!.font = 'bold 11px ui-monospace, monospace';
         ctx!.textAlign = 'center';
-        ctx!.fillText(step === 0 ? 'group: docker' : (step === 2 ? 'chroot /mnt!' : 'bật container'), hx, floorY - 54);
+        ctx!.fillText(step === 0 ? 'group: docker' : (step === 2 ? 'chroot /mnt!' : 'bật container'), hx, labelAboveHero);
       }
 
       ctx!.restore();
@@ -973,7 +1010,7 @@ export default function PrivescOverworldLab() {
       ctx!.clearRect(0, 0, W, H);
 
       if (W >= 620) {
-        const splitX = Math.round(W * 0.4);
+        const splitX = Math.round(W * 0.38);
         drawMap(0, 0, splitX, H, elapsed, now);
         drawCutscene(splitX, 0, W - splitX, H, elapsed, now);
         ctx!.strokeStyle = STAGE.panelBorder;
@@ -983,7 +1020,7 @@ export default function PrivescOverworldLab() {
         ctx!.lineTo(splitX, H);
         ctx!.stroke();
       } else {
-        const splitY = 230;
+        const splitY = Math.round(H * 0.45);
         drawMap(0, 0, W, splitY, elapsed, now);
         drawCutscene(0, splitY, W, H - splitY, elapsed, now);
         ctx!.strokeStyle = STAGE.panelBorder;
@@ -1014,7 +1051,7 @@ export default function PrivescOverworldLab() {
       cancelAnimationFrame(rafId);
       ro.disconnect();
     };
-  }, []);
+  }, [isFullscreen]);
 
   const currentMethod = METHODS[selectedIdx];
   const open = isOpen(selectedIdx, onlyCap);
@@ -1026,122 +1063,166 @@ export default function PrivescOverworldLab() {
     : currentMethod.steps[activeStep].text;
 
   return (
-    <div className="sim privesc-ow">
-      <p className="sim-title">Bản đồ 5 hướng leo thang đặc quyền trên Linux</p>
-      <SimHow
-        steps={[
-          'Chọn một trong 5 hướng ở hàng nút hoặc bấm thẳng lên bản đồ để xem cơ chế leo thang.',
-          'Bấm các thẻ bước ① ② ③ bên dưới để dừng lặp riêng từng bước và đọc lệnh thực tế.',
-          'Bật "Chỉ #4 hở" để so sánh đường an toàn (bị chặn) với đường có lỗ hổng.',
-        ]}
-      />
-
-      <div className="ow-toolbar">
-        <div className="ow-btn-group">
-          {METHODS.map((m, idx) => (
-            <button
-              key={m.short}
-              type="button"
-              className={`btn ow-node-btn ${selectedIdx === idx ? 'primary' : ''}`}
-              onClick={() => handleSelectMethod(idx)}
-            >
-              {m.short}
-            </button>
-          ))}
-        </div>
-
-        <div className="ow-right-controls">
-          <label className="ow-toggle">
-            <input
-              type="checkbox"
-              checked={onlyCap}
-              onChange={(e) => handleToggleOnlyCap(e.target.checked)}
-            />
-            <span>Chỉ #4 hở</span>
-          </label>
-          <button type="button" className="btn" onClick={handleTogglePause}>
-            {isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng'}
+    <>
+      {/* 1. Thẻ thu gọn nằm trong trang bài học */}
+      <div className="sim dual-launcher ow-launcher">
+        <div className="dual-head">
+          <div>
+            <p className="sim-title" style={{ marginBottom: 4 }}>Bản đồ 5 hướng leo thang đặc quyền trên Linux</p>
+            <p className="muted small" style={{ margin: 0 }}>
+              Từ tài khoản thường <strong>www-data / jdoe</strong>, rà 5 con đường lên <strong>root (UID 0)</strong> và xem cận cảnh cách từng cơ chế hoạt động.
+            </p>
+          </div>
+          <button type="button" className="btn primary dual-reset" onClick={openFullscreen}>
+            ▶ CHƠI LAB TOÀN MÀN HÌNH
           </button>
-          {lockedStep >= 0 && (
-            <button type="button" className="btn" onClick={handleResumeFull}>
-              ↻ Chạy cả 3 bước
-            </button>
-          )}
         </div>
-      </div>
 
-      <div className="ow-stage-box">
-        <canvas
-          ref={canvasRef}
-          className="ow-canvas"
-          onClick={(e) => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            const hit = stateRef.current.hitBoxes.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-            if (hit) handleSelectMethod(hit.idx);
-          }}
-          onMouseMove={(e) => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            const hit = stateRef.current.hitBoxes.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-            stateRef.current.hoverIdx = hit ? hit.idx : -1;
-            canvas.style.cursor = hit ? 'pointer' : 'default';
-          }}
-          onMouseLeave={() => {
-            stateRef.current.hoverIdx = -1;
-          }}
+        <SimHow
+          steps={[
+            'Bấm "▶ CHƠI LAB TOÀN MÀN HÌNH" (hoặc bấm vào ảnh thu nhỏ bên dưới) để mở không gian mô phỏng toàn màn hình.',
+            'Chọn 1 trong 5 hướng và bấm các thẻ ① ② ③ để xem từng bước leo thang kèm lệnh thực tế.',
+          ]}
         />
+
+        {!isFullscreen && (
+          <div
+            className="dual-launcher-preview"
+            onClick={openFullscreen}
+            role="button"
+            tabIndex={0}
+            aria-label="Mở mô phỏng 5 hướng leo thang đặc quyền toàn màn hình"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openFullscreen();
+              }
+            }}
+          >
+            <canvas ref={canvasRef} className="ow-preview-canvas" />
+            <div className="dual-launcher-overlay">
+              <span>▶ BẤM ĐỂ MỞ KHÔNG GIAN MÔ PHỎNG TOÀN MÀN HÌNH</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="ow-steps" role="tablist" aria-label="Các bước leo thang">
-        {[0, 1, 2].map((step) => {
-          const disabled = !open && step === 2;
-          const label =
-            !open && step === 1
-              ? '② Kiểm tra: An toàn'
-              : !open && step === 2
-                ? '③ Không leo được'
-                : currentMethod.steps[step].tab;
-          return (
-            <button
-              key={step}
-              type="button"
-              disabled={disabled}
-              className={`ow-step-btn ${activeStep === step ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}`}
-              onClick={() => handleSelectStep(step)}
-            >
-              <span className="ow-step-label">{label}</span>
-              <span
-                className="ow-step-bar"
-                ref={(el) => {
-                  barRefs.current[step] = el;
-                }}
-              />
-            </button>
-          );
-        })}
-      </div>
+      {/* 2. Không gian toàn màn hình chuẩn 1280×720 */}
+      {isFullscreen && (
+        <div className="ow-fs-stage" role="dialog" aria-modal="true" aria-label="Bản đồ 5 hướng leo thang đặc quyền trên Linux">
+          <div className="ow-fs-bar">
+            <div className="ow-btn-group">
+              {METHODS.map((m, idx) => (
+                <button
+                  key={m.short}
+                  type="button"
+                  className={`gba-btn gba-btn-sm ${selectedIdx === idx ? 'active' : ''}`}
+                  onClick={() => handleSelectMethod(idx)}
+                >
+                  {m.short}
+                </button>
+              ))}
+            </div>
 
-      <div className="ow-narration">
-        <div className="ow-cmd-row">
-          <span className={`ow-mode-tag ${isPaused ? 'is-paused' : lockedStep >= 0 ? 'is-locked' : 'is-playing'}`}>
-            {isPaused
-              ? '⏸ ĐÃ TẠM DỪNG'
-              : lockedStep >= 0
-                ? `↻ LẶP RIÊNG BƯỚC ${lockedStep + 1}`
-                : '● ĐANG CHẠY TỰ ĐỘNG'}
-          </span>
-          <span className="muted">· Lệnh:</span>
-          <code className="ow-cmd">{currentCmd}</code>
+            <div className="ow-fs-actions">
+              <label className="ow-fs-toggle">
+                <input
+                  type="checkbox"
+                  checked={onlyCap}
+                  onChange={(e) => handleToggleOnlyCap(e.target.checked)}
+                />
+                <span>Chỉ #4 hở</span>
+              </label>
+              <button type="button" className="gba-btn gba-btn-sm" onClick={handleTogglePause}>
+                {isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng'}
+              </button>
+              {lockedStep >= 0 && (
+                <button type="button" className="gba-btn gba-btn-sm" onClick={handleResumeFull}>
+                  ↻ Chạy cả 3 bước
+                </button>
+              )}
+              <button type="button" className="gba-btn gba-btn-sm gba-btn-exit" onClick={() => setIsFullscreen(false)}>
+                ✕ THOÁT
+              </button>
+            </div>
+          </div>
+
+          <div className="ow-fs-stage-box">
+            <canvas
+              ref={canvasRef}
+              className="ow-fs-canvas"
+              onClick={(e) => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const hit = stateRef.current.hitBoxes.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+                if (hit) handleSelectMethod(hit.idx);
+              }}
+              onMouseMove={(e) => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const hit = stateRef.current.hitBoxes.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+                stateRef.current.hoverIdx = hit ? hit.idx : -1;
+                canvas.style.cursor = hit ? 'pointer' : 'default';
+              }}
+              onMouseLeave={() => {
+                stateRef.current.hoverIdx = -1;
+              }}
+            />
+          </div>
+
+          <div className="ow-fs-bottom">
+            <div className="ow-steps" role="tablist" aria-label="Các bước leo thang">
+              {[0, 1, 2].map((step) => {
+                const disabled = !open && step === 2;
+                const label =
+                  !open && step === 1
+                    ? '② Kiểm tra: An toàn'
+                    : !open && step === 2
+                      ? '③ Không leo được'
+                      : currentMethod.steps[step].tab;
+                return (
+                  <button
+                    key={step}
+                    type="button"
+                    disabled={disabled}
+                    className={`ow-step-btn ow-fs-step-btn ${activeStep === step ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}`}
+                    onClick={() => handleSelectStep(step)}
+                  >
+                    <span className="ow-step-label">{label}</span>
+                    <span
+                      className="ow-step-bar"
+                      ref={(el) => {
+                        barRefs.current[step] = el;
+                      }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="ow-fs-narration">
+              <div className="ow-cmd-row">
+                <span className={`ow-mode-tag ${isPaused ? 'is-paused' : lockedStep >= 0 ? 'is-locked' : 'is-playing'}`}>
+                  {isPaused
+                    ? '⏸ ĐÃ TẠM DỪNG'
+                    : lockedStep >= 0
+                      ? `↻ LẶP RIÊNG BƯỚC ${lockedStep + 1}`
+                      : '● ĐANG CHẠY TỰ ĐỘNG'}
+                </span>
+                <span className="ow-fs-dim">· Lệnh:</span>
+                <code className="ow-fs-cmd">{currentCmd}</code>
+              </div>
+              <p className="ow-fs-caption">{currentCaption}</p>
+            </div>
+          </div>
         </div>
-        <p className="ow-caption">{currentCaption}</p>
-      </div>
-    </div>
+      )}
+    </>
   );
 }
