@@ -796,3 +796,36 @@
 @media (max-height: 560px) {
   .gba-bottom-area { overflow-y: auto; }
 }
+
+/* PrivescOverworldLab: Bản đồ luồng + cận cảnh cơ chế leo thang */
+.ow-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.ow-btn-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.ow-node-btn { padding: 5px 11px; font-size: 0.85rem; }
+.ow-right-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--muted); }
+.ow-right-controls .btn { padding: 5px 10px; font-size: 0.83rem; }
+.ow-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.ow-toggle input { accent-color: var(--accent); }
+
+.ow-stage-box { border: 2px solid var(--line); border-radius: 8px; overflow: hidden; background: #0c131d; }
+.ow-canvas { display: block; width: 100%; height: 370px; image-rendering: pixelated; touch-action: manipulation; }
+
+.ow-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.ow-step-btn { position: relative; overflow: hidden; text-align: left; font: inherit; font-size: 0.84rem; font-weight: 600; padding: 8px 11px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; transition: border-color 0.15s, background 0.15s; }
+.ow-step-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.ow-step-btn.is-active { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.ow-step-btn.is-disabled { opacity: 0.45; cursor: not-allowed; }
+.ow-step-bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 0%; background: var(--accent); }
+
+.ow-narration { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; min-height: 70px; }
+.ow-cmd-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.85rem; }
+.ow-mode-tag { font-weight: 700; font-size: 0.8rem; }
+.ow-mode-tag.is-playing { color: var(--good); }
+.ow-mode-tag.is-locked { color: var(--accent); }
+.ow-mode-tag.is-paused { color: var(--warn); }
+.ow-cmd { font-family: var(--mono); font-size: 0.84rem; padding: 2px 7px; border-radius: 5px; background: var(--code-bg); color: var(--code-text); border: 1px solid var(--line); }
+.ow-caption { margin: 0; font-size: 0.92rem; line-height: 1.5; color: var(--text); }
+
+@media (max-width: 640px) {
+  .ow-canvas { height: 490px; }
+  .ow-steps { grid-template-columns: 1fr; }
+}

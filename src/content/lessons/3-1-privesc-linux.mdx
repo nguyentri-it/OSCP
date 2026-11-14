@@ -4,7 +4,7 @@ code: "3.1"
 level: 3
 summary: "Bạn mới chỉ có quyền của một tài khoản thường trên máy Linux. Bài này đi qua bốn con đường hay gặp nhất lên tới root: sudo cấu hình rộng, file SUID, cron job sửa được, và capability cấp dư, tất cả tra được qua một danh mục công khai gọi là GTFOBins."
 duration: "90 phút"
-updated: "2026-11-10"
+updated: "2026-11-15"
 prereq: ["1.4", "2.7"]
 objectives:
   - "Liệt kê có hệ thống một máy Linux để tìm đường leo thang, thay vì đoán mò"
@@ -19,7 +19,7 @@ import LabBrief from '../../components/ui/LabBrief.astro';
 import EnumExplorer from '../../components/sim/EnumExplorer.tsx';
 import DecisionTree from '../../components/sim/DecisionTree.tsx';
 import PrivescTriage from '../../components/sim/PrivescTriage.tsx';
-import ConceptMap from '../../components/sim/ConceptMap.tsx';
+import PrivescOverworldLab from '../../components/sim/PrivescOverworldLab.tsx';
 import Quiz from '../../components/sim/Quiz.tsx';
 
 ## Hình dung trước
@@ -36,33 +36,7 @@ Leo thang là bước nối giữa "vào được" và "kiểm soát được", 
 
 Để đọc dữ liệu nhạy cảm hay lan sang máy khác trong mạng, bạn cần quyền root, quyền cao nhất trên Linux. Nhưng root không tự nhiên mà có: nó nằm ở cuối một trong vài con đường quen thuộc, và việc của bạn là nhận ra con đường nào đang mở.
 
-<ConceptMap
-  client:visible
-  title="Bản đồ 5 hướng leo thang đặc quyền trên Linux"
-  width={720}
-  height={370}
-  nodes={[
-    { id: 'start', label: 'Tài khoản thường', sub: 'www-data / jdoe', x: 360, y: 40, tone: 'accent', detail: 'Điểm khởi đầu sau khi khai thác được một dịch vụ web hoặc dịch vụ từ xa. Từ đây liệt kê lần lượt cả năm hướng bên dưới (tay hoặc bằng linPEAS) rồi mới chọn đường.' },
-    { id: 'sudo', label: '1. Sudo lỏng lẻo', sub: 'sudo -l', x: 76, y: 185, w: 120, tone: 'warn', detail: 'Tài khoản được phép chạy một chương trình cụ thể với quyền root, nhiều khi không cần mật khẩu (NOPASSWD). Tra GTFOBins để tìm cách thoát ra shell từ chương trình đó.' },
-    { id: 'suid', label: '2. Binary SUID', sub: 'find -perm -4000', x: 218, y: 185, w: 120, tone: 'warn', detail: 'Chương trình luôn chạy bằng quyền chủ sở hữu (root). Nếu đó là công cụ có đường thoát shell như find, vim, env hay nmap bản cũ thì chiếm được root ngay.' },
-    { id: 'cron', label: '3. Cron & PATH', sub: '/etc/crontab, pspy', x: 360, y: 185, w: 120, tone: 'warn', detail: 'Script chạy định kỳ bằng quyền root nhưng tài khoản thường ghi được vào nó, hoặc script gọi lệnh không kèm đường dẫn tuyệt đối nên bị chiếm qua biến PATH.' },
-    { id: 'cap', label: '4. Capabilities', sub: 'getcap -r /', x: 506, y: 185, w: 120, tone: 'warn', detail: 'Quyền hạt nhân chia nhỏ, dùng thay cho SUID. Cờ cap_setuid=ep gắn trên python hay perl cho phép chương trình tự đổi UID thành 0.' },
-    { id: 'kernel', label: '5. Nhóm & kernel', sub: 'id, uname -a', x: 644, y: 185, w: 120, tone: 'warn', detail: 'Tài khoản nằm trong nhóm docker hoặc lxd tương đương root (mount ổ gốc vào container). Nhân Linux cũ có lỗ hổng leo quyền công khai (Dirty Pipe, Dirty COW), nhưng thử sau cùng vì dễ làm treo máy.' },
-    { id: 'root', label: 'Chiếm root (UID 0)', sub: 'Toàn quyền máy', x: 360, y: 330, tone: 'bad', detail: 'Đích đến: toàn quyền trên máy Linux, đọc được /root/proof.txt và mọi bí mật trên máy, làm bàn đạp sang máy khác.' },
-  ]}
-  edges={[
-    { from: 'start', to: 'sudo' },
-    { from: 'start', to: 'suid' },
-    { from: 'start', to: 'cron' },
-    { from: 'start', to: 'cap' },
-    { from: 'start', to: 'kernel' },
-    { from: 'sudo', to: 'root' },
-    { from: 'suid', to: 'root' },
-    { from: 'cron', to: 'root' },
-    { from: 'cap', to: 'root' },
-    { from: 'kernel', to: 'root' },
-  ]}
-/>
+<PrivescOverworldLab client:visible />
 
 ### Luôn liệt kê trước khi thử
 
