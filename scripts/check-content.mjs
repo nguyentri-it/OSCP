@@ -59,7 +59,7 @@ for (const file of files) {
   }
 
   // Thành phần React tương tác nên có chỉ thị client:* để hoạt động trên trang tĩnh.
-  for (const comp of ['Quiz', 'SequenceDiagram', 'ConceptMap', 'Checklist', 'DecisionTree', 'CodeStepper', 'OsiLayers', 'SubnetCalculator', 'FakeTerminal', 'PermissionViz', 'HashDemo', 'QueryDemo', 'PhishingSpotter', 'CvssCalc', 'Walkthrough', 'FraudScoring', 'PromptInjectionLab', 'PatchTriage', 'ContainmentRace', 'DetectionMap', 'EmailAuthLab', 'ScenarioLab', 'ReconPathLab', 'PrivescTriage', 'PivotLab', 'ReportEvidenceLab', 'AdPathLab', 'DualMachineLab', 'PrivescOverworldLab']) {
+  for (const comp of ['Quiz', 'SequenceDiagram', 'ConceptMap', 'Checklist', 'DecisionTree', 'CodeStepper', 'OsiLayers', 'SubnetCalculator', 'FakeTerminal', 'PermissionViz', 'HashDemo', 'QueryDemo', 'PhishingSpotter', 'CvssCalc', 'Walkthrough', 'FraudScoring', 'PromptInjectionLab', 'PatchTriage', 'ContainmentRace', 'DetectionMap', 'EmailAuthLab', 'ScenarioLab', 'ReconPathLab', 'PrivescTriage', 'PivotLab', 'ReportEvidenceLab', 'AdPathLab', 'DualMachineLab', 'PrivescOverworldLab', 'LinuxDungeonLab']) {
     const re = new RegExp(`<${comp}(\\s[^>]*)?>`, 's');
     const mm = body.match(re);
     if (mm && !/client:/.test(mm[0])) {

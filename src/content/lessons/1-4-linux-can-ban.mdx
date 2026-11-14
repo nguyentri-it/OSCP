@@ -19,6 +19,7 @@ import ConceptMap from '../../components/sim/ConceptMap.tsx';
 import LabBrief from '../../components/ui/LabBrief.astro';
 import Quiz from '../../components/sim/Quiz.tsx';
 import Lenh from '../../components/ui/Lenh.astro';
+import LinuxDungeonLab from '../../components/sim/LinuxDungeonLab.tsx';
 
 ## Hình dung trước
 
@@ -237,6 +238,12 @@ Nhiều lỗ hổng leo thang nghe cao siêu, nhưng thực ra là một mật k
     { q: 'Vì sao `~/.bash_history` đáng đọc?', options: ['Vì nó chứa ảnh', 'Vì người dùng có thể đã gõ mật khẩu thẳng vào dòng lệnh', 'Vì nó là file hệ thống'], answer: 1, explain: 'Lệnh như `mysql -pMatKhau` lưu cả mật khẩu vào lịch sử.' },
   ]}
 />
+
+## Trò chơi mô phỏng: Điệp vụ Hầm ngục Linux
+
+Trước khi gõ lệnh trên máy ảo thật, bạn có thể chơi qua bản đồ 6 căn phòng game pixel để tự tay thấy rõ từng cơ chế: từ `id`, `chmod 600`, sự khác biệt giữa `744` và `711` trên thư mục, săn SUID `/usr/bin/nmap`, `grep` mật khẩu web cho tới dấu chân trong `/var/log/auth.log`.
+
+<LinuxDungeonLab client:visible />
 
 ## Bài tập tự làm
 
