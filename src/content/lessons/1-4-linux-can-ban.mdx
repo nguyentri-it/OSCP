@@ -44,6 +44,10 @@ Linux xếp mọi thứ dưới gốc `/`. Có vài chỗ mà người làm ngh�
 | `/opt`, `/srv` | Phần mềm cài thêm | Script, cấu hình tuỳ biến dễ sai |
 | `~/.bash_history` | Lịch sử lệnh | Người dùng gõ nhầm mật khẩu vào đây |
 
+Trước khi xem sơ đồ tổng hợp các điểm nóng thư mục Linux, bạn có thể chơi nhanh **Điệp vụ Hầm ngục Linux** (6 phòng game pixel) để tự tay đi qua từng vị trí quan trọng: `/etc/passwd`, khóa quyền `600`, `/tmp`, binary SUID `/usr/bin/nmap`, `grep` mật khẩu trong `/var/www` và dấu chân `/var/log/auth.log`:
+
+<LinuxDungeonLab client:visible />
+
 <ConceptMap
   client:visible
   title="Bản đồ cây thư mục Linux: Các điểm nóng bảo mật"
@@ -238,12 +242,6 @@ Nhiều lỗ hổng leo thang nghe cao siêu, nhưng thực ra là một mật k
     { q: 'Vì sao `~/.bash_history` đáng đọc?', options: ['Vì nó chứa ảnh', 'Vì người dùng có thể đã gõ mật khẩu thẳng vào dòng lệnh', 'Vì nó là file hệ thống'], answer: 1, explain: 'Lệnh như `mysql -pMatKhau` lưu cả mật khẩu vào lịch sử.' },
   ]}
 />
-
-## Trò chơi mô phỏng: Điệp vụ Hầm ngục Linux
-
-Trước khi gõ lệnh trên máy ảo thật, bạn có thể chơi qua bản đồ 6 căn phòng game pixel để tự tay thấy rõ từng cơ chế: từ `id`, `chmod 600`, sự khác biệt giữa `744` và `711` trên thư mục, săn SUID `/usr/bin/nmap`, `grep` mật khẩu web cho tới dấu chân trong `/var/log/auth.log`.
-
-<LinuxDungeonLab client:visible />
 
 ## Bài tập tự làm
 
