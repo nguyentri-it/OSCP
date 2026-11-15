@@ -6,6 +6,7 @@ export interface PermGroup {
 
 export interface DungeonState {
   room: number; // 0..5
+  lastAction: string;
   r1: {
     sshEntered: boolean;
     idScanned: boolean;
@@ -100,6 +101,7 @@ export const META_SUID_BINS = ['passwd', 'sudo', 'su', 'mount', 'nmap'] as const
 export function createInitialDungeonState(): DungeonState {
   return {
     room: 0,
+    lastAction: '',
     r1: { sshEntered: true, idScanned: false, passwdFiltered: false },
     r2: {
       owner: { r: true, w: false, x: false },
@@ -208,27 +210,47 @@ export function countClearedRooms(st: DungeonState): number {
   return count;
 }
 
-export function getRoomTerminal(st: DungeonState): { cmd: string; output: string; caption: string } {
+export interface RoomStepFeedback {
+  cmd: string;
+  output: string;
+  whatDid: string;
+  whyMatters: string;
+  nextHint: string;
+}
+
+export function getRoomTerminal(st: DungeonState): RoomStepFeedback {
   const r = st.room;
+  const act = st.lastAction;
+
   if (r === 0) {
+    if (act === 'r1:id' || (!act && st.r1.idScanned && !st.r1.passwdFiltered)) {
+      return {
+        cmd: 'whoami && id',
+        output: 'msfadmin\nuid=1000(msfadmin) gid=1000(msfadmin) groups=1000(msfadmin),...,104(admin),111(admin)',
+        whatDid: 'whoami hỏi tên tài khoản đang dùng (msfadmin); id liệt kê toàn bộ các nhóm quyền mà tài khoản này đang nằm trong đó.',
+        whyMatters: 'Phát hiện nhóm admin (104, 111)! Trên Linux Ubuntu/Debian, người thuộc nhóm admin thường được phép chạy sudo lên quyền root.',
+        nextHint: st.r1.passwdFiltered
+          ? '✓ Đã xong cả 2 bước Phòng 1! Bấm "Sang phòng tiếp →" để học cách khóa quyền file.'
+          : '👉 Bấm tiếp ② Lọc /etc/passwd (sh$) để xem trên máy còn những tài khoản nào đăng nhập được.',
+      };
+    }
     if (st.r1.passwdFiltered) {
       return {
         cmd: "wc -l /etc/passwd && grep -E 'sh$' /etc/passwd | cut -d: -f1",
         output: '41 /etc/passwd\nroot\nmsfadmin\nservice\nuser\npostgres',
-        caption: 'Trong 41 tài khoản, 36 tài khoản hệ thống dùng nologin/false. Chỉ đúng 5 cánh cửa gỗ có shell thật cho phép đăng nhập.',
-      };
-    }
-    if (st.r1.idScanned) {
-      return {
-        cmd: 'whoami && id',
-        output: 'msfadmin\nuid=1000(msfadmin) gid=1000(msfadmin) groups=1000(msfadmin),...,104(admin),111(admin)',
-        caption: 'Thẻ ID phát hiện nhóm admin (104, 111) — trên Ubuntu/Debian cũ, nhóm admin được cấp quyền sudo rất mạnh!',
+        whatDid: 'Đếm tổng 41 tài khoản trong danh bạ /etc/passwd, rồi lọc những dòng kết thúc bằng "sh" (tài khoản có shell để đăng nhập thật).',
+        whyMatters: '36 dòng còn lại là tài khoản chạy ngầm (nologin/false). Lọc nhanh giúp bạn không mất thời gian thử mật khẩu nhầm chỗ, tập trung đúng 5 người dùng thật.',
+        nextHint: st.r1.idScanned
+          ? '✓ Đã xong Phòng 1! Bấm "✓ Sang phòng tiếp →" để sang Phòng 2.'
+          : '👉 Bấm thêm ① Quét whoami & id để mở khóa đủ Phòng 1.',
       };
     }
     return {
       cmd: 'ssh msfadmin@10.10.14.20',
-      output: 'msfadmin@metasploitable:~$ _\n(Đã vượt cầu SSH :22 vào sảnh. Bấm ① để quét thẻ ID và ② để lọc /etc/passwd)',
-      caption: 'Khi vừa chiếm được shell đầu tiên, bạn luôn tự hỏi: mình là ai, thuộc nhóm nào, và máy có những tài khoản thật nào.',
+      output: 'msfadmin@metasploitable:~$ _',
+      whatDid: 'Bạn vừa kết nối SSH vào máy mục tiêu bằng tài khoản thường msfadmin (chưa phải quyền cao nhất root).',
+      whyMatters: 'Khi mới đặt chân vào một máy lạ, việc đầu tiên luôn là: biết rõ mình đang nắm quyền gì và máy này còn những tài khoản thật nào khác.',
+      nextHint: '👉 Bấm ① Quét whoami & id ở thanh nút ngay phía trên để kiểm tra danh tính của bạn.',
     };
   }
 
@@ -238,24 +260,48 @@ export function getRoomTerminal(st: DungeonState): { cmd: string; output: string
       return {
         cmd: 'ls -l /usr/bin/nmap   # minh họa bit SUID (4000)',
         output: `${p.sym} 1 root root ... (mã số: ${p.octal})`,
-        caption: 'Chữ "s" ở vị trí x của Chủ là bit SUID (+4000): bất kỳ ai chạy file này đều tạm mượn quyền chủ sở hữu (thường là root).',
+        whatDid: 'Bật thử bit đặc biệt SUID (+4000): chữ "x" ở cột Chủ biến thành "s" (-rwsr-xr-x), mã số thành 4755.',
+        whyMatters: 'Chữ "s" nghĩa là ai chạy file này cũng được tạm mượn quyền của Chủ file (thường là root) trong lúc nó chạy — đây chính là lỗi leo quyền sẽ săn ở Phòng 4!',
+        nextHint: '👉 Bấm "Khôi phục từ SUID" hoặc "Đặt nhanh 600" để khóa lại rương ~/thu.txt về 600.',
       };
     }
     if (p.is600) {
       return {
         cmd: 'chmod 600 ~/thu.txt && ls -l ~/thu.txt',
         output: '-rw------- 1 msfadmin msfadmin 7 Nov  9 10:12 /home/msfadmin/thu.txt',
-        caption: 'Chuẩn 600! Chủ sở hữu đọc/ghi (4+2=6), Nhóm (0) và Người khác (0) bị khóa kín hoàn toàn.',
+        whatDid: 'Đặt quyền 600 (-rw-------): Chủ được đọc (4) + sửa (2) = 6; Nhóm = 0 và Người khác = 0 (khóa sạch).',
+        whyMatters: 'Đây là quyền bắt buộc cho khóa SSH riêng tư (~/.ssh/id_rsa) và file bí mật: chỉ một mình chủ nhân chạm vào được, người lạ trên cùng máy không thể đọc trộm.',
+        nextHint: '✓ Xong Phòng 2! Bấm "✓ Sang phòng tiếp →" để hiểu bẫy quyền trên thư mục.',
+      };
+    }
+    if (act === 'r2:preset640') {
+      return {
+        cmd: 'chmod 640 ~/thu.txt && ls -l ~/thu.txt',
+        output: '-rw-r----- 1 msfadmin msfadmin 7 Nov  9 10:12 /home/msfadmin/thu.txt',
+        whatDid: 'Đặt quyền 640 (-rw-r-----): Chủ đọc+sửa (6), Nhóm được đọc (4), Người khác bị chặn (0).',
+        whyMatters: 'Chặt hơn 755 nhưng Nhóm vẫn còn quyền đọc (r=4). Nếu một tài khoản khác vô tình nằm cùng nhóm, họ vẫn đọc trộm được file này.',
+        nextHint: '👉 Hãy gạt công tắc r của Nhóm về 0 hoặc bấm "Đặt nhanh 600".',
+      };
+    }
+    if (act === 'r2:preset755') {
+      return {
+        cmd: 'chmod 755 ~/thu.txt && ls -l ~/thu.txt',
+        output: '-rwxr-xr-x 1 msfadmin msfadmin 7 Nov  9 10:12 /home/msfadmin/thu.txt',
+        whatDid: 'Đặt quyền 755 (-rwxr-xr-x): Chủ toàn quyền (7), Nhóm & Người khác đều được đọc và chạy (4+1=5).',
+        whyMatters: '755 dùng cho chương trình/thư mục công cộng. Đặt 755 cho file chứa mật khẩu hoặc khóa SSH là lỗi nặng vì bất kỳ ai đăng nhập máy cũng đọc được.',
+        nextHint: '👉 Bấm "Đặt nhanh 600" (hoặc tự tắt các công tắc thừa trên cột đá) để khóa về 600.',
       };
     }
     const warnParts: string[] = [];
-    if (!st.r2.owner.r || !st.r2.owner.w || st.r2.owner.x) warnParts.push('Chủ phải là rw- (6)');
-    if (groupToOctal(st.r2.group) !== 0) warnParts.push('Nhóm vẫn còn quyền (cần 0)');
-    if (groupToOctal(st.r2.other) !== 0) warnParts.push('Người khác vẫn chạm được (cần 0)');
+    if (!st.r2.owner.r || !st.r2.owner.w || st.r2.owner.x) warnParts.push('Chủ cần rw- (6)');
+    if (groupToOctal(st.r2.group) !== 0) warnParts.push('Nhóm phải về 0');
+    if (groupToOctal(st.r2.other) !== 0) warnParts.push('Người khác phải về 0');
     return {
       cmd: `chmod ${p.octal} ~/thu.txt && ls -l ~/thu.txt`,
       output: `${p.sym} 1 msfadmin msfadmin 7 Nov  9 10:12 /home/msfadmin/thu.txt`,
-      caption: `Đang là ${p.octal} (${p.sym}). Cần chỉnh về 600: ${warnParts.join(' · ')}.`,
+      whatDid: `File ~/thu.txt đang có quyền ${p.octal} (${p.sym}). Mỗi nhóm là tổng của r(4) đọc + w(2) sửa + x(1) chạy.`,
+      whyMatters: 'Khi quyền Nhóm hoặc Người khác còn mở, tài khoản lạ trên cùng máy Linux có thể đọc lén hoặc sửa file bí mật của bạn.',
+      nextHint: `👉 Chỉnh công tắc cho ${warnParts.join(', ')} (hoặc bấm "Đặt nhanh 600").`,
     };
   }
 
@@ -263,17 +309,26 @@ export function getRoomTerminal(st: DungeonState): { cmd: string; output: string
     if (st.r3.lastAction === 'none') {
       return {
         cmd: `chmod ${st.r3.mode} /tmp/thumuc`,
-        output: `(Thư mục /tmp/thumuc đang đặt quyền ${st.r3.mode}. Hãy chạy thử cả ls và cat dưới vai trò nobody)`,
-        caption: st.r3.mode === '744'
-          ? 'Chế độ 744: Người khác có r (cửa kính nhìn vào được) nhưng thiếu x (chốt cửa sắt đang khóa).'
-          : 'Chế độ 711: Người khác mất r (phòng tối đen) nhưng có x (chốt cửa mở để đi xuyên qua).',
+        output: `(Thư mục /tmp/thumuc đang ở chế độ ${st.r3.mode})`,
+        whatDid: st.r3.mode === '744'
+          ? 'Đặt quyền thư mục 744 (Người khác chỉ có r=4): giống căn phòng lắp cửa kính nhìn được vào trong, nhưng cửa sắt đã khóa chốt (x=0).'
+          : 'Đặt quyền thư mục 711 (Người khác chỉ có x=1): giống phòng tối đen không nhìn thấy danh sách (r=0), nhưng chốt cửa mở để đi thẳng vào (x=1).',
+        whyMatters: 'Người mới rất hay nhầm: trên THƯ MỤC, r là "xem tên các file", còn x mới là "được phép bước chân vào mở file bên trong".',
+        nextHint: '👉 Hãy bấm thử cả hai nút "▶ nobody: ls" và "▶ nobody: cat" ở chế độ này, rồi đổi sang chế độ còn lại thử tiếp!',
       };
     }
     const res = evaluateRoom3Action(st.r3.mode, st.r3.lastAction);
+    const doneAll = isRoomCleared(st, 2);
     return {
       cmd: `sudo -u nobody ${st.r3.lastAction === 'ls' ? 'ls /tmp/thumuc' : 'cat /tmp/thumuc/a.txt'}`,
       output: res.output,
-      caption: res.reason,
+      whatDid: res.reason,
+      whyMatters: st.r3.mode === '744'
+        ? 'Bài học từ 744: chỉ có r mà thiếu x thì người dùng nhìn thấy tên file qua ls nhưng KHÔNG bao giờ đọc được ruột file bên trong.'
+        : 'Bài học từ 711: bỏ r nhưng giữ x chỉ che giấu tên file (bảo mật kiểu giấu tên). Nếu kẻ tấn công đoán đúng tên file (như config.php, a.txt), họ vẫn đọc được trọn vẹn!',
+      nextHint: doneAll
+        ? '✓ Đã kiểm chứng đủ cả 4 phép thử Phòng 3! Bấm "✓ Sang phòng tiếp →".'
+        : '👉 Quan sát nhãn trạng thái bên phải thanh công cụ và bấm nốt các phép thử còn lại.',
     };
   }
 
@@ -281,28 +336,36 @@ export function getRoomTerminal(st: DungeonState): { cmd: string; output: string
     if (!st.r4.scanned) {
       return {
         cmd: 'find / -perm -4000 -type f 2>/dev/null',
-        output: '(Chưa quét. Bấm ① Quét để rà đồng thời kệ Kali chuẩn và kệ Metasploitable 2)',
-        caption: 'So sánh danh sách SUID của máy mục tiêu với máy sạch (Kali) là cách nhanh nhất để phát hiện cửa leo thang.',
+        output: '(Chưa quét kệ vũ khí SUID)',
+        whatDid: 'Lệnh find tìm từ gốc / tất cả file thường (-type f) có gắn bit SUID (-perm -4000) và vứt bỏ dòng báo lỗi vào thùng rác 2>/dev/null.',
+        whyMatters: 'File mang bit SUID luôn chạy với quyền của chủ file (thường là root). Đây là cách phổ biến nhất để từ tài khoản thường leo thẳng lên root.',
+        nextHint: '👉 Bấm ① Quét find -perm -4000 để rà và so sánh máy chuẩn Kali với mục tiêu Metasploitable 2.',
       };
     }
     if (!st.r4.useDevNull) {
       return {
         cmd: 'find / -perm -4000 -type f   # thiếu 2>/dev/null',
         output: "find: '/proc/1/fd': Permission denied\nfind: '/etc/ssl/private': Permission denied\n... (hàng trăm dòng lỗi che khuất /usr/bin/nmap!)",
-        caption: 'Lỗi người mới hay gặp: quên 2>/dev/null khiến màn hình ngập rác Permission denied và bỏ sót /usr/bin/nmap!',
+        whatDid: 'Bạn vừa thử chạy lệnh find mà bỏ mất phần đuôi 2>/dev/null.',
+        whyMatters: 'Tài khoản thường không có quyền chui vào các thư mục hệ thống nên find in ra hàng trăm dòng "Permission denied", làm trôi mất /usr/bin/nmap mà bạn cần tìm!',
+        nextHint: '👉 Bấm "Bật lại 2>/dev/null" để lọc sạch lỗi, rồi bấm ② Soi /usr/bin/nmap.',
       };
     }
     if (st.r4.inspectedNmap) {
       return {
         cmd: 'ls -l /usr/bin/nmap',
         output: '-rwsr-xr-x 1 root root 780676 /usr/bin/nmap   # bit 4755!',
-        caption: 'Bắt được thủ phạm! Bản nmap cũ có cờ --interactive cho phép gõ "!sh" để bật thẳng shell quyền root (bài 3.1).',
+        whatDid: 'Soi quyền chi tiết của /usr/bin/nmap bằng ls -l → thấy chủ là root và chữ "s" ở nhóm Chủ (-rwsr-xr-x).',
+        whyMatters: 'Bắt trúng đường leo quyền! Trên Metasploitable 2, bản nmap cũ cho phép chạy chế độ tương tác (--interactive) rồi gõ "!sh" để bật ra shell quyền root (sẽ thực hành ở bài 3.1).',
+        nextHint: '✓ Xong Phòng 4! Bấm "✓ Sang phòng tiếp →" để săn mật khẩu trong mã nguồn web.',
       };
     }
     return {
       cmd: 'find / -perm -4000 -type f 2>/dev/null',
       output: '/usr/bin/passwd\n/usr/bin/sudo\n/usr/bin/su\n/usr/bin/mount\n/bin/ping\n/usr/bin/nmap   <-- BẤT THƯỜNG!',
-      caption: 'Kệ Kali chỉ có 5 binary hệ thống quen thuộc; Metasploitable 2 lộ ra /usr/bin/nmap phát sáng đỏ! Hãy bấm soi chi tiết.',
+      whatDid: 'Quét xong toàn bộ file SUID và đặt cạnh danh sách chuẩn trên Kali.',
+      whyMatters: '5 file đầu là công cụ hệ thống bình thường bắt buộc phải có SUID. Riêng /usr/bin/nmap là công cụ mạng lại bị bật SUID trên mục tiêu — cực kỳ đáng ngờ!',
+      nextHint: '👉 Bấm ② Soi /usr/bin/nmap (hoặc bấm trực tiếp vào thanh kiếm đỏ trên hình) để kiểm tra quyền của nó.',
     };
   }
 
@@ -310,45 +373,69 @@ export function getRoomTerminal(st: DungeonState): { cmd: string; output: string
     if (!st.r5.grepped) {
       return {
         cmd: 'grep -rIil "pass" /var/www 2>/dev/null',
-        output: '(Chưa quét thư viện /var/www. Bấm ① Quét grep để tìm file cấu hình rò rỉ mật khẩu)',
-        caption: '-r (đệ quy), -I (bỏ file nhị phân), -i (không phân biệt hoa thường), -l (chỉ in tên file khớp).',
+        output: '(Chưa quét thư viện /var/www)',
+        whatDid: 'Lệnh grep lục tìm chữ "pass" trong cả thư mục web /var/www (-r: đệ quy, -I: bỏ file ảnh/nhị phân, -i: bỏ phân biệt hoa thường, -l: chỉ liệt kê tên file).',
+        whyMatters: 'Lập trình viên thường viết thẳng mật khẩu kết nối cơ sở dữ liệu vào file cấu hình web rồi quên luôn. Quét grep giúp tìm ra chỉ trong 1 giây thay vì mở từng file.',
+        nextHint: '👉 Bấm ① Quét grep -rIil "pass" để tìm các file cấu hình bị rò rỉ.',
       };
     }
     if (!st.r5.useBinarySkip) {
       return {
         cmd: 'grep -ril "pass" /var/www 2>/dev/null   # thiếu cờ -I',
         output: 'Binary file /var/www/assets/logo.png matches\n... (lẫn file ảnh nhị phân vào kết quả!)',
-        caption: 'Khi thiếu -I, grep đọc nhầm cả byte nhị phân trong ảnh/binary. Luôn thêm -I khi săn chuỗi trong thư mục lớn.',
+        whatDid: 'Bạn vừa thử quét mà bỏ mất cờ -I (bỏ qua file nhị phân).',
+        whyMatters: 'Nếu thiếu -I, grep lục cả vào ruột ảnh PNG hay file chương trình, in ra đống chữ rác "Binary file matches" khiến bạn dễ bỏ sót file cấu hình thật.',
+        nextHint: '👉 Bấm "Bật lại cờ -I", rồi bấm ② Mở dvwa/config.inc.php.',
       };
     }
     if (st.r5.openedDvwa) {
       return {
         cmd: 'cat /var/www/dvwa/config/config.inc.php',
         output: "$_DVWA['db_user']     = 'root';\n$_DVWA['db_password'] = 'p@ssw0rd';",
-        caption: 'Lộ mật khẩu DB ở dạng chữ rõ! Pentester luôn lấy "p@ssw0rd" này thử lại cho SSH/su các tài khoản khác (tái sử dụng mật khẩu).',
+        whatDid: 'Dùng lệnh cat mở file cấu hình vừa tìm được để đọc nội dung chữ rõ bên trong.',
+        whyMatters: 'Lộ mật khẩu DB là "p@ssw0rd"! Trong thực tế, quản trị viên rất hay dùng lại mật khẩu này cho tài khoản SSH hoặc root — thử lại mật khẩu vừa nhặt là bài kiểm tra bắt buộc.',
+        nextHint: '✓ Xong Phòng 5! Bấm "✓ Sang phòng tiếp →" để xem góc nhìn phòng thủ.',
       };
     }
     return {
       cmd: 'grep -rIil "pass" /var/www 2>/dev/null',
       output: '/var/www/dvwa/config/config.inc.php\n/var/www/mutillidae/config.inc\n/var/www/phpMyAdmin/config.inc.php',
-      caption: '3 cuộn hồ sơ cấu hình bật sáng vàng! Mở thử dvwa/config.inc.php để trích xuất mật khẩu.',
+      whatDid: 'grep lọc ra đúng 3 file cấu hình PHP có nhắc tới chữ "pass" và bỏ qua ảnh logo.png.',
+      whyMatters: 'Biết chính xác tên file nhạy cảm nằm ở đâu giúp bạn mở thẳng vào đọc mật khẩu kết nối cơ sở dữ liệu.',
+      nextHint: '👉 Bấm ② Mở dvwa/config.inc.php (hoặc bấm vào dòng cuộn giấy đang sáng trên hình) để đọc mật khẩu.',
     };
   }
 
   // Room 6
   const lastLogs = st.r6.logs.slice(-4).map((l) => l.text).join('\n');
-  let caption = 'Mắt thần giám sát đang theo dõi mọi lần gõ cửa SSH từ IP nguồn 10.10.14.7 (Kali).';
-  if (st.r6.hasFail && st.r6.hasOk) {
-    caption = 'Mỗi lần sai/đúng đều ghi thời điểm, user và IP nguồn. Hàng loạt Failed liên tiếp rồi 1 Accepted là dấu hiệu đoán trúng mật khẩu (bài 8.2/8.3).';
+  let whatDid = 'Đứng ở góc người quản trị: mọi lượt gõ cửa dịch vụ SSH (:22) từ máy Kali (10.10.14.7) đều được ghi lại vào nhật ký /var/log/auth.log.';
+  let whyMatters = 'Nhiều người mới tưởng gõ lệnh trong terminal là vô hình, nhưng thực tế máy chủ lưu lại đầy đủ thời gian, tên user và IP nguồn của mọi lần thử.';
+  let nextHint = '👉 Hãy bấm thử cả ① Gõ sai mật khẩu SSH và ② Đăng nhập SSH đúng để so sánh dấu vết.';
+
+  if (act === 'r6:sshBrute') {
+    whatDid = 'Giả lập kịch bản dò mật khẩu tự động (brute-force): thử sai 3 lần liên tiếp rồi trúng ở lần thứ 4 từ cùng IP 10.10.14.7.';
+    whyMatters = 'Chuỗi "nhiều dòng Failed đỏ nối ngay sau bởi 1 dòng Accepted xanh" là dấu hiệu kinh điển giúp đội phòng thủ (SOC) phát hiện kẻ tấn công đã đoán trúng mật khẩu (bài 8.2/8.3).';
+    nextHint = '🏆 Hoàn thành 6/6 phòng! Bạn đã nắm đủ bản đồ điểm nóng Linux từ góc công lẫn góc thủ.';
+  } else if (st.r6.hasFail && st.r6.hasOk) {
+    whatDid = 'Nhật ký đã ghi nhận đủ cả dấu chân thất bại (Failed password màu đỏ) và thành công (Accepted password màu xanh).';
+    whyMatters = 'Nhờ các dòng thời gian + IP nguồn này, người phòng thủ biết chính xác ai đã thử mò mật khẩu và đã chui lọt vào máy vào lúc mấy giờ.';
+    nextHint = '🏆 Đã mở đủ 6/6 phòng! Có thể bấm thêm ③ Giả lập dò mật khẩu để xem chữ ký brute-force.';
   } else if (st.r6.hasFail) {
-    caption = 'Dòng đỏ Failed password đã hiện lên phiến đá! Giờ thử đăng nhập đúng để xem dấu chân khi vào lọt.';
+    whatDid = 'Gửi thử một lần đăng nhập sai mật khẩu SSH — mắt thần sshd ghi ngay dòng đỏ "Failed password for msfadmin from 10.10.14.7".';
+    whyMatters = 'Chỉ cần gõ sai 1 lần, IP máy Kali của bạn đã lộ diện trong nhật ký hệ thống.';
+    nextHint: '👉 Bấm tiếp ② Đăng nhập SSH đúng để xem dấu vết khi lọt vào thành công.';
   } else if (st.r6.hasOk) {
-    caption = 'Dòng xanh Accepted password đã được ghi. Thử bắn 1 lần sai mật khẩu để so sánh.';
+    whatDid = 'Đăng nhập SSH đúng mật khẩu — nhật ký ghi ngay dòng xanh "Accepted password for msfadmin from 10.10.14.7".';
+    whyMatters = 'Dù có mật khẩu hợp lệ, phiên đăng nhập vẫn để lại thời gian, cổng nguồn và tên tài khoản trên máy chủ.';
+    nextHint: '👉 Bấm thêm ① Gõ sai mật khẩu SSH để hoàn thành đối chiếu 2 trạng thái Phòng 6.';
   }
+
   return {
     cmd: 'sudo grep sshd /var/log/auth.log | tail -n 5',
     output: lastLogs,
-    caption,
+    whatDid,
+    whyMatters,
+    nextHint,
   };
 }
 
@@ -361,6 +448,7 @@ function formatLogTime(secCounter: number): string {
 export function applyDungeonAction(st: DungeonState, action: string): DungeonState {
   const next: DungeonState = {
     ...st,
+    lastAction: action,
     r1: { ...st.r1 },
     r2: {
       owner: { ...st.r2.owner },

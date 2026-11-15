@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import SimHow from './SimHow';
 import {
   applyDungeonAction,
   countClearedRooms,
@@ -57,6 +56,7 @@ interface HitBox {
 export default function LinuxDungeonLab() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showBriefing, setShowBriefing] = useState(true);
   const [game, setGame] = useState<DungeonState>(() => createInitialDungeonState());
   const stateRef = useRef({
     game,
@@ -73,18 +73,21 @@ export default function LinuxDungeonLab() {
   function trigger(action: string) {
     stateRef.current.actionStamp = performance.now();
     stateRef.current.lastActionKey = action;
+    setShowBriefing(false);
     setGame((prev) => applyDungeonAction(prev, action));
   }
 
   function selectRoom(idx: number) {
     stateRef.current.actionStamp = performance.now();
     stateRef.current.lastActionKey = `room:${idx}`;
-    setGame((prev) => ({ ...prev, room: idx }));
+    setShowBriefing(false);
+    setGame((prev) => ({ ...prev, room: idx, lastAction: '' }));
   }
 
   function resetAll() {
     stateRef.current.actionStamp = performance.now();
     stateRef.current.lastActionKey = 'reset';
+    setShowBriefing(true);
     setGame(createInitialDungeonState());
   }
 
@@ -772,25 +775,13 @@ export default function LinuxDungeonLab() {
     <>
       <div className="sim dual-launcher ow-launcher">
         <div className="dual-head">
-          <div>
-            <p className="sim-title" style={{ marginBottom: 4 }}>
-              Điệp vụ Hầm ngục Linux (Game Pixel · 6 phòng)
-            </p>
-            <p className="muted small" style={{ margin: 0 }}>
-              Đi qua 6 căn phòng trên <strong>Metasploitable 2</strong> trong game pixel để tự tay thử SSH, khóa quyền <code>600</code>, phép thử <code>744</code> vs <code>711</code>, săn SUID <code>nmap</code>, <code>grep</code> mật khẩu và soi dấu chân <code>auth.log</code>.
-            </p>
-          </div>
+          <p className="sim-title" style={{ margin: 0 }}>
+            Điệp vụ Hầm ngục Linux
+          </p>
           <button type="button" className="btn primary dual-reset" onClick={() => setIsFullscreen(true)}>
             ▶ CHƠI GAME PIXEL TOÀN MÀN HÌNH
           </button>
         </div>
-
-        <SimHow
-          steps={[
-            'Bấm "▶ CHƠI GAME PIXEL TOÀN MÀN HÌNH" (hoặc bấm vào khung xem trước bên dưới) để mở bản đồ 6 phòng.',
-            'Hoàn thành thử thách trong từng phòng để mở khóa đủ 6/6 Chìa khóa Vàng trước khi xuống làm bài thực hành thật.',
-          ]}
-        />
 
         {!isFullscreen && (
           <div
@@ -808,7 +799,7 @@ export default function LinuxDungeonLab() {
           >
             <canvas ref={canvasRef} className="ow-preview-canvas" />
             <div className="dual-launcher-overlay">
-              <span>▶ BẤM ĐỂ CHƠI GAME PIXEL (6 PHÒNG · ĐÃ MỞ {clearedCount}/6)</span>
+              <span>▶ BẤM ĐỂ MỞ GAME (ĐÃ MỞ {clearedCount}/6 PHÒNG)</span>
             </div>
           </div>
         )}
@@ -824,7 +815,7 @@ export default function LinuxDungeonLab() {
                   <button
                     key={rm.id}
                     type="button"
-                    className={`gba-btn gba-btn-sm ${game.room === idx ? 'active' : ''}`}
+                    className={`gba-btn gba-btn-sm ${!showBriefing && game.room === idx ? 'active' : ''}`}
                     onClick={() => selectRoom(idx)}
                   >
                     {rm.short} {cleared ? '✓' : ''}
@@ -837,6 +828,9 @@ export default function LinuxDungeonLab() {
               <span className={`ld-key-badge ${clearedCount === 6 ? 'all' : ''}`}>
                 🔑 {clearedCount}/6 {clearedCount === 6 ? '· HOÀN THÀNH TOÀN BỘ!' : ''}
               </span>
+              <button type="button" className={`gba-btn gba-btn-sm ${showBriefing ? 'active' : ''}`} onClick={() => setShowBriefing((v) => !v)}>
+                ? Nhiệm vụ
+              </button>
               <button type="button" className="gba-btn gba-btn-sm" onClick={resetAll}>
                 ↻ Chơi lại
               </button>
@@ -846,7 +840,7 @@ export default function LinuxDungeonLab() {
             </div>
           </div>
 
-          <div className="ow-fs-stage-box">
+          <div className="ow-fs-stage-box ld-stage-box">
             <canvas
               ref={canvasRef}
               className="ow-fs-canvas"
@@ -873,6 +867,39 @@ export default function LinuxDungeonLab() {
                 stateRef.current.hoverId = '';
               }}
             />
+
+            {showBriefing && (
+              <div className="ld-briefing-overlay">
+                <div className="ld-briefing-card">
+                  <p className="ld-briefing-eyebrow">TỔNG QUAN ĐIỆP VỤ (6 PHÒNG)</p>
+                  <h3 className="ld-briefing-title">Bạn đang ở trong một máy chủ Linux lạ — đích đến là quyền cao nhất &amp; dấu vết phòng thủ</h3>
+                  <p className="ld-briefing-lead">
+                    Bạn vừa đăng nhập được vào máy đích (<code>10.10.14.20</code>) bằng tài khoản thường <code>msfadmin</code>. Để làm chủ máy này (và hiểu cách quản trị viên phát hiện bạn), hãy đi lần lượt qua 6 căn phòng ứng với 6 điểm nóng trên sơ đồ thư mục Linux:
+                  </p>
+                  <div className="ld-briefing-grid">
+                    <div><strong>1. Cổng SSH:</strong> Kiểm tra mình là ai và lọc tài khoản thật trên máy.</div>
+                    <div><strong>2. Khóa 600:</strong> Hiểu 3 con số quyền đọc/sửa/chạy để khóa file bí mật.</div>
+                    <div><strong>3. Kính &amp; Tối:</strong> Phân biệt quyền "nhìn thấy tên" và "đi xuyên qua thư mục".</div>
+                    <div><strong>4. Kho SUID:</strong> Săn công cụ chạy ké quyền root bị bỏ sót.</div>
+                    <div><strong>5. Sách Web:</strong> Lục file cấu hình web tìm mật khẩu để lộ.</div>
+                    <div><strong>6. Mắt Log:</strong> Đổi góc phòng thủ — xem máy chủ ghi dấu chân bạn ở đâu.</div>
+                  </div>
+                  <div className="ld-briefing-foot">
+                    <span className="ld-briefing-tip">Mẹo chơi: Ở mỗi phòng, bấm từng nút bước ① → ② rồi đọc khung <strong>Đang làm gì / Ý nghĩa thực tế</strong> ở góc phải.</span>
+                    <button
+                      type="button"
+                      className="gba-btn active"
+                      onClick={() => {
+                        setShowBriefing(false);
+                        setGame((prev) => ({ ...prev, room: 0, lastAction: '' }));
+                      }}
+                    >
+                      ▶ Bắt đầu từ Phòng 1
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="ow-fs-bottom ld-fs-bottom">
@@ -1000,11 +1027,14 @@ export default function LinuxDungeonLab() {
                 {term.output}
               </pre>
               <div className="ld-story-box">
-                <p className="ld-story-goal">
-                  <strong>Mục tiêu:</strong> {ROOMS[game.room].goal}
+                <p className="ld-story-what">
+                  <strong>Đang làm gì:</strong> {term.whatDid}
                 </p>
-                <p className="ow-fs-caption ld-story-caption">
-                  <strong>Cơ chế:</strong> {term.caption}
+                <p className="ld-story-why">
+                  <strong>Ý nghĩa thực tế:</strong> {term.whyMatters}
+                </p>
+                <p className="ld-story-next">
+                  <strong>Tiếp theo:</strong> {term.nextHint}
                 </p>
               </div>
             </div>
